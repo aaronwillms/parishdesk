@@ -15,11 +15,24 @@ function showApp(user) {
 }
 
 export async function initAuth(onLogin) {
+  // Wire logout and auth state change regardless of session state
+  document.getElementById('btn-logout').addEventListener('click', async () => {
+    const { error } = await sb.auth.signOut();
+    if (error) { console.error('Sign out error:', error); }
+    showAuth();
+  });
+
+  sb.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_OUT') showAuth();
+    if (event === 'SIGNED_IN' && session?.user) showApp(session.user);
+  });
+
   const { data: { session } } = await sb.auth.getSession();
   if (session?.user) {
     showApp(session.user);
     return session.user;
   }
+
   showAuth();
 
   const form = document.getElementById('login-form');
@@ -43,15 +56,6 @@ export async function initAuth(onLogin) {
     }
     showApp(data.user);
     onLogin(data.user);
-  });
-
-  sb.auth.onAuthStateChange((event, session) => {
-    if (event === 'SIGNED_OUT') showAuth();
-    if (event === 'SIGNED_IN' && session?.user) showApp(session.user);
-  });
-
-  document.getElementById('btn-logout').addEventListener('click', async () => {
-    await sb.auth.signOut();
   });
 
   return null;
