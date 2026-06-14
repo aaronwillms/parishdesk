@@ -1,0 +1,324 @@
+import { sb } from '../supabase.js';
+import { store } from '../store.js';
+
+// Clergy/religious types appear first, in this fixed order
+const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
+const CLERGY_LABELS = {
+  'pastor':              'Pastor',
+  'parochial-vicar':     'Parochial Vicar',
+  'priest-in-residence': 'Priest-in-Residence',
+  'deacon':              'Deacon',
+  'religious':           'Religious',
+};
+
+const EMPLOYMENT_ORDER = ['full-time', 'part-time', 'under-contract'];
+const EMPLOYMENT_LABELS = {
+  'full-time':      'Full-Time',
+  'part-time':      'Part-Time',
+  'under-contract': 'Under Contract',
+};
+
+function isLayStaff(p) { return p.type === 'staff'; }
+function isVolunteer(p) { return p.type === 'volunteer'; }
+function isClergy(p)    { return CLERGY_TYPES.includes(p.type); }
+function showsEmployment(type) { return type === 'staff'; }
+
+const alpha = (a, b) => a.name.localeCompare(b.name);
+
+// ── Data loading ───────────────────────────────────────────────────────────────
+
+export async function loadPersonnel() {
+  const [{ data: instData, error: instErr }, { data: persData, error: persErr }] = await Promise.all([
+    sb.from('institutions').select('*').order('sort_order').order('name'),
+    sb.from('personnel').select('*').neq('active', false).order('name'),
+  ]);
+  if (instErr) console.error('[institutions]', instErr);
+  if (persErr) console.error('[personnel]', persErr);
+  store.institutions = instData || [];
+  store.personnel    = persData || [];
+  renderPersonnel();
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────────
+
+function contactChips(p) {
+  let chips = '';
+  if (p.phone) chips += `<a href="tel:${p.phone}" style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:#8FA8BF;text-decoration:none;">📞 ${p.phone}</a>`;
+  if (p.email) chips += `<a href="mailto:${p.email}" style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:#8FA8BF;text-decoration:none;">✉️ ${p.email}</a>`;
+  return chips ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:3px;">${chips}</div>` : '';
+}
+
+function personCard(p) {
+  return `<div class="evt-item" style="cursor:default;">
+    <div style="flex:1;min-width:0;">
+      <div style="font-weight:500;font-size:14px;color:var(--navy);">${p.name}</div>
+      ${p.title ? `<div style="font-size:12px;color:#6B7280;margin-top:1px;">${p.title}</div>` : ''}
+      ${contactChips(p)}
+    </div>
+    <div style="display:flex;gap:6px;flex-shrink:0;">
+      <button class="card-action" onclick="openPersonnelModal('${p.id}')">Edit</button>
+      <button class="card-action" style="color:#C0392B;" onclick="deletePersonnel('${p.id}')">Delete</button>
+    </div>
+  </div>`;
+}
+
+function sectionDivider(label, marginTop = '1rem') {
+  return `<div style="display:flex;align-items:center;gap:.6rem;margin-top:${marginTop};margin-bottom:.5rem;">
+    <span style="font-size:13px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.05em;">${label}</span>
+    <div style="flex:1;height:1px;background:#D1D5DB;"></div>
+  </div>`;
+}
+
+function groupPill(label) {
+  return `<div style="font-size:10.5px;font-weight:600;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;padding:.2rem .5rem;background:#F3F4F6;border-radius:3px;display:inline-block;margin-bottom:.35rem;">${label}</div>`;
+}
+
+function renderPersonnel() {
+  const el = document.getElementById('personnel-list');
+  if (!el) return;
+  const all  = store.personnel    || [];
+  const insts = store.institutions || [];
+
+  if (!insts.length && !all.length) {
+    el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No institutions or personnel added yet.</div>';
+    return;
+  }
+
+  let html = '';
+
+  insts.forEach(inst => {
+    const group = all.filter(p => p.institution === inst.name);
+
+    const clergy     = group.filter(isClergy);
+    const layStaff   = group.filter(isLayStaff);
+    const volunteers = group.filter(isVolunteer);
+    const hasStaff   = clergy.length || layStaff.length;
+
+    html += `<div class="card">`;
+
+    // Institution header with settings cogwheel
+    const safeId = inst.id;
+    const safeName = inst.name.replace(/'/g, "\\'");
+    html += `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:2px solid var(--navy);">
+      <span style="font-size:17px;font-weight:700;color:var(--navy);letter-spacing:-.01em;flex:1;">${inst.name}</span>
+      <button onclick="openInstitutionSettingsModal('${safeId}','${safeName}')" title="Institution settings" style="background:none;border:none;cursor:pointer;font-size:15px;color:#9CA3AF;padding:2px 4px;line-height:1;" onmouseover="this.style.color='var(--navy)'" onmouseout="this.style.color='#9CA3AF'">⚙</button>
+    </div>`;
+
+    if (!group.length) {
+      html += `<div style="font-size:13px;color:#6B7280;font-style:italic;">No personnel assigned to this institution.</div>`;
+    }
+
+    if (hasStaff) {
+      html += sectionDivider('Staff', '0');
+
+      CLERGY_TYPES.forEach((type, i) => {
+        const clergyGroup = clergy.filter(p => p.type === type).sort(alpha);
+        if (!clergyGroup.length) return;
+        html += `<div style="${i > 0 ? 'margin-top:.75rem;' : ''}">`;
+        html += groupPill(CLERGY_LABELS[type]);
+        clergyGroup.forEach(p => { html += personCard(p); });
+        html += `</div>`;
+      });
+
+      EMPLOYMENT_ORDER.forEach((emp, i) => {
+        const empGroup = layStaff.filter(p => p.employment === emp).sort(alpha);
+        if (!empGroup.length) return;
+        html += `<div style="${clergy.length || i > 0 ? 'margin-top:.75rem;' : ''}">`;
+        html += groupPill(EMPLOYMENT_LABELS[emp]);
+        empGroup.forEach(p => { html += personCard(p); });
+        html += `</div>`;
+      });
+
+      const unclassified = layStaff.filter(p => !p.employment).sort(alpha);
+      if (unclassified.length) {
+        html += `<div style="margin-top:.75rem;">`;
+        html += groupPill('Other Staff');
+        unclassified.forEach(p => { html += personCard(p); });
+        html += `</div>`;
+      }
+    }
+
+    if (volunteers.length) {
+      html += sectionDivider('Volunteers', hasStaff ? '1.25rem' : '0');
+      volunteers.sort(alpha).forEach(p => { html += personCard(p); });
+    }
+
+    html += `</div>`;
+  });
+
+  // People with no matching institution (safety net)
+  const instNames = new Set(insts.map(i => i.name));
+  const orphans = all.filter(p => !instNames.has(p.institution));
+  if (orphans.length) {
+    html += `<div class="card">`;
+    html += `<div style="margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:2px solid var(--navy);">
+      <span style="font-size:17px;font-weight:700;color:var(--navy);">Unassigned</span>
+    </div>`;
+    orphans.sort(alpha).forEach(p => { html += personCard(p); });
+    html += `</div>`;
+  }
+
+  el.innerHTML = html || '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No personnel added yet.</div>';
+}
+
+// ── Institution modals ─────────────────────────────────────────────────────────
+
+function openInstitutionModal() {
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-title">Add institution</div>
+    <label>Name</label><input id="if-name" placeholder="e.g. Outreach Center" />
+    <label>Sort order</label><input type="number" id="if-sort" placeholder="0" style="width:80px;" />
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" onclick="saveInstitution()">Save</button>
+    </div>`;
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+async function saveInstitution() {
+  const name = document.getElementById('if-name').value.trim();
+  if (!name) { alert('Name is required.'); return; }
+  const { error } = await sb.from('institutions').insert({
+    name,
+    sort_order: parseInt(document.getElementById('if-sort').value) || 0,
+  });
+  if (error) { alert('Save failed: ' + error.message); return; }
+  closeModal();
+  await loadPersonnel();
+}
+
+function openInstitutionSettingsModal(id, currentName) {
+  const inst = (store.institutions || []).find(i => i.id === id);
+  const currentSort = inst?.sort_order ?? '';
+  const safeName = currentName.replace(/'/g, "\\'");
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-title">Institution settings</div>
+    <label>Name</label>
+    <input id="if-rename" value="${currentName}" />
+    <label>Sort order</label>
+    <input type="number" id="if-sort" value="${currentSort}" placeholder="0" style="width:80px;" />
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" onclick="saveInstitutionSettings('${id}','${safeName}')">Save</button>
+    </div>
+    <div style="margin-top:1.25rem;padding-top:1rem;border-top:.5px solid var(--stone);">
+      <div style="font-size:12px;color:#6B7280;margin-bottom:.6rem;">Deleting this institution will remove it from all personnel records. This cannot be undone.</div>
+      <button class="btn-secondary" style="color:#C0392B;border-color:#C0392B;" onclick="deleteInstitution('${id}','${safeName}')">Delete institution</button>
+    </div>`;
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+async function saveInstitutionSettings(id, oldName) {
+  const newName  = document.getElementById('if-rename').value.trim();
+  const sortOrder = parseInt(document.getElementById('if-sort').value) || 0;
+  if (!newName) { alert('Name is required.'); return; }
+  const { error: instErr } = await sb.from('institutions').update({ name: newName, sort_order: sortOrder }).eq('id', id);
+  if (instErr) { alert('Save failed: ' + instErr.message); return; }
+  if (newName !== oldName) {
+    const { error: persErr } = await sb.from('personnel')
+      .update({ institution: newName, updated_at: new Date().toISOString() })
+      .eq('institution', oldName);
+    if (persErr) { alert('Failed to update personnel records: ' + persErr.message); return; }
+  }
+  closeModal();
+  await loadPersonnel();
+}
+
+async function deleteInstitution(id, name) {
+  if (!confirm(`Deleting "${name}" will remove it from all personnel records. This cannot be undone. Continue?`)) return;
+  const { error: persErr } = await sb.from('personnel')
+    .update({ institution: null, updated_at: new Date().toISOString() })
+    .eq('institution', name);
+  if (persErr) { alert('Failed to clear personnel: ' + persErr.message); return; }
+  const { error } = await sb.from('institutions').delete().eq('id', id);
+  if (error) { alert('Delete failed: ' + error.message); return; }
+  closeModal();
+  await loadPersonnel();
+}
+
+// ── Personnel modal ────────────────────────────────────────────────────────────
+
+function personnelForm(data) {
+  const type = data?.type || 'staff';
+  const inst = data?.institution || (store.institutions[0]?.name ?? '');
+  const instOptions = (store.institutions || [])
+    .map(i => `<option value="${i.name}"${inst === i.name ? ' selected' : ''}>${i.name}</option>`)
+    .join('');
+  return `<div class="modal-title">${data ? 'Edit person' : 'Add person'}</div>
+  <label>Name</label><input id="pf-name" value="${data?.name || ''}" />
+  <label>Title / role</label><input id="pf-title" value="${data?.title || ''}" />
+  <label>Phone</label><input id="pf-phone" value="${data?.phone || ''}" placeholder="e.g. (601) 555-0100" />
+  <label>Email</label><input id="pf-email" value="${data?.email || ''}" />
+  <label>Institution</label>
+  <select id="pf-inst">${instOptions}</select>
+  <label>Type</label>
+  <select id="pf-type" onchange="personnelTypeToggle()">
+    <optgroup label="Clergy &amp; Religious">
+      ${CLERGY_TYPES.map(t => `<option value="${t}"${type === t ? ' selected' : ''}>${CLERGY_LABELS[t]}</option>`).join('')}
+    </optgroup>
+    <optgroup label="Lay">
+      <option value="staff"${type === 'staff' ? ' selected' : ''}>Lay Staff</option>
+      <option value="volunteer"${type === 'volunteer' ? ' selected' : ''}>Volunteer</option>
+    </optgroup>
+  </select>
+  <div id="pf-emp-row" style="${showsEmployment(type) ? '' : 'display:none;'}">
+    <label>Employment</label>
+    <select id="pf-emp">
+      <option value="full-time"${data?.employment === 'full-time' ? ' selected' : ''}>Full-Time</option>
+      <option value="part-time"${data?.employment === 'part-time' ? ' selected' : ''}>Part-Time</option>
+      <option value="under-contract"${data?.employment === 'under-contract' ? ' selected' : ''}>Under Contract</option>
+    </select>
+  </div>
+  <label>Sort order</label><input type="number" id="pf-sort" value="${data?.sort_order ?? ''}" placeholder="0" style="width:80px;" />
+  <div class="modal-actions">
+    <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn-primary" onclick="savePersonnel(${data ? `'${data.id}'` : null})">Save</button>
+  </div>`;
+}
+
+function openPersonnelModal(id) {
+  const data = id ? (store.personnel || []).find(p => p.id === id) : null;
+  document.getElementById('modal-content').innerHTML = personnelForm(data);
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function personnelTypeToggle() {
+  const type = document.getElementById('pf-type').value;
+  document.getElementById('pf-emp-row').style.display = showsEmployment(type) ? '' : 'none';
+}
+
+async function savePersonnel(id) {
+  const type = document.getElementById('pf-type').value;
+  const payload = {
+    name:        document.getElementById('pf-name').value.trim(),
+    title:       document.getElementById('pf-title').value.trim() || null,
+    phone:       document.getElementById('pf-phone').value.trim() || null,
+    email:       document.getElementById('pf-email').value.trim() || null,
+    institution: document.getElementById('pf-inst').value,
+    type,
+    employment:  showsEmployment(type) ? document.getElementById('pf-emp').value : null,
+    sort_order:  parseInt(document.getElementById('pf-sort').value) || 0,
+    active:      true,
+    updated_at:  new Date().toISOString(),
+  };
+  if (!payload.name) { alert('Name is required.'); return; }
+  if (id) {
+    await sb.from('personnel').update(payload).eq('id', id);
+  } else {
+    await sb.from('personnel').insert(payload);
+  }
+  closeModal();
+  await loadPersonnel();
+}
+
+async function deletePersonnel(id) {
+  if (!confirm('Remove this person from the directory?')) return;
+  await sb.from('personnel').update({ active: false, updated_at: new Date().toISOString() }).eq('id', id);
+  await loadPersonnel();
+}
+
+Object.assign(window, {
+  openPersonnelModal, savePersonnel, deletePersonnel, personnelTypeToggle,
+  openInstitutionModal, saveInstitution,
+  openInstitutionSettingsModal, saveInstitutionSettings, deleteInstitution,
+});

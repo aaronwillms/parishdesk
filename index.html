@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ParishDesk — Basilica of Saint Mary</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@400;500&display=swap&font-display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="theme-color" content="#1C2B3A" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+</head>
+<body>
+
+<!-- AUTH SCREEN -->
+<div id="auth-screen">
+  <div class="auth-card">
+    <div class="auth-cross">✠</div>
+    <h1 class="auth-title">ParishDesk</h1>
+    <p class="auth-sub">Basilica of Saint Mary · Natchez</p>
+    <form id="login-form" autocomplete="on">
+      <div class="auth-field">
+        <label for="login-email">Email</label>
+        <input type="email" id="login-email" name="email" autocomplete="username" required />
+      </div>
+      <div class="auth-field">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" name="password" autocomplete="current-password" required />
+      </div>
+      <button type="submit" class="auth-submit">Sign in</button>
+      <div class="auth-error" id="login-error"></div>
+    </form>
+  </div>
+</div>
+
+<!-- APP SHELL -->
+<div id="app">
+  <div id="sidebar-backdrop"></div>
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <div class="app-sub">Basilica of Saint Mary</div>
+    </div>
+    <nav id="nav">
+      <div class="nav-sec">Daily</div>
+      <div class="nav-item active" data-panel="dashboard"><i class="ti ti-home"></i> Dashboard</div>
+      <div class="nav-sec">Sacramental</div>
+      <div class="nav-item" data-panel="baptism"><i class="ti ti-droplet"></i> Baptismal prep</div>
+      <div class="nav-item" data-panel="firstcomm"><i class="ti ti-glass-full"></i> First Communion</div>
+      <div class="nav-item" data-panel="confirmation"><i class="ti ti-flame"></i> Confirmation</div>
+      <div class="nav-item" data-panel="ocia"><i class="ti ti-user-plus"></i> OCIA</div>
+      <div class="nav-item" data-panel="marriage"><i class="ti ti-heart"></i> Marriage preparation</div>
+      <div class="nav-item" data-panel="annulments"><i class="ti ti-scale"></i> Annulments</div>
+      <div class="nav-sec">Ministry</div>
+      <div class="nav-item" data-panel="school"><i class="ti ti-school"></i> Cathedral School</div>
+      <div class="nav-sec">Administration</div>
+      <div class="nav-item" data-panel="projects"><i class="ti ti-clipboard-list"></i> Projects</div>
+      <div class="nav-item" data-panel="personnel"><i class="ti ti-users"></i> Personnel</div>
+    </nav>
+    <div id="sidebar-footer">
+      <div id="user-display"></div>
+      <button id="btn-logout" class="logout-btn">Sign out</button>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="season-bar"></div>
+    <div id="topbar">
+      <button id="hamburger" onclick="toggleSidebar()">☰</button>
+      <div class="page-title" id="topbar-title">Rector's Dashboard</div>
+      <div class="lit-tag"><i class="ti ti-sun"></i><span id="topbar-season">Loading...</span></div>
+    </div>
+    <div id="content">
+
+      <!-- DASHBOARD -->
+      <div id="panel-dashboard" class="panel active">
+        <div class="lit-block">
+          <div id="lit-color-dot"></div>
+          <div style="flex:1;min-width:0;">
+            <div class="lit-date" id="lit-date"></div>
+            <div class="lit-day" id="lit-day"><span class="pulse"></span></div>
+            <div class="lit-rank" id="lit-rank"></div>
+          </div>
+        </div>
+        <div id="alert-strip-container"></div>
+        <div class="stat-row">
+          <div class="stat-card"><div class="stat-num" id="stat-deadlines"><span class="pulse" style="width:30px"></span></div><div class="stat-label">Deadlines</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-action"><span class="pulse" style="width:30px"></span></div><div class="stat-label">My action</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-waiting"><span class="pulse" style="width:30px"></span></div><div class="stat-label">Waiting on</div></div>
+        </div>
+        <div class="two-col">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title"><i class="ti ti-calendar"></i> Today's schedule</div>
+              <button class="card-action" onclick="loadCalendar()">Refresh</button>
+            </div>
+            <div id="calendar-sched"><span class="pulse"></span></div>
+          </div>
+          <div class="card" style="overflow:hidden;">
+            <div class="card-header">
+              <div class="card-title"><i class="ti ti-clipboard-list"></i> Projects &amp; deadlines</div>
+              <button class="card-action" onclick="switchPanel('projects')">Full log →</button>
+            </div>
+            <div id="dash-projects"><span class="pulse"></span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i class="ti ti-pray"></i> Collect</div>
+            <button class="card-action" style="display:none"></button>
+          </div>
+          <div id="collect-container"><span class="pulse"></span></div>
+        </div>
+      </div>
+
+      <!-- MARRIAGE PREP -->
+      <div id="panel-marriage" class="panel">
+        <div style="background:var(--navy);padding:.875rem 1.25rem;border-bottom:2px solid var(--gold);">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+            <div style="flex:1;">
+              <div id="coord-name-marriage" style="font-family:'Inter',sans-serif;font-weight:500;font-size:14px;color:#F5F1EB;">No coordinator set</div>
+              <div id="coord-contact-marriage" style="margin-top:4px;display:flex;flex-wrap:wrap;gap:6px;"></div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;flex-shrink:0;padding-top:2px;">
+              <button onclick="openCoordModal('marriage')" style="font-size:12px;color:#8FA8BF;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;">Edit</button>
+            </div>
+          </div>
+        </div>
+        <div class="stat-row">
+          <div class="stat-card"><div class="stat-num" id="stat-couples">—</div><div class="stat-label">Active couples</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-nearly">—</div><div class="stat-label">Complete</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-needs-attention">—</div><div class="stat-label">Needs attention</div></div>
+        </div>
+        <div id="marriage-alerts"></div>
+        <div class="card" style="padding:.875rem 1.25rem;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input type="text" id="couple-search" placeholder="Search by name…" oninput="renderCouples()" style="flex:1;min-width:140px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
+            <button class="btn-primary" style="white-space:nowrap;" onclick="openModal('couple')">+ Add couple</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;" id="couple-filters">
+            <button class="cf-btn active" data-filter="all" onclick="setCoupleFilter('all',this)">All</button>
+            <button class="cf-btn" data-filter="active" onclick="setCoupleFilter('active',this)">Active</button>
+            <button class="cf-btn" data-filter="inprogress" onclick="setCoupleFilter('inprogress',this)">In progress</button>
+            <button class="cf-btn" data-filter="complete" onclick="setCoupleFilter('complete',this)">Complete</button>
+            <button class="cf-btn" data-filter="external" onclick="setCoupleFilter('external',this)">External</button>
+            <button class="cf-btn" data-filter="archived" onclick="setCoupleFilter('archived',this)">Archived</button>
+          </div>
+        </div>
+        <div id="couples-list"><span class="pulse"></span></div>
+      </div>
+
+      <!-- ANNULMENTS -->
+      <div id="panel-annulments" class="panel">
+        <div class="stat-row">
+          <div class="stat-card"><div class="stat-num" id="stat-cases">—</div><div class="stat-label">Active cases</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-tribunal">—</div><div class="stat-label">In tribunal</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-prep">—</div><div class="stat-label">Preparing</div></div>
+        </div>
+        <div id="annulment-alerts"></div>
+        <div class="card" style="padding:.875rem 1.25rem;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input type="text" id="case-search" placeholder="Search by petitioner or respondent…" oninput="renderCases()" style="flex:1;min-width:160px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
+            <button class="btn-primary" style="white-space:nowrap;" onclick="openModal('case')">+ Add case</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;">
+            <button class="cf-btn active" onclick="setCaseFilter('all',this)">All</button>
+            <button class="cf-btn" onclick="setCaseFilter('active',this)">Active</button>
+            <button class="cf-btn" onclick="setCaseFilter('tribunal',this)">In tribunal</button>
+            <button class="cf-btn" onclick="setCaseFilter('prep',this)">Preparing</button>
+            <button class="cf-btn" onclick="setCaseFilter('affirm',this)">Affirmative</button>
+            <button class="cf-btn" onclick="setCaseFilter('archived',this)">Archived</button>
+          </div>
+        </div>
+        <div id="cases-list"><span class="pulse"></span></div>
+      </div>
+
+      <!-- BAPTISMAL PREP -->
+      <div id="panel-baptism" class="panel">
+        <div style="background:var(--navy);padding:.875rem 1.25rem;border-bottom:2px solid var(--gold);">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+            <div style="flex:1;">
+              <div id="coord-name-baptism" style="font-family:'Inter',sans-serif;font-weight:500;font-size:14px;color:#F5F1EB;">No coordinator set</div>
+              <div id="coord-contact-baptism" style="margin-top:4px;display:flex;flex-wrap:wrap;gap:6px;"></div>
+              <div id="coord-next-baptism" style="margin-top:5px;font-size:12px;color:var(--gold);opacity:.85;"></div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;flex-shrink:0;padding-top:2px;">
+              <button onclick="openScheduleModal('baptism')" style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--gold);background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;opacity:.85;"><i class="ti ti-calendar-event" style="font-size:13px;"></i> Schedule</button>
+              <button onclick="openCoordModal('baptism')" style="font-size:12px;color:#8FA8BF;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;">Edit</button>
+            </div>
+          </div>
+        </div>
+        <div class="stat-row">
+          <div class="stat-card"><div class="stat-num" id="stat-bap-total">—</div><div class="stat-label">Active candidates</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-bap-upcoming">—</div><div class="stat-label">Upcoming baptisms</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-bap-docs">—</div><div class="stat-label">Docs incomplete</div></div>
+        </div>
+        <div class="card" style="padding:.875rem 1.25rem;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input type="text" id="bap-search" placeholder="Search by name…" oninput="renderSacramental('baptism')" style="flex:1;min-width:140px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
+            <button class="btn-primary" style="white-space:nowrap;" onclick="openSacramentalModal('baptism')">+ Add child</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;">
+            <button class="cf-btn active" onclick="setSacramentalFilter('baptism','all',this)">All</button>
+            <button class="cf-btn" onclick="setSacramentalFilter('baptism','active',this)">Active</button>
+            <button class="cf-btn" onclick="setSacramentalFilter('baptism','archived',this)">Archived</button>
+          </div>
+        </div>
+        <div id="bap-list"><span class="pulse"></span></div>
+      </div>
+
+      <!-- FIRST COMMUNION -->
+      <div id="panel-firstcomm" class="panel">
+        <div style="background:var(--navy);padding:.875rem 1.25rem;border-bottom:2px solid var(--gold);">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+            <div style="flex:1;">
+              <div id="coord-name-firstcomm" style="font-family:'Inter',sans-serif;font-weight:500;font-size:14px;color:#F5F1EB;">No coordinator set</div>
+              <div id="coord-contact-firstcomm" style="margin-top:4px;display:flex;flex-wrap:wrap;gap:6px;"></div>
+              <div id="coord-next-firstcomm" style="margin-top:5px;font-size:12px;color:var(--gold);opacity:.85;"></div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;flex-shrink:0;padding-top:2px;">
+              <button onclick="openScheduleModal('firstcomm')" style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--gold);background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;opacity:.85;"><i class="ti ti-calendar-event" style="font-size:13px;"></i> Schedule</button>
+              <button onclick="openCoordModal('firstcomm')" style="font-size:12px;color:#8FA8BF;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;">Edit</button>
+            </div>
+          </div>
+        </div>
+        <div class="stat-row">
+          <div class="stat-card"><div class="stat-num" id="stat-fc-total">—</div><div class="stat-label">Active students</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-fc-upcoming">—</div><div class="stat-label">Upcoming sacrament</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-fc-docs">—</div><div class="stat-label">Docs incomplete</div></div>
+        </div>
+        <div class="card" style="padding:.875rem 1.25rem;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input type="text" id="fc-search" placeholder="Search by name…" oninput="renderSacramental('firstcomm')" style="flex:1;min-width:140px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
+            <button class="btn-primary" style="white-space:nowrap;" onclick="openSacramentalModal('firstcomm')">+ Add student</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;">
+            <button class="cf-btn active" onclick="setSacramentalFilter('firstcomm','all',this)">All</button>
+            <button class="cf-btn" onclick="setSacramentalFilter('firstcomm','active',this)">Active</button>
+            <button class="cf-btn" onclick="setSacramentalFilter('firstcomm','archived',this)">Archived</button>
+          </div>
+        </div>
+        <div id="fc-list"><span class="pulse"></span></div>
+      </div>
+
+      <!-- CONFIRMATION -->
+      <div id="panel-confirmation" class="panel">
+        <div style="background:var(--navy);padding:.875rem 1.25rem;border-bottom:2px solid var(--gold);">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+            <div style="flex:1;">
+              <div id="coord-name-confirmation" style="font-family:'Inter',sans-serif;font-weight:500;font-size:14px;color:#F5F1EB;">No coordinator set</div>
+              <div id="coord-contact-confirmation" style="margin-top:4px;display:flex;flex-wrap:wrap;gap:6px;"></div>
+              <div id="coord-next-confirmation" style="margin-top:5px;font-size:12px;color:var(--gold);opacity:.85;"></div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;flex-shrink:0;padding-top:2px;">
+              <button onclick="openScheduleModal('confirmation')" style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--gold);background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;opacity:.85;"><i class="ti ti-calendar-event" style="font-size:13px;"></i> Schedule</button>
+              <button onclick="openCoordModal('confirmation')" style="font-size:12px;color:#8FA8BF;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;">Edit</button>
+            </div>
+          </div>
+        </div>
+        <div class="stat-row">
+          <div class="stat-card"><div class="stat-num" id="stat-con-total">—</div><div class="stat-label">Active students</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-con-upcoming">—</div><div class="stat-label">Upcoming sacrament</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-con-docs">—</div><div class="stat-label">Docs incomplete</div></div>
+        </div>
+        <div class="card" style="padding:.875rem 1.25rem;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input type="text" id="con-search" placeholder="Search by name…" oninput="renderSacramental('confirmation')" style="flex:1;min-width:140px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
+            <button class="btn-primary" style="white-space:nowrap;" onclick="openSacramentalModal('confirmation')">+ Add student</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;">
+            <button class="cf-btn active" onclick="setSacramentalFilter('confirmation','all',this)">All</button>
+            <button class="cf-btn" onclick="setSacramentalFilter('confirmation','active',this)">Active</button>
+            <button class="cf-btn" onclick="setSacramentalFilter('confirmation','archived',this)">Archived</button>
+          </div>
+        </div>
+        <div id="con-list"><span class="pulse"></span></div>
+      </div>
+
+      <!-- OCIA -->
+      <div id="panel-ocia" class="panel">
+        <div style="background:var(--navy);padding:.875rem 1.25rem;border-bottom:2px solid var(--gold);">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+            <div style="flex:1;">
+              <div id="coord-name-ocia" style="font-family:'Inter',sans-serif;font-weight:500;font-size:14px;color:#F5F1EB;">No coordinator set</div>
+              <div id="coord-contact-ocia" style="margin-top:4px;display:flex;flex-wrap:wrap;gap:6px;"></div>
+              <div id="coord-next-ocia" style="margin-top:5px;font-size:12px;color:var(--gold);opacity:.85;"></div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;flex-shrink:0;padding-top:2px;">
+              <button onclick="openScheduleModal('ocia')" style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--gold);background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;opacity:.85;"><i class="ti ti-calendar-event" style="font-size:13px;"></i> Schedule</button>
+              <button onclick="openCoordModal('ocia')" style="font-size:12px;color:#8FA8BF;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;">Edit</button>
+            </div>
+          </div>
+        </div>
+        <div class="stat-row">
+          <div class="stat-card"><div class="stat-num" id="stat-ocia-total">—</div><div class="stat-label">Active candidates</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-ocia-prep">—</div><div class="stat-label">In preparation</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-ocia-received">—</div><div class="stat-label">Received this year</div></div>
+        </div>
+        <div id="ocia-alerts"></div>
+        <div class="card" style="padding:.875rem 1.25rem;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input type="text" id="ocia-search" placeholder="Search by name…" oninput="renderOcia()" style="flex:1;min-width:140px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
+            <button class="btn-primary" style="white-space:nowrap;" onclick="openOciaModal()">+ Add person</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;">
+            <button class="cf-btn active" onclick="setOciaFilter('all',this)">All</button>
+            <button class="cf-btn" onclick="setOciaFilter('inquirer',this)">Inquirer</button>
+            <button class="cf-btn" onclick="setOciaFilter('preparation',this)">In preparation</button>
+            <button class="cf-btn" onclick="setOciaFilter('complete',this)">Complete</button>
+            <button class="cf-btn" onclick="setOciaFilter('received',this)">Received</button>
+            <button class="cf-btn" onclick="setOciaFilter('inactive',this)">Inactive</button>
+          </div>
+        </div>
+        <div id="ocia-list"><span class="pulse"></span></div>
+      </div>
+
+      <!-- CATHEDRAL SCHOOL -->
+      <div id="panel-school" class="panel">
+        <div class="school-tabs">
+          <div class="school-tab active" data-tab="retreats">Retreat planning</div>
+          <div class="school-tab" data-tab="peer">Peer ministry</div>
+          <div class="school-tab" data-tab="liturgy">Liturgical activities</div>
+          <div class="school-tab" data-tab="theology">Theology dept</div>
+        </div>
+        <div id="school-retreats" class="school-sub active">
+          <div class="card">
+            <div class="card-header"><div class="card-title"><i class="ti ti-mountain"></i> Retreats</div><button class="card-action" onclick="openSchoolModal('retreat')">+ Add retreat</button></div>
+            <div id="school-retreats-list"><span class="pulse"></span></div>
+          </div>
+        </div>
+        <div id="school-peer" class="school-sub">
+          <div class="card">
+            <div class="card-header"><div class="card-title"><i class="ti ti-users"></i> Peer ministry</div><button class="card-action" onclick="openSchoolModal('peer_ministry')">+ Add item</button></div>
+            <div id="school-peer-list"><span class="pulse"></span></div>
+          </div>
+        </div>
+        <div id="school-liturgy" class="school-sub">
+          <div class="card">
+            <div class="card-header"><div class="card-title"><i class="ti ti-candle"></i> Liturgical activities</div><button class="card-action" onclick="openSchoolModal('liturgy')">+ Add item</button></div>
+            <div id="school-liturgy-list"><span class="pulse"></span></div>
+          </div>
+        </div>
+        <div id="school-theology" class="school-sub">
+          <div class="card">
+            <div class="card-header"><div class="card-title"><i class="ti ti-book-2"></i> Theology department</div><button class="card-action" onclick="openSchoolModal('theology')">+ Add item</button></div>
+            <div id="school-theology-list"><span class="pulse"></span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PROJECTS -->
+      <div id="panel-projects" class="panel">
+        <div class="stat-row">
+          <div class="stat-card"><div class="stat-num" id="pstat-deadlines">—</div><div class="stat-label">Deadlines</div></div>
+          <div class="stat-card"><div class="stat-num" id="pstat-action">—</div><div class="stat-label">My action</div></div>
+          <div class="stat-card"><div class="stat-num" id="pstat-waiting">—</div><div class="stat-label">Waiting on</div></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:1rem;flex-wrap:wrap;">
+          <button class="btn-primary" onclick="openModal('project')">+ New project</button>
+          <select id="project-filter" onchange="renderProjects()" style="border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;">
+            <option value="all">All statuses</option>
+            <option value="deadline">Deadlines</option>
+            <option value="action">My action</option>
+            <option value="waiting">Waiting on</option>
+            <option value="capital">Capital</option>
+            <option value="standing">Standing</option>
+            <option value="done">Done</option>
+          </select>
+        </div>
+        <div id="projects-list"><span class="pulse"></span></div>
+      </div>
+
+      <div id="panel-personnel" class="panel">
+        <div style="display:flex;gap:8px;margin-bottom:1rem;">
+          <button class="btn-primary" onclick="openPersonnelModal(null)">+ Add person</button>
+          <button class="btn-secondary" onclick="openInstitutionModal()">+ Add institution</button>
+        </div>
+        <div id="personnel-list"><span class="pulse"></span></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div id="modal-overlay" class="modal-overlay">
+  <div class="modal" id="modal-box">
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <div id="modal-content"></div>
+  </div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,405 @@
+import { sb } from '../supabase.js';
+import { fmtDate, fmtDateYear, daysUntil, todayCST } from '../utils.js';
+
+export const COUPLE_STATUS = {
+  inprogress:{label:'In progress',  color:'#7D6608', bg:'#FEF9E7', dot:'#D4AC0D'},
+  complete:  {label:'Complete',     color:'#2D6A4F', bg:'#D8F3DC', dot:'#2D6A4F'},
+  external:  {label:'External',     color:'#616A6B', bg:'#F2F3F4', dot:'#AAB7B8'},
+  inactive:  {label:'Inactive',     color:'#922B21', bg:'#FCEBEB', dot:'#A32D2D'},
+};
+
+let allCouples = [], coupleFilter = 'all', expandedCoupleId = null;
+
+function setCoupleFilter(f, el) {
+  coupleFilter = f;
+  document.querySelectorAll('.cf-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  renderCouples();
+}
+
+export async function loadCouples() {
+  const {data, error} = await sb.from('couples').select('*');
+  if(error){console.error(error);return;}
+  const active = (data||[]).filter(c=>!c.archived).sort((a,b)=>{
+    if(!a.wedding_date&&!b.wedding_date) return 0;
+    if(!a.wedding_date) return 1;
+    if(!b.wedding_date) return -1;
+    return new Date(a.wedding_date)-new Date(b.wedding_date);
+  });
+  const archived = (data||[]).filter(c=>c.archived).sort((a,b)=>{
+    if(!a.wedding_date&&!b.wedding_date) return 0;
+    if(!a.wedding_date) return 1;
+    if(!b.wedding_date) return -1;
+    return new Date(b.wedding_date)-new Date(a.wedding_date);
+  });
+  allCouples = [...active, ...archived];
+  updateCoupleStats();
+  renderMarriageAlerts();
+  renderCouples();
+}
+
+function updateCoupleStats() {
+  const active = allCouples.filter(c => !c.archived);
+  document.getElementById('stat-couples').textContent = active.length;
+  document.getElementById('stat-nearly').textContent = active.filter(c => c.status_code==='complete').length;
+  document.getElementById('stat-needs-attention').textContent = active.filter(c => c.status_code==='inprogress').length;
+}
+
+function renderMarriageAlerts() {
+  const c = document.getElementById('marriage-alerts');
+  const urgent = allCouples.filter(p => {
+    if(p.archived||p.status_code==='inactive') return false;
+    const docs = p.documents||[];
+    const days = daysUntil(p.wedding_date);
+    return (days!==null&&days<=30&&docs.filter(d=>!d.done).length>0)||(days!==null&&days<=7);
+  });
+  if(!urgent.length){c.innerHTML='';return;}
+  c.innerHTML = `<div class="alert-strip" style="margin-bottom:1rem;flex-direction:column;align-items:flex-start;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><i class="ti ti-alert-triangle" style="color:var(--gold);font-size:15px;"></i><strong style="font-size:13px;">Priority actions</strong></div>
+    ${urgent.map(p=>{
+      const docs = p.documents||[];
+      const out = docs.filter(d=>!d.done).map(d=>d.name);
+      const days = daysUntil(p.wedding_date);
+      const ds = days===0?'TODAY':days===1?'tomorrow':`${days} days`;
+      return `<div style="font-size:13px;color:var(--navy);margin-bottom:3px;">· <strong>${p.groom} &amp; ${p.bride}</strong>${days!==null?` — wedding ${ds}`:''}${out.length?` · outstanding: ${out.slice(0,3).join(', ')}${out.length>3?` +${out.length-3} more`:''}`:''}</div>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderCouples() {
+  const q = (document.getElementById('couple-search')?.value||'').toLowerCase();
+  const items = allCouples.filter(c => {
+    const mf = coupleFilter==='all'?true:coupleFilter==='active'?!c.archived:coupleFilter==='inprogress'?c.status_code==='inprogress'&&!c.archived:coupleFilter==='complete'?c.status_code==='complete'&&!c.archived:coupleFilter==='external'?c.status_code==='external':coupleFilter==='archived'?c.archived:true;
+    return mf && (!q||(c.groom||'').toLowerCase().includes(q)||(c.bride||'').toLowerCase().includes(q));
+  });
+  const el = document.getElementById('couples-list');
+  if(!items.length){el.innerHTML='<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No couples match.</div>';return;}
+  const active = items.filter(c => !c.archived);
+  const archived = items.filter(c => c.archived);
+  let html = active.map(c => renderCoupleCard(c)).join('');
+  if(archived.length) {
+    html += `<div style="display:flex;align-items:center;gap:10px;margin:18px 0 10px;"><div style="flex:1;height:.5px;background:var(--stone);"></div><span style="font-size:11px;color:#6B7280;letter-spacing:.07em;text-transform:uppercase;font-weight:500;white-space:nowrap;">Archived</span><div style="flex:1;height:.5px;background:var(--stone);"></div></div>`;
+    html += archived.map(c => renderCoupleCard(c)).join('');
+  }
+  el.innerHTML = html;
+}
+
+function renderCoupleCard(c) {
+  const days = daysUntil(c.wedding_date);
+  const urgent = days!==null&&days>=0&&days<=7;
+  const sm = COUPLE_STATUS[c.status_code]||COUPLE_STATUS.inprogress;
+  const docs = c.documents||[];
+  const docsDone = docs.filter(d=>d.done).length;
+  const progress = docs.length>0?Math.round((docsDone/docs.length)*100):null;
+  const exp = expandedCoupleId===c.id;
+  const dayStr = days===null?'':(days===0?' · Today!':days===1?' · Tomorrow!':days>=0?` · ${days} days`:'');
+  let h = `<div class="couple-card${urgent?' urgent':''}" style="border-left:4px solid ${sm.dot};">
+    <div class="couple-header" onclick="toggleCouple('${c.id}')">
+      <div style="flex:1;">
+        <div class="couple-name">${c.groom} &amp; ${c.bride}</div>
+        <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center;">
+          <span style="background:${sm.bg};color:${sm.color};border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;letter-spacing:.04em;display:inline-flex;align-items:center;gap:5px;border:1px solid ${sm.color}33;"><span style="width:7px;height:7px;border-radius:50%;background:${sm.dot};display:inline-block;"></span>${sm.label}</span>
+          ${c.wedding_date?`<span style="font-size:11px;color:${urgent?'#C0392B':'#777'};background:${urgent?'#FDEDEC':'#EFEFEF'};border-radius:20px;padding:2px 8px;font-weight:${urgent?700:400};">${urgent?'⚠️ ':''}${fmtDateYear(c.wedding_date)}${c.wedding_time?' · '+c.wedding_time:''}${dayStr}</span>`:''}
+          ${progress!==null?(progress===100?`<span style="font-size:11px;color:#2D6A4F;">✅ docs complete</span>`:`<span style="font-size:11px;color:#922B21;">${docsDone}/${docs.length} docs</span>`):''}
+        </div>
+      </div>
+      <span style="font-size:16px;color:#B0A090;margin-top:2px;">${exp?'▲':'▼'}</span>
+      </div>
+    </div>`;
+  if(exp) {
+    h += `<div class="couple-body">`;
+    h += `<div style="margin-top:10px;">`;
+    if(c.location) h += `<span class="detail-chip">📍 ${c.location}</span>`;
+    if(c.celebrant) h += `<span class="detail-chip">✝ ${c.celebrant}</span>`;
+    if(c.form) h += `<span class="detail-chip">⛪ ${c.form}</span>`;
+    if(c.fee) h += `<span class="detail-chip" style="background:#FEF9E7;">💰 ${c.fee}</span>`;
+    h += `</div>`;
+    const hc = c.bride_email||c.bride_phone||c.groom_email||c.groom_phone;
+    if(hc) {
+      h += `<div class="couple-section-label">Contact</div>`;
+      if(c.bride_email||c.bride_phone) {
+        h += `<div style="font-size:11px;color:#AAA;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Bride — ${c.bride}</div>`;
+        if(c.bride_phone) h += `<a href="tel:${c.bride_phone}" class="contact-chip">📞 ${c.bride_phone}</a>`;
+        if(c.bride_email) h += `<a href="mailto:${c.bride_email}" class="contact-chip">✉️ ${c.bride_email}</a>`;
+      }
+      if(c.groom_email||c.groom_phone) {
+        h += `<div style="font-size:11px;color:#AAA;text-transform:uppercase;letter-spacing:.05em;margin:6px 0 4px;">Groom — ${c.groom}</div>`;
+        if(c.groom_phone) h += `<a href="tel:${c.groom_phone}" class="contact-chip">📞 ${c.groom_phone}</a>`;
+        if(c.groom_email) h += `<a href="mailto:${c.groom_email}" class="contact-chip">✉️ ${c.groom_email}</a>`;
+      }
+    }
+    const _coupleHasNotes = !!(c.notes&&c.notes.trim());
+    h += `<div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;margin-bottom:4px;">
+      ${_coupleHasNotes?`<span class="couple-section-label" style="margin:0;">Notes</span>`:'<span></span>'}
+      <button onclick="toggleCoupleNoteForm('${c.id}')" style="font-size:12px;color:var(--cardinal);background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;">+ Add note</button>
+    </div>`;
+    h += `<div id="couple-note-form-${c.id}" style="display:none;margin-bottom:.5rem;">
+      <textarea id="couple-note-text-${c.id}" placeholder="Add a note…" rows="2" style="width:100%;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;resize:vertical;margin-bottom:6px;"></textarea>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-primary" style="padding:.35rem .9rem;font-size:12px;" onclick="appendCoupleNote('${c.id}')">Save</button>
+        <button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="toggleCoupleNoteForm('${c.id}')">Cancel</button>
+      </div>
+    </div>`;
+    if(_coupleHasNotes) {
+      const noteEntries = c.notes.split('\n\n').filter(n=>n.trim());
+      h += noteEntries.map((n,i) => `<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;padding:8px 12px;background:#FFF8EE;border-left:3px solid var(--gold);border-radius:3px;">
+        <div style="font-size:13px;color:#555;font-style:italic;flex:1;white-space:pre-wrap;">${n}</div>
+        <button onclick="deleteCoupleNote('${c.id}',${i})" title="Delete note" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;padding:0;flex-shrink:0;line-height:1.4;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">✕</button>
+      </div>`).join('');
+    }
+    h += `<div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;margin-bottom:4px;">
+      <span class="couple-section-label" style="margin:0;">Preparation checklist</span>
+      <button onclick="toggleCoupleDocForm('${c.id}')" style="font-size:12px;color:var(--cardinal);background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;">+ Add document</button>
+    </div>`;
+    h += `<div id="couple-doc-form-${c.id}" style="display:none;margin-bottom:.5rem;">
+      <input type="text" id="couple-doc-name-${c.id}" placeholder="Document name…" style="width:100%;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;margin-bottom:6px;" />
+      <div style="display:flex;gap:8px;">
+        <button class="btn-primary" style="padding:.35rem .9rem;font-size:12px;" onclick="addCoupleDoc('${c.id}')">Save</button>
+        <button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="toggleCoupleDocForm('${c.id}')">Cancel</button>
+      </div>
+    </div>`;
+    if(docs.length) {
+      if(progress!==null) {
+        h += `<div class="prog-bar-wrap"><div class="prog-bar-fill" style="width:${progress}%;background:${progress===100?'#2D6A4F':'var(--gold)'};"></div></div>`;
+        h += `<div style="font-size:11px;color:#888;margin-bottom:6px;">${progress}% complete</div>`;
+      }
+      h += docs.map((d,i) => `<div class="doc-item" style="padding:4px 6px;border-radius:var(--radius-sm);transition:background .12s;" onmouseover="this.style.background='var(--parch)'" onmouseout="this.style.background='transparent'"><span style="font-size:15px;cursor:pointer;" onclick="toggleDoc('${c.id}',${i})">${d.done?'✅':'❌'}</span><span style="color:${d.done?'#2D6A4F':'#922B21'};flex:1;cursor:pointer;" onclick="toggleDoc('${c.id}',${i})">${d.name}</span><button onclick="deleteCoupleDoc('${c.id}',${i})" title="Delete" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;padding:0 0 0 8px;flex-shrink:0;line-height:1;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">✕</button></div>`).join('');
+    }
+    const _tl = c.timeline||[];
+    h += `<div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;margin-bottom:4px;">
+      <span class="couple-section-label" style="margin:0;">Timeline</span>
+      <button onclick="toggleCoupleTlForm('${c.id}')" style="font-size:12px;color:var(--cardinal);background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;">+ Add update</button>
+    </div>`;
+    h += `<div id="couple-tl-form-${c.id}" style="display:none;background:var(--parch);border:.5px solid var(--stone);border-radius:var(--radius-sm);padding:.75rem;margin-bottom:.75rem;">
+      <input type="date" id="couple-tl-date-${c.id}" value="${todayCST()}" style="width:100%;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;margin-bottom:6px;" />
+      <input type="text" id="couple-tl-event-${c.id}" placeholder="Update comment…" style="width:100%;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;margin-bottom:6px;" />
+      <div style="display:flex;gap:8px;">
+        <button class="btn-primary" style="padding:.35rem .9rem;font-size:12px;" onclick="addCoupleTlEntry('${c.id}')">Save</button>
+        <button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="toggleCoupleTlForm('${c.id}')">Cancel</button>
+      </div>
+    </div>`;
+    if(_tl.length) {
+      h += `<div class="tl-wrap">`;
+      h += _tl.map((e,i) => `<div class="tl-item" style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+        <div style="flex:1;"><div class="tl-dot"></div>${e.date?`<div class="tl-date">${fmtDate(e.date)}</div>`:''}<div class="tl-event">${e.event}</div></div>
+        <button onclick="deleteCoupleTlEntry('${c.id}',${i})" title="Delete" style="background:none;border:none;cursor:pointer;color:#AAA;font-size:14px;padding:0;flex-shrink:0;line-height:1;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#AAA'">✕</button>
+      </div>`).join('');
+      h += `</div>`;
+    } else {
+      h += `<div style="font-size:13px;color:#6B7280;font-style:italic;padding:.25rem 0;">No timeline entries yet.</div>`;
+    }
+    if(c.updated_at) {
+      const _upd = new Date(c.updated_at);
+      const _now = new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
+      const _days = Math.floor((_now-_upd)/86400000);
+      const _updStr = _upd.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+      let _aging = '';
+      if(_days>=60&&!c.archived&&c.status_code==='inprogress') {
+        _aging = `<span style="font-size:11px;background:#FDF8EE;color:#854F0B;border-radius:20px;padding:2px 9px;margin-left:8px;">Inactive ${_days} days</span>`;
+      }
+      h += `<div style="font-size:11px;color:#AAA;margin-top:10px;margin-bottom:8px;">Last updated: ${_updStr}${_aging}</div>`;
+    }
+    h += `<div style="margin-top:4px;"><button class="btn-primary" onclick="openCoupleEdit('${c.id}')">Edit</button></div>`;
+    h += `</div>`;
+  }
+  h += `</div>`;
+  return h;
+}
+
+function toggleCouple(id) {expandedCoupleId=expandedCoupleId===id?null:id;renderCouples();}
+
+function openCoupleEdit(id) {
+  const c = allCouples.find(p => p.id===id);
+  if(c){document.getElementById('modal-content').innerHTML=coupleForm(c);document.getElementById('modal-overlay').classList.add('open');}
+}
+
+async function toggleDoc(coupleId, docIndex) {
+  const couple = allCouples.find(c => c.id===coupleId);
+  if(!couple) return;
+  const docs = JSON.parse(JSON.stringify(couple.documents||[]));
+  docs[docIndex].done = !docs[docIndex].done;
+  const {error} = await sb.from('couples').update({documents:docs, updated_at:new Date().toISOString()}).eq('id',coupleId);
+  if(error){console.error(error);return;}
+  couple.documents = docs;
+  renderCouples();
+}
+
+async function quickCoupleStatusChange(coupleId, newStatus) {
+  const couple = allCouples.find(c => c.id===coupleId);
+  if(!couple||couple.status_code===newStatus) return;
+  const {error} = await sb.from('couples').update({status_code:newStatus,updated_at:new Date().toISOString()}).eq('id',coupleId);
+  if(error){alert('Save failed: '+error.message);return;}
+  couple.status_code = newStatus;
+  updateCoupleStats();
+  renderMarriageAlerts();
+  renderCouples();
+}
+
+function toggleCoupleNoteForm(coupleId) {
+  const f = document.getElementById('couple-note-form-'+coupleId);
+  if(!f) return;
+  f.style.display = f.style.display==='none'?'block':'none';
+  if(f.style.display==='block') document.getElementById('couple-note-text-'+coupleId).focus();
+}
+
+async function appendCoupleNote(coupleId) {
+  const couple = allCouples.find(c => c.id===coupleId);
+  if(!couple) return;
+  const addition = document.getElementById('couple-note-text-'+coupleId).value.trim();
+  if(!addition){alert('Please enter a note.');return;}
+  const now = new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
+  const dateStr = `${now.getMonth()+1}/${now.getDate()}/${now.getFullYear()}`;
+  const newNotes = couple.notes?`${couple.notes}\n\n[${dateStr}] ${addition}`:`[${dateStr}] ${addition}`;
+  const {error} = await sb.from('couples').update({notes:newNotes,updated_at:new Date().toISOString()}).eq('id',coupleId);
+  if(error){alert('Save failed: '+error.message);return;}
+  couple.notes = newNotes;
+  renderCouples();
+}
+
+async function deleteCoupleNote(coupleId, noteIndex) {
+  const couple = allCouples.find(c => c.id===coupleId);
+  if(!couple) return;
+  if(!confirm('Delete this note?')) return;
+  const entries = couple.notes.split('\n\n').filter(n=>n.trim());
+  entries.splice(noteIndex,1);
+  const newNotes = entries.join('\n\n');
+  const {error} = await sb.from('couples').update({notes:newNotes,updated_at:new Date().toISOString()}).eq('id',coupleId);
+  if(error){alert('Delete failed: '+error.message);return;}
+  couple.notes = newNotes;
+  renderCouples();
+}
+
+function toggleCoupleDocForm(coupleId) {
+  const f = document.getElementById('couple-doc-form-'+coupleId);
+  if(!f) return;
+  f.style.display = f.style.display==='none'?'block':'none';
+  if(f.style.display==='block') document.getElementById('couple-doc-name-'+coupleId).focus();
+}
+
+async function addCoupleDoc(coupleId) {
+  const couple = allCouples.find(c => c.id===coupleId);
+  if(!couple) return;
+  const name = document.getElementById('couple-doc-name-'+coupleId).value.trim();
+  if(!name){alert('Please enter a document name.');return;}
+  const docs = JSON.parse(JSON.stringify(couple.documents||[]));
+  docs.push({name, done:false});
+  const {error} = await sb.from('couples').update({documents:docs,updated_at:new Date().toISOString()}).eq('id',coupleId);
+  if(error){alert('Save failed: '+error.message);return;}
+  couple.documents = docs;
+  renderCouples();
+}
+
+// deleteCoupleDoc was misplaced in annulments section in original — belongs here
+async function deleteCoupleDoc(coupleId, docIndex) {
+  const couple = allCouples.find(c => c.id===coupleId);
+  if(!couple) return;
+  if(!confirm(`Delete "${couple.documents[docIndex].name}"?`)) return;
+  const docs = JSON.parse(JSON.stringify(couple.documents||[]));
+  docs.splice(docIndex,1);
+  const {error} = await sb.from('couples').update({documents:docs,updated_at:new Date().toISOString()}).eq('id',coupleId);
+  if(error){alert('Delete failed: '+error.message);return;}
+  couple.documents = docs;
+  renderCouples();
+}
+
+function toggleCoupleTlForm(coupleId) {
+  const f = document.getElementById('couple-tl-form-'+coupleId);
+  if(!f) return;
+  f.style.display = f.style.display==='none'?'block':'none';
+  if(f.style.display==='block') document.getElementById('couple-tl-event-'+coupleId).focus();
+}
+
+async function addCoupleTlEntry(coupleId) {
+  const couple = allCouples.find(c => c.id===coupleId);
+  if(!couple) return;
+  const date = document.getElementById('couple-tl-date-'+coupleId).value||null;
+  const event = document.getElementById('couple-tl-event-'+coupleId).value.trim();
+  if(!event){alert('Please enter a comment.');return;}
+  const tl = JSON.parse(JSON.stringify(couple.timeline||[]));
+  tl.push({date, event});
+  const {error} = await sb.from('couples').update({timeline:tl,updated_at:new Date().toISOString()}).eq('id',coupleId);
+  if(error){alert('Save failed: '+error.message);return;}
+  couple.timeline = tl;
+  renderCouples();
+}
+
+async function deleteCoupleTlEntry(coupleId, index) {
+  const couple = allCouples.find(c => c.id===coupleId);
+  if(!couple) return;
+  if(!confirm('Delete this timeline entry?')) return;
+  const tl = JSON.parse(JSON.stringify(couple.timeline||[]));
+  tl.splice(index,1);
+  const {error} = await sb.from('couples').update({timeline:tl,updated_at:new Date().toISOString()}).eq('id',coupleId);
+  if(error){alert('Delete failed: '+error.message);return;}
+  couple.timeline = tl;
+  renderCouples();
+}
+
+export function coupleForm(data) {
+  const statuses = Object.entries(COUPLE_STATUS).map(([k,v]) => `<option value="${k}"${data?.status_code===k?' selected':''}>${v.label}</option>`).join('');
+  return `<div class="modal-title">${data?'Edit — '+data.groom+' & '+data.bride:'Add couple'}</div>
+  <label>Groom name</label><input id="f-groom" value="${data?.groom||''}" />
+  <label>Bride name</label><input id="f-bride" value="${data?.bride||''}" />
+  <label>Wedding date</label><input type="date" id="f-wd" value="${data?.wedding_date||''}" />
+  <label>Wedding time</label><input id="f-wt" value="${data?.wedding_time||''}" placeholder="e.g. 3:00 PM" />
+  <label>Location</label><input id="f-loc" value="${data?.location||''}" />
+  <label>Celebrant</label><input id="f-cel" value="${data?.celebrant||''}" />
+  <label>Form</label><input id="f-form" value="${data?.form||''}" placeholder="e.g. Nuptial Mass" />
+  <label>Status</label><select id="f-st">${statuses}</select>
+  <label>Bride phone</label><input id="f-bp" value="${data?.bride_phone||''}" />
+  <label>Bride email</label><input id="f-be" value="${data?.bride_email||''}" />
+  <label>Groom phone</label><input id="f-gp" value="${data?.groom_phone||''}" />
+  <label>Groom email</label><input id="f-ge" value="${data?.groom_email||''}" />
+  <label>Fee</label><input id="f-fee" value="${data?.fee||''}" />
+  <label>Notes</label><textarea id="f-notes">${data?.notes||''}</textarea>
+  <label><input type="checkbox" id="f-arch" ${data?.archived?'checked':''} style="margin-right:6px;">Archived</label>
+  <div class="modal-actions" style="justify-content:space-between;">
+    ${data?`<button class="btn-delete" onclick="deleteCouple('${data.id}')">Delete</button>`:'<span></span>'}
+    <div style="display:flex;gap:8px;">
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" onclick="saveCouple(${data?`'${data.id}'`:null})">Save</button>
+    </div>
+  </div>`;
+}
+
+async function deleteCouple(id) {
+  if(!confirm('Permanently delete this couple? This cannot be undone.')) return;
+  const {error} = await sb.from('couples').delete().eq('id',id);
+  if(error){alert('Delete failed: '+error.message);return;}
+  closeModal(); loadCouples();
+}
+
+async function saveCouple(id) {
+  const payload = {
+    groom:document.getElementById('f-groom').value.trim(),
+    bride:document.getElementById('f-bride').value.trim(),
+    wedding_date:document.getElementById('f-wd').value||null,
+    wedding_time:document.getElementById('f-wt').value.trim()||null,
+    location:document.getElementById('f-loc').value.trim(),
+    celebrant:document.getElementById('f-cel').value.trim(),
+    form:document.getElementById('f-form').value.trim()||null,
+    status_code:document.getElementById('f-st').value,
+    bride_phone:document.getElementById('f-bp').value.trim()||null,
+    bride_email:document.getElementById('f-be').value.trim()||null,
+    groom_phone:document.getElementById('f-gp').value.trim()||null,
+    groom_email:document.getElementById('f-ge').value.trim()||null,
+    fee:document.getElementById('f-fee').value.trim()||null,
+    notes:document.getElementById('f-notes').value.trim(),
+    archived:document.getElementById('f-arch').checked,
+    updated_at:new Date().toISOString()
+  };
+  if(!payload.groom||!payload.bride){alert('Groom and bride names are required.');return;}
+  let err;
+  if(id){const r=await sb.from('couples').update(payload).eq('id',id);err=r.error;}
+  else{const r=await sb.from('couples').insert(payload);err=r.error;}
+  if(err){alert('Save failed: '+err.message);return;}
+  closeModal(); loadCouples();
+}
+
+Object.assign(window, {
+  toggleCouple, openCoupleEdit, toggleDoc, quickCoupleStatusChange,
+  toggleCoupleNoteForm, appendCoupleNote, deleteCoupleNote,
+  toggleCoupleDocForm, addCoupleDoc, deleteCoupleDoc,
+  toggleCoupleTlForm, addCoupleTlEntry, deleteCoupleTlEntry,
+  setCoupleFilter, saveCouple, deleteCouple,
+});
