@@ -238,6 +238,17 @@ function renderCaseCard(c) {
 
 function toggleCase(id) {expandedCaseId=expandedCaseId===id?null:id;renderCases();}
 
+// Called from other panels (e.g. OCIA) to navigate to and expand a specific case
+export function expandCase(id) {
+  expandedCaseId = id;
+  window.switchPanel('annulments');
+  // loadCases is async; wait for it to render before scrolling
+  setTimeout(() => {
+    const target = document.querySelector('#panel-annulments .couple-body')?.closest('.couple-card');
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 300);
+}
+
 async function quickStatusChange(caseId, newStatus) {
   const cas = allCases.find(c => c.id===caseId);
   if(!cas||cas.status_code===newStatus) return;

@@ -1,7 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST } from '../utils.js';
-import { CASE_STATUS } from './annulments.js';
+import { CASE_STATUS, expandCase } from './annulments.js';
 
 const OCIA_STATUS = {
   inquirer:    {label:'Inquirer',                color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED'},
@@ -230,8 +230,8 @@ function renderOciaCard(person) {
       const linked = store.allCases.find(c => c.id===person.linked_annulment_id);
       if(linked) {
         const lsm = CASE_STATUS[linked.status_code]||CASE_STATUS.prep;
-        h += `<div style="margin-top:6px;padding:6px 10px;background:#D6EAF8;border-left:3px solid #1B4F72;border-radius:3px;font-size:13px;">
-          <div style="color:#1B4F72;font-weight:600;font-size:11px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:2px;">Linked annulment case</div>
+        h += `<div onclick="expandCase('${linked.id}')" style="margin-top:6px;padding:6px 10px;background:#D6EAF8;border-left:3px solid #1B4F72;border-radius:3px;font-size:13px;cursor:pointer;" onmouseover="this.style.background='#C5D9EE'" onmouseout="this.style.background='#D6EAF8'">
+          <div style="color:#1B4F72;font-weight:600;font-size:11px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:2px;">Linked annulment case · <span style="font-weight:400;text-transform:none;letter-spacing:0;">tap to open →</span></div>
           <div>${linked.petitioner} v. ${linked.respondent||'—'} · <span style="color:${lsm.color};">${lsm.label}</span></div>
         </div>`;
       }
@@ -432,7 +432,6 @@ function openOciaModal(id) {
   const person = id?allOcia.find(p => p.id===id):null;
   const pm = person?.prior_marriages||[];
   const isMinor = ociaIsMinor(person||{});
-  const caseOptions = store.allCases.map(c => `<option value="${c.id}"${person?.linked_annulment_id===c.id?' selected':''}>${c.petitioner}${c.respondent?' v. '+c.respondent:''}</option>`).join('');
 
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-title">${person?'Edit — '+person.name:'Add person'}</div>
@@ -505,11 +504,6 @@ function openOciaModal(id) {
       </div>
     </div>
 
-    ${store.allCases.length?`<label>Linked annulment case</label>
-    <select id="of-linked">
-      <option value="">— None —</option>
-      ${caseOptions}
-    </select>`:''}
 
     <div id="of-rec-wrap" style="${['preparation','complete'].includes(person?.status_code)?'':'display:none;'}margin-top:10px;">
       <label>Anticipated reception date</label>
@@ -654,8 +648,6 @@ async function saveOcia(id) {
   const bapStatus = document.getElementById('of-bap-status')?.value||'unbaptized';
   const consentChecked = document.getElementById('of-consent')?.checked||false;
   const pm = ociaCollectPriorMarriages();
-  const linkedEl = document.getElementById('of-linked');
-
   const payload = {
     name,
     dob:document.getElementById('of-dob').value.trim()||null,
@@ -679,7 +671,6 @@ async function saveOcia(id) {
     consent_parent_phone:consentChecked?document.getElementById('of-consent-phone')?.value.trim()||null:null,
     consent_parent_email:consentChecked?document.getElementById('of-consent-email')?.value.trim()||null:null,
     consent_date:consentChecked?document.getElementById('of-consent-date')?.value||null:null,
-    linked_annulment_id:linkedEl?.value||null,
     archived:document.getElementById('of-arch').checked,
     updated_at:new Date().toISOString(),
   };
@@ -712,7 +703,7 @@ async function deleteOciaPerson(id) {
 }
 
 Object.assign(window, {
-  setOciaFilter, toggleOcia,
+  setOciaFilter, toggleOcia, expandCase,
   linkOciaPriorCase, unlinkOciaPriorCase,
   toggleOciaNoteForm, appendOciaNote, deleteOciaNote,
   toggleOciaDocForm, addOciaDoc, toggleOciaDoc, deleteOciaDoc,
