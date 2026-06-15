@@ -510,7 +510,7 @@ export function openCoupleAdd() {
 }
 
 Object.assign(window, {
-  toggleCouple, openCoupleEdit, openCoupleAdd,
+  renderCouples, toggleCouple, openCoupleEdit, openCoupleAdd,
   toggleDoc, quickCoupleStatusChange,
   toggleCoupleNoteForm, appendCoupleNote, deleteCoupleNote,
   toggleCoupleDocForm, addCoupleDoc, deleteCoupleDoc,

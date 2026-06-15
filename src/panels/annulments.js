@@ -507,7 +507,7 @@ async function saveCase(id) {
 }
 
 Object.assign(window, {
-  setCaseFilter, toggleCase, quickStatusChange,
+  renderCases, setCaseFilter, toggleCase, quickStatusChange,
   toggleTlForm, addTlEntry, deleteTlEntry,
   openCaseEdit, onCaseTypeChange, onCaseStatusChange, toggleCaseDoc, deleteCaseDoc,
   deleteCaseNote, buildBaptismalEmail, toggleBaptismalForm, saveBaptismalDetails,

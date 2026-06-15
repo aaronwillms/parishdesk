@@ -6,7 +6,11 @@
       "Bash(xxd)",
       "Bash(python3 -c ' *)",
       "Bash(npm run *)",
-      "Bash(node --input-type=module)"
+      "Bash(node --input-type=module)",
+      "Bash(sed -n '509,520p' /Volumes/RemovableDrive/parishdesk/src/panels/annulments.js)",
+      "Bash(sed -n '512,520p' /Volumes/RemovableDrive/parishdesk/src/panels/marriage.js)",
+      "Bash(sed -n '716,725p' /Volumes/RemovableDrive/parishdesk/src/panels/ocia.js)",
+      "Bash(sed -n '441,450p' /Volumes/RemovableDrive/parishdesk/src/panels/sacramental.js)"
     ]
   }
 }

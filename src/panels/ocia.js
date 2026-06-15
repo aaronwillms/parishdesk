@@ -714,7 +714,7 @@ async function deleteOciaPerson(id) {
 }
 
 Object.assign(window, {
-  setOciaFilter, toggleOcia, expandCase,
+  renderOcia, setOciaFilter, toggleOcia, expandCase,
   linkOciaPriorCase, unlinkOciaPriorCase,
   toggleOciaNoteForm, appendOciaNote, deleteOciaNote,
   toggleOciaDocForm, addOciaDoc, toggleOciaDoc, deleteOciaDoc,

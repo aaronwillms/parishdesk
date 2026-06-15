@@ -439,7 +439,7 @@ async function deleteSacramental(prog, id) {
 }
 
 Object.assign(window, {
-  setSacramentalFilter, toggleSacramental, quickSacramentalStatus,
+  renderSacramental, setSacramentalFilter, toggleSacramental, quickSacramentalStatus,
   toggleSacNoteForm, appendSacNote, deleteSacNote,
   toggleSacDocForm, addSacDoc, toggleSacDoc, deleteSacDoc,
   toggleSacTlForm, addSacTlEntry, deleteSacTlEntry,
