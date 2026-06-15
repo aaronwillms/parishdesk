@@ -156,11 +156,11 @@ function announcementForm(data) {
 
   const teamCheckboxes = teams.length
     ? teams.map(t => `
-        <label style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:.5px solid #F0EDE8;cursor:pointer;font-weight:400;">
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:.5px solid #F0EDE8;cursor:pointer;">
           <input type="checkbox" class="af-team-cb" value="${t.id}" ${existingTeamIds.has(t.id) ? 'checked' : ''}
-            style="width:14px;height:14px;accent-color:var(--cardinal);flex-shrink:0;" />
+            style="width:14px;height:14px;accent-color:var(--cardinal);flex-shrink:0;margin:0;cursor:pointer;" />
           <span style="font-size:13px;color:var(--navy);">${t.name}</span>
-        </label>`).join('')
+        </div>`).join('')
     : '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No teams found.</div>';
 
   return `<div class="modal-title">${data ? 'Edit announcement' : 'Add announcement'}</div>
