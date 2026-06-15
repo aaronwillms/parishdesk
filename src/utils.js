@@ -38,4 +38,6 @@ export const PANEL_TITLES = {
   projects:     'My Projects',
   tasks:        'Tasks',
   personnel:    'Directory',
+  admin:        'Administration',
+  userProfile:  'My Profile',
 };

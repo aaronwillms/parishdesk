@@ -134,6 +134,13 @@ function _renderUsersTab() {
 
   el.innerHTML = `<div id="admin-user-list">${_users.map(_userRow).join('')}</div>`;
 
+  // Hydrate avatar placeholders — can't call createAvatar() inside innerHTML strings
+  el.querySelectorAll('.admin-avatar-slot').forEach(slot => {
+    const { uid, name, url } = slot.dataset;
+    slot.innerHTML = '';
+    createAvatar({ container: slot, userId: uid, name: name || uid, size: 36 });
+  });
+
   document.querySelectorAll('.admin-user-row').forEach(row => {
     row.addEventListener('click', () => {
       const uid = row.dataset.userId;
