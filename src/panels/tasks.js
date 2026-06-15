@@ -1,6 +1,9 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST } from '../utils.js';
+import { createContactPicker } from '../ui/contactPicker.js';
+
+let _taskAssignedPicker = null;
 
 const RECURRENCE_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' };
 
@@ -155,17 +158,12 @@ function setTaskFilter(f) {
 // ── Modal ──────────────────────────────────────────────────────────────────
 
 function taskForm(data) {
-  const people = [...(store.personnel || [])].sort((a, b) =>
-    (a.name || '').split(' ').pop().localeCompare((b.name || '').split(' ').pop()));
   const teams = store.teams || [];
 
   return `<div class="modal-title">${data ? 'Edit task' : 'Add task'}</div>
   <label>Title</label><input id="tf-title" value="${data?.title || ''}" placeholder="Task description" />
   <label>Assigned to (optional)</label>
-  <select id="tf-assigned">
-    <option value="">— None —</option>
-    ${people.map(p => `<option value="${p.id}"${p.id === data?.assigned_to ? ' selected' : ''}>${p.name}</option>`).join('')}
-  </select>
+  <div id="tf-assigned-picker"></div>
   <label>Team (optional)</label>
   <select id="tf-team">
     <option value="">— None —</option>
@@ -205,9 +203,22 @@ function toggleRecurUI() {
   if (el) el.style.display = document.getElementById('tf-recurring')?.checked ? 'block' : 'none';
 }
 
+function initTaskPicker(assignedToId) {
+  if (_taskAssignedPicker) { _taskAssignedPicker.destroy(); _taskAssignedPicker = null; }
+  const container = document.getElementById('tf-assigned-picker');
+  if (!container) return;
+  _taskAssignedPicker = createContactPicker({
+    container,
+    placeholder: 'Search by name…',
+    onSelect: () => {},
+    initialValue: assignedToId || null,
+  });
+}
+
 function openAddTask() {
   document.getElementById('modal-content').innerHTML = taskForm(null);
   document.getElementById('modal-overlay').classList.add('open');
+  initTaskPicker(null);
 }
 
 function openTaskDetail(id) {
@@ -215,6 +226,7 @@ function openTaskDetail(id) {
   if (!t) return;
   document.getElementById('modal-content').innerHTML = taskForm(t);
   document.getElementById('modal-overlay').classList.add('open');
+  initTaskPicker(t.assigned_to);
 }
 
 async function saveTask(id) {
@@ -223,7 +235,7 @@ async function saveTask(id) {
   const recurring = !!document.getElementById('tf-recurring')?.checked;
   const payload = {
     title,
-    assigned_to:        document.getElementById('tf-assigned').value  || null,
+    assigned_to:        _taskAssignedPicker?.getId() || null,
     team_id:            document.getElementById('tf-team').value      || null,
     due_date:           document.getElementById('tf-due').value       || null,
     visibility:         document.getElementById('tf-vis').value,

@@ -1,8 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 
-let allTeams = [];       // [{ ...team, members: [{...team_member, personnel: {...}}] }]
-let expandedTeamId = null;
+let allTeams = [];
 
 // ── Data ───────────────────────────────────────────────────────────────────
 
@@ -15,7 +14,7 @@ export async function loadTeamsStore() {
 export async function loadTeams() {
   const [{ data: teamsData, error: teamsErr }, { data: membersData, error: membersErr }] = await Promise.all([
     sb.from('teams').select('*').order('sort_order', { nullsFirst: false }).order('name'),
-    sb.from('team_members').select('*, personnel(id,name,title,phone,email)').order('sort_order', { nullsFirst: false }),
+    sb.from('team_members').select('id,team_id').order('id'),
   ]);
   if (teamsErr)   console.error('[teams] load error:', teamsErr);
   if (membersErr) console.error('[team_members] load error:', membersErr);
@@ -23,134 +22,61 @@ export async function loadTeams() {
   const members = membersData || [];
   allTeams = (teamsData || []).map(t => ({
     ...t,
-    members: members.filter(m => m.team_id === t.id),
+    memberCount: members.filter(m => m.team_id === t.id).length,
   }));
   store.teams = allTeams.map(({ id, name }) => ({ id, name }));
-  renderTeams();
+  renderTeamsLanding();
+  updateTeamsSubNav();
 }
 
-// ── Render ─────────────────────────────────────────────────────────────────
+// ── Landing render ─────────────────────────────────────────────────────────
 
-function contactChips(p) {
-  let out = '';
-  if (p.phone) out += `<a href="tel:${p.phone}" style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:#8FA8BF;text-decoration:none;">📞 ${p.phone}</a>`;
-  if (p.email) out += `<a href="mailto:${p.email}" style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:#8FA8BF;text-decoration:none;">✉️ ${p.email}</a>`;
-  return out ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:3px;">${out}</div>` : '';
-}
-
-function renderTeams() {
+function renderTeamsLanding() {
   const el = document.getElementById('teams-list');
   if (!el) return;
+
   if (!allTeams.length) {
-    el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No teams yet. Add one to get started.</div>';
+    el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No teams yet. Use the button above to create one.</div>';
     return;
   }
-  el.innerHTML = allTeams.map(t => renderTeamCard(t)).join('');
+
+  el.innerHTML = allTeams.map(t => `
+    <div class="team-landing-card" onclick="window.showTeamDashboard('${t.id}')" style="
+      background:#FFFFFF;
+      border:.5px solid #E2DDD6;
+      border-radius:8px;
+      padding:1rem 1.1rem;
+      margin-bottom:.65rem;
+      cursor:pointer;
+      transition:box-shadow .15s, border-color .15s;
+    "
+    onmouseover="this.style.boxShadow='0 4px 16px rgba(28,43,58,.12)';this.style.borderColor='#C9A84C';"
+    onmouseout="this.style.boxShadow='';this.style.borderColor='#E2DDD6';">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-family:'Cormorant Garamond',Georgia,serif;font-size:18px;font-weight:700;color:#1C2B3A;line-height:1.2;">${t.name}</div>
+          ${t.description ? `<div style="font-size:13px;color:#6B7280;margin-top:4px;line-height:1.45;">${t.description}</div>` : ''}
+          <div style="font-size:11.5px;color:#9CA3AF;margin-top:6px;font-weight:500;">${t.memberCount} member${t.memberCount !== 1 ? 's' : ''}</div>
+        </div>
+        <span style="color:#C9A84C;font-size:18px;margin-top:2px;flex-shrink:0;">›</span>
+      </div>
+    </div>
+  `).join('');
 }
 
-function renderTeamCard(t) {
-  const exp = expandedTeamId === t.id;
-  let h = `<div class="card" id="team-card-${t.id}" style="margin-bottom:.75rem;">`;
+// ── Sub-nav update (called after load and after dashboard navigation) ───────
 
-  // Header row
-  h += `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">`;
-  h += `<div style="flex:1;cursor:pointer;" onclick="toggleTeam('${t.id}')">`;
-  h += `<div style="font-size:15px;font-weight:600;color:var(--navy);">${t.name}</div>`;
-  if (t.description) h += `<div style="font-size:13px;color:#6B7280;margin-top:2px;">${t.description}</div>`;
-  h += `<div style="font-size:12px;color:#9CA3AF;margin-top:4px;">${t.members.length} member${t.members.length !== 1 ? 's' : ''}</div>`;
-  h += `</div>`;
-  h += `<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">`;
-  h += `<button onclick="openTeamSettings('${t.id}')" title="Team settings" style="background:none;border:none;cursor:pointer;color:#9CA3AF;font-size:16px;padding:2px;line-height:1;" onmouseover="this.style.color='var(--navy)'" onmouseout="this.style.color='#9CA3AF'">⚙</button>`;
-  h += `<span style="font-size:14px;color:#B0A090;cursor:pointer;" onclick="toggleTeam('${t.id}')">${exp ? '▲' : '▼'}</span>`;
-  h += `</div></div>`;
-
-  if (exp) {
-    h += `<div style="margin-top:12px;border-top:.5px solid var(--stone);padding-top:12px;">`;
-
-    if (t.members.length) {
-      h += t.members.map(m => {
-        const p = m.personnel || {};
-        return `<div class="evt-item" style="cursor:default;margin-bottom:6px;">
-          <div style="flex:1;min-width:0;">
-            <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">
-              <span style="font-weight:500;font-size:14px;color:var(--navy);">${p.name || '—'}</span>
-              ${m.role ? `<span style="font-size:11px;background:#F0ECE8;color:#6B7280;border-radius:20px;padding:1px 8px;">${m.role}</span>` : ''}
-            </div>
-            ${p.title ? `<div style="font-size:12px;color:#6B7280;margin-top:1px;">${p.title}</div>` : ''}
-            ${contactChips(p)}
-          </div>
-          <button onclick="removeMember('${t.id}','${m.id}')" title="Remove member" style="background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:14px;padding:0;flex-shrink:0;line-height:1;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#D1D5DB'">✕</button>
-        </div>`;
-      }).join('');
-    } else {
-      h += `<div style="font-size:13px;color:#9CA3AF;font-style:italic;margin-bottom:8px;">No members yet.</div>`;
-    }
-
-    // Add member inline picker
-    h += `<div id="team-add-member-${t.id}" style="display:none;margin-top:8px;background:var(--parch);border:.5px solid var(--stone);border-radius:var(--radius-sm);padding:.65rem .75rem;">`;
-    h += `<div style="font-size:12px;font-weight:600;color:#555;margin-bottom:6px;">Add member</div>`;
-    const existingIds = new Set(t.members.map(m => m.personnel_id));
-    const available = (store.personnel || []).filter(p => !existingIds.has(p.id)).sort((a, b) => {
-      const la = (a.name || '').split(' ').pop();
-      const lb = (b.name || '').split(' ').pop();
-      return la.localeCompare(lb);
-    });
-    h += `<select id="team-person-sel-${t.id}" style="width:100%;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.35rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;outline:none;margin-bottom:6px;">`;
-    h += `<option value="">— Select person —</option>`;
-    h += available.map(p => `<option value="${p.id}">${p.name}${p.title ? ' — ' + p.title : ''}</option>`).join('');
-    h += `</select>`;
-    h += `<input type="text" id="team-role-inp-${t.id}" placeholder="Role (e.g. Chair, Member…)" style="width:100%;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.35rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;outline:none;margin-bottom:6px;" />`;
-    h += `<div style="display:flex;gap:8px;">`;
-    h += `<button class="btn-primary" style="padding:.3rem .75rem;font-size:12px;" onclick="confirmAddMember('${t.id}')">Add</button>`;
-    h += `<button class="btn-secondary" style="padding:.3rem .75rem;font-size:12px;" onclick="toggleAddMember('${t.id}')">Cancel</button>`;
-    h += `</div></div>`;
-
-    h += `<button onclick="toggleAddMember('${t.id}')" style="font-size:12px;color:var(--cardinal);background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;margin-top:8px;" id="team-add-btn-${t.id}">+ Add member</button>`;
-    h += `</div>`;
-  }
-
-  h += `</div>`;
-  return h;
-}
-
-// ── Interactions ───────────────────────────────────────────────────────────
-
-function toggleTeam(id) {
-  expandedTeamId = expandedTeamId === id ? null : id;
-  renderTeams();
-}
-
-function toggleAddMember(teamId) {
-  const wrap = document.getElementById('team-add-member-' + teamId);
-  const btn  = document.getElementById('team-add-btn-' + teamId);
-  if (!wrap) return;
-  const opening = wrap.style.display === 'none';
-  wrap.style.display = opening ? 'block' : 'none';
-  if (btn) btn.style.display = opening ? 'none' : 'inline';
-  if (opening) document.getElementById('team-person-sel-' + teamId)?.focus();
-}
-
-async function confirmAddMember(teamId) {
-  const sel  = document.getElementById('team-person-sel-' + teamId);
-  const role = document.getElementById('team-role-inp-' + teamId);
-  if (!sel?.value) { alert('Please select a person.'); return; }
-  const { error } = await sb.from('team_members').insert({
-    team_id: teamId,
-    personnel_id: sel.value,
-    role: role?.value.trim() || null,
-  });
-  if (error) { alert('Failed to add member: ' + error.message); return; }
-  await loadTeams();
-  expandedTeamId = teamId;
-  renderTeams();
-}
-
-async function removeMember(teamId, memberId) {
-  if (!confirm('Remove this member from the team?')) return;
-  const { error } = await sb.from('team_members').delete().eq('id', memberId);
-  if (error) { alert('Failed to remove: ' + error.message); return; }
-  expandedTeamId = teamId;
-  await loadTeams();
+export function updateTeamsSubNav() {
+  const subNav = document.getElementById('teams-subnav');
+  if (!subNav) return;
+  subNav.innerHTML = allTeams.map(t => `
+    <div class="nav-subnav-item" data-team-id="${t.id}" onclick="window.showTeamDashboard('${t.id}')"
+      style="padding:.35rem .6rem .35rem 2.4rem;font-size:12.5px;color:#8FA8BF;cursor:pointer;border-radius:4px;transition:background .12s,color .12s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
+      onmouseover="if(!this.classList.contains('active')){this.style.background='rgba(255,255,255,.07)';this.style.color='#E5DDD0';}"
+      onmouseout="if(!this.classList.contains('active')){this.style.background='';this.style.color='#8FA8BF';}">
+      ${t.name}
+    </div>
+  `).join('');
 }
 
 // ── Team settings modal ────────────────────────────────────────────────────
@@ -168,7 +94,7 @@ function openAddTeam() {
 }
 
 function teamSettingsForm(t) {
-  return `<div class="modal-title">${t ? 'Edit team — ' + t.name : 'Add team'}</div>
+  return `<div class="modal-title">${t ? 'Edit team — ' + t.name : 'New team'}</div>
   <label>Team name</label><input id="tf-name" value="${t?.name || ''}" placeholder="e.g. Finance Council" />
   <label>Description</label><textarea id="tf-desc" rows="2">${t?.description || ''}</textarea>
   <label>Sort order</label><input type="number" id="tf-sort" value="${t?.sort_order ?? ''}" placeholder="e.g. 1" />
@@ -206,12 +132,8 @@ async function deleteTeam(id) {
   if (!confirm(`Delete "${t?.name}"? This will also remove all members. This cannot be undone.`)) return;
   const { error } = await sb.from('teams').delete().eq('id', id);
   if (error) { alert('Delete failed: ' + error.message); return; }
-  if (expandedTeamId === id) expandedTeamId = null;
   closeModal();
   await loadTeams();
 }
 
-Object.assign(window, {
-  toggleTeam, toggleAddMember, confirmAddMember, removeMember,
-  openTeamSettings, openAddTeam, saveTeam, deleteTeam,
-});
+Object.assign(window, { openAddTeam, saveTeam, deleteTeam, openTeamSettings });

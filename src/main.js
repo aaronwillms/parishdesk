@@ -13,8 +13,10 @@ import { loadCoordData } from './ui/coordinator.js';
 import { loadSchool } from './panels/school.js';
 import { loadPersonnel } from './panels/personnel.js';
 import { loadTeams, loadTeamsStore } from './panels/teams.js';
+import { renderTeamDashboard } from './panels/teamDashboard.js';
 import { loadTasks } from './panels/tasks.js';
 import { initNotifications } from './notifications.js';
+import { setActiveTeamSubNavItem } from './ui/navigation.js';
 
 async function startApp(user) {
   window.openModal = (type, defaultStatus) => {
@@ -27,18 +29,30 @@ async function startApp(user) {
     document.getElementById('modal-overlay').classList.add('open');
   };
 
+  window.showTeamDashboard = (teamId) => {
+    const container = document.getElementById('team-dashboard-root');
+    if (!container) return;
+    setActiveTeamSubNavItem(teamId);
+    window.switchPanel('teamDashboard', { title: 'Teams' });
+    renderTeamDashboard(container, teamId).then(() => {
+      const h1 = container.querySelector('h1');
+      if (h1) document.getElementById('topbar-title').textContent = h1.textContent.trim();
+    });
+  };
+
   initNavigation({
-    marriage:     () => { loadCouples(); loadCoordData('marriage'); },
-    annulments:   loadCases,
-    projects:     loadProjects,
-    personnel:    loadPersonnel,
-    school:       loadSchool,
-    baptism:      () => { loadSacramental('baptism');      loadCoordData('baptism'); },
-    firstcomm:    () => { loadSacramental('firstcomm');    loadCoordData('firstcomm'); },
-    confirmation: () => { loadSacramental('confirmation'); loadCoordData('confirmation'); },
-    ocia:         () => { loadOcia(); loadCoordData('ocia'); },
-    teams:        loadTeams,
-    tasks:        loadTasks,
+    marriage:      () => { loadCouples(); loadCoordData('marriage'); },
+    annulments:    loadCases,
+    projects:      loadProjects,
+    personnel:     loadPersonnel,
+    school:        loadSchool,
+    baptism:       () => { loadSacramental('baptism');      loadCoordData('baptism'); },
+    firstcomm:     () => { loadSacramental('firstcomm');    loadCoordData('firstcomm'); },
+    confirmation:  () => { loadSacramental('confirmation'); loadCoordData('confirmation'); },
+    ocia:          () => { loadOcia(); loadCoordData('ocia'); },
+    teams:         () => { loadTeams(); setActiveTeamSubNavItem(null); },
+    tasks:         loadTasks,
+    teamDashboard: () => {},   // handled by showTeamDashboard
   });
 
   initModal();

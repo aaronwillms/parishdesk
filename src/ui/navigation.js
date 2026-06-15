@@ -1,6 +1,7 @@
 import { PANEL_TITLES } from '../utils.js';
 
 let _loaderMap = {};
+let _currentPanel = null;
 
 function closeSidebar() {
   document.getElementById('sidebar')?.classList.remove('open');
@@ -19,14 +20,46 @@ function toggleSidebar() {
   }
 }
 
-function switchPanel(name) {
+// panelName may be 'teamDashboard' — the associated nav item is 'teams'
+const NAV_PANEL_MAP = {
+  teamDashboard: 'teams',
+};
+
+function switchPanel(name, opts) {
+  _currentPanel = name;
+  const navName = NAV_PANEL_MAP[name] || name;
+
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+
   document.getElementById('panel-' + name)?.classList.add('active');
-  document.querySelector(`.nav-item[data-panel="${name}"]`)?.classList.add('active');
-  document.getElementById('topbar-title').textContent = PANEL_TITLES[name] || name;
+  document.querySelector(`.nav-item[data-panel="${navName}"]`)?.classList.add('active');
+
+  const title = opts?.title || PANEL_TITLES[name] || name;
+  document.getElementById('topbar-title').textContent = title;
+
   closeSidebar();
-  _loaderMap[name]?.();
+  _updateSubNav(name);
+
+  if (_loaderMap[name]) {
+    _loaderMap[name](opts);
+  }
+}
+
+function _updateSubNav(panelName) {
+  const subNav = document.getElementById('teams-subnav');
+  if (!subNav) return;
+  const isInTeams = panelName === 'teams' || panelName === 'teamDashboard';
+  subNav.style.display = isInTeams ? 'block' : 'none';
+}
+
+export function setActiveTeamSubNavItem(teamId) {
+  document.querySelectorAll('.nav-subnav-item').forEach(el => {
+    const active = el.dataset.teamId === teamId;
+    el.classList.toggle('active', active);
+    el.style.color = active ? '#F5F1EB' : '#8FA8BF';
+    el.style.background = active ? 'rgba(255,255,255,.1)' : '';
+  });
 }
 
 export function initNavigation(loaderMap) {
@@ -46,6 +79,10 @@ export function initNavigation(loaderMap) {
   });
 
   document.getElementById('sidebar-backdrop')?.addEventListener('click', closeSidebar);
+
+  // Initialise sub-nav visibility
+  const subNav = document.getElementById('teams-subnav');
+  if (subNav) subNav.style.display = 'none';
 
   Object.assign(window, { switchPanel, toggleSidebar });
 }
