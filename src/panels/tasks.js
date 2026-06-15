@@ -2,6 +2,7 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST } from '../utils.js';
 import { createContactPicker } from '../ui/contactPicker.js';
+import { getUserScope, isVisible, scopeNotice } from '../ui/userScope.js';
 
 let _taskAssignedPicker = null;
 
@@ -12,6 +13,8 @@ let activeFilter = 'all';
 // ── Data ───────────────────────────────────────────────────────────────────
 
 export async function loadTasks() {
+  const scope = await getUserScope();
+
   const { data, error } = await sb
     .from('tasks')
     .select('*')
@@ -19,7 +22,9 @@ export async function loadTasks() {
     .order('sort_order', { nullsFirst: false })
     .order('created_at');
   if (error) { console.error('[tasks]', error); return; }
-  store.allTasks = data || [];
+
+  store.allTasks = (data || []).filter(t => isVisible(t, scope));
+  store._taskScopeReady = scope.ready;
   renderTasks();
 }
 
@@ -80,8 +85,10 @@ export function renderTasks() {
     }
   }
 
+  const notice = store._taskScopeReady === false ? scopeNotice() : '';
+
   if (!filtered.length) {
-    el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No tasks.</div>';
+    el.innerHTML = notice + '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No tasks.</div>';
     return;
   }
 
@@ -109,7 +116,7 @@ export function renderTasks() {
     g.items.forEach(t => { html += taskRow(t); });
     html += `</div>`;
   });
-  el.innerHTML = html;
+  el.innerHTML = notice + html;
 }
 
 function taskRow(t) {

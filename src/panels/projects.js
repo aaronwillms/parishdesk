@@ -3,6 +3,7 @@ import { store } from '../store.js';
 import { fmtDate } from '../utils.js';
 import { updateProjectStats, renderDashProjects } from './dashboard.js';
 import { createContactPicker } from '../ui/contactPicker.js';
+import { getUserScope, isVisible, scopeNotice } from '../ui/userScope.js';
 
 // ── Status config ──────────────────────────────────────────────────────────
 
@@ -23,13 +24,17 @@ let _newProjAssignees = [];  // array of {id, name} objects for multi-person mod
 // ── Data ───────────────────────────────────────────────────────────────────
 
 export async function loadProjects() {
+  const scope = await getUserScope();
+
   const { data, error } = await sb
     .from('projects')
     .select('*')
     .order('due_date', { nullsFirst: false })
     .order('created_at');
   if (error) { console.error('[projects]', error); return; }
-  store.allProjects = data || [];
+
+  store.allProjects = (data || []).filter(p => isVisible(p, scope));
+  store._projectScopeReady = scope.ready;
   renderProjects();
   updateProjectStats();
   renderDashProjects();
@@ -41,10 +46,11 @@ export function renderProjects() {
   const el = document.getElementById('projects-list');
   if (!el) return;
 
+  const notice = store._projectScopeReady === false ? scopeNotice() : '';
   const items = store.allProjects;
 
   if (!items.length) {
-    el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No projects yet. Use the button above to create one.</div>';
+    el.innerHTML = notice + '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No projects yet. Use the button above to create one.</div>';
     return;
   }
 
@@ -69,7 +75,7 @@ export function renderProjects() {
         ${group.map(p => projectCard(p)).join('')}
       </div>`;
   });
-  el.innerHTML = html;
+  el.innerHTML = notice + html;
 }
 
 function assigneeLabel(ids) {

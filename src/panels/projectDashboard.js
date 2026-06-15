@@ -2,6 +2,7 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST } from '../utils.js';
 import { createContactPicker } from '../ui/contactPicker.js';
+import { getUserScope, isVisible } from '../ui/userScope.js';
 
 // ── Status config ──────────────────────────────────────────────────────────
 
@@ -45,14 +46,15 @@ export async function renderProjectDashboard(container, projectId) {
 // ── Data ───────────────────────────────────────────────────────────────────
 
 async function _load() {
-  const [projRes, tasksRes] = await Promise.all([
+  const [projRes, tasksRes, scope] = await Promise.all([
     sb.from('projects').select('*').eq('id', _projectId).single(),
     sb.from('tasks').select('*').eq('project_id', _projectId).order('created_at'),
+    getUserScope(),
   ]);
   if (projRes.error)  console.error('[projectDashboard] project:', projRes.error);
   if (tasksRes.error) console.error('[projectDashboard] tasks:',   tasksRes.error);
   _project = projRes.data || null;
-  _tasks   = tasksRes.data || [];
+  _tasks   = (tasksRes.data || []).filter(t => isVisible(t, scope));
   // Normalize assigned_to to always be an array of UUIDs
   if (_project) {
     const raw = _project.assigned_to;

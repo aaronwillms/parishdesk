@@ -1,6 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { createContactPicker } from '../ui/contactPicker.js';
+import { clearUserScope } from '../ui/userScope.js';
 
 let _user = null;
 let _profile = null;
@@ -216,6 +217,7 @@ async function _saveLink() {
     .maybeSingle();
   _profile = data || { ..._profile, personnel_id: person.id, personnel: person };
   store.currentUserProfile = _profile;
+  clearUserScope();
   _render();
   _notifySidebarWidget();
 }
