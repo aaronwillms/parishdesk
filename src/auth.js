@@ -16,8 +16,10 @@ function showApp() {
 }
 
 export function initAuth(onLogin) {
-  // Single source of truth: all show/hide and app-start logic lives here.
-  // doLogin only calls signInWithPassword — it never touches the DOM directly.
+  // Hide both containers immediately so nothing is visible before the session check resolves.
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'none';
+
   sb.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_OUT') {
       _appStarted = false;
