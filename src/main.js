@@ -4,7 +4,7 @@ import { initLiturgical } from './liturgical.js';
 import { loadCalendar, loadInit } from './panels/dashboard.js';
 import { initNavigation } from './ui/navigation.js';
 import { initModal } from './ui/modal.js';
-import { coupleForm, loadCouples } from './panels/marriage.js';
+import { openCoupleAdd, loadCouples } from './panels/marriage.js';
 import { caseForm, loadCases } from './panels/annulments.js';
 import { projectForm, loadProjects } from './panels/projects.js';
 import { loadSacramental } from './panels/sacramental.js';
@@ -14,8 +14,8 @@ import { loadSchool } from './panels/school.js';
 import { loadPersonnel } from './panels/personnel.js';
 async function startApp() {
   window.openModal = (type, defaultStatus) => {
+    if (type === 'couple') { openCoupleAdd(); return; }
     let html;
-    if (type === 'couple')  html = coupleForm();
     if (type === 'case')    html = caseForm();
     if (type === 'project') html = projectForm(defaultStatus);
     if (!html) return;

@@ -4,7 +4,9 @@
       "Bash(npx supabase *)",
       "Bash(env)",
       "Bash(xxd)",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(npm run *)",
+      "Bash(node --input-type=module)"
     ]
   }
 }
