@@ -12,22 +12,31 @@ const STATUS = {
   complete:     { label: 'Complete',     color: '#F5F1EB', bg: '#1C2B3A' },
 };
 
+const TABS = [
+  { key: 'discussions', label: 'Discussions' },
+  { key: 'project',     label: 'Project' },
+  { key: 'tasks',       label: 'Tasks' },
+  { key: 'members',     label: 'Members' },
+];
+
 // ── Module state ───────────────────────────────────────────────────────────
 
-let _projectId   = null;
-let _project     = null;
-let _tasks       = [];
-let _activeTab   = 'tasks';
-let _taskPicker  = null;
-let _detailPicker = null;
+let _projectId      = null;
+let _project        = null;
+let _tasks          = [];
+let _activeTab      = 'discussions';
+let _taskPicker     = null;
+let _memberPicker   = null;
+// Multi-person assignees — normalized to array on load
+let _assigneeIds    = [];
 
 // ── Public entry point ─────────────────────────────────────────────────────
 
 export async function renderProjectDashboard(container, projectId) {
-  _projectId  = projectId;
-  _activeTab  = 'tasks';
-  _taskPicker = null;
-  _detailPicker = null;
+  _projectId    = projectId;
+  _activeTab    = 'discussions';
+  _taskPicker   = null;
+  _memberPicker = null;
   container.innerHTML = '<div style="padding:2rem;text-align:center;color:#9CA3AF;">Loading…</div>';
   await _load();
   _render(container);
@@ -38,29 +47,36 @@ export async function renderProjectDashboard(container, projectId) {
 async function _load() {
   const [projRes, tasksRes] = await Promise.all([
     sb.from('projects').select('*').eq('id', _projectId).single(),
-    sb.from('tasks')
-      .select('*')
-      .eq('project_id', _projectId)
-      .order('created_at'),
+    sb.from('tasks').select('*').eq('project_id', _projectId).order('created_at'),
   ]);
   if (projRes.error)  console.error('[projectDashboard] project:', projRes.error);
-  if (tasksRes.error) console.error('[projectDashboard] tasks:', tasksRes.error);
+  if (tasksRes.error) console.error('[projectDashboard] tasks:',   tasksRes.error);
   _project = projRes.data || null;
   _tasks   = tasksRes.data || [];
+  // Normalize assigned_to to always be an array of UUIDs
+  if (_project) {
+    const raw = _project.assigned_to;
+    if (Array.isArray(raw))       _assigneeIds = raw.filter(Boolean);
+    else if (raw)                 _assigneeIds = [raw];
+    else                          _assigneeIds = [];
+  } else {
+    _assigneeIds = [];
+  }
 }
 
-// ── Render shell ───────────────────────────────────────────────────────────
-
-const TABS = [
-  { key: 'tasks',       label: 'Tasks' },
-  { key: 'discussions', label: 'Discussions' },
-  { key: 'details',     label: 'Details' },
-];
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function _statusBadge(code) {
   const st = STATUS[code] || STATUS.not_started;
   return `<span style="font-size:11px;font-weight:700;background:${st.bg};color:${st.color};border-radius:20px;padding:2px 10px;">${st.label}</span>`;
 }
+
+function _personnelName(id) {
+  if (!id) return null;
+  return (store.personnel || []).find(p => p.id === id)?.name || null;
+}
+
+// ── Render shell ───────────────────────────────────────────────────────────
 
 function _render(container) {
   if (!_project) {
@@ -107,15 +123,15 @@ function _render(container) {
 
   document.querySelectorAll('.pd-tab').forEach(btn => {
     btn.addEventListener('click', () => {
-      _activeTab = btn.dataset.tab;
+      _activeTab    = btn.dataset.tab;
+      _taskPicker   = null;
+      _memberPicker = null;
       document.querySelectorAll('.pd-tab').forEach(b => {
         b.style.color = '#9CA3AF';
         b.style.borderBottomColor = 'transparent';
       });
       btn.style.color = '#1C2B3A';
       btn.style.borderBottomColor = '#8B1A2F';
-      _taskPicker = null;
-      _detailPicker = null;
       _renderTab();
     });
   });
@@ -126,30 +142,34 @@ function _render(container) {
 function _renderTab() {
   const el = document.getElementById('pd-content');
   if (!el) return;
-  if (_activeTab === 'tasks')       _renderTasks(el);
-  else if (_activeTab === 'details') _renderDetails(el);
+  if      (_activeTab === 'tasks')   _renderTasks(el);
+  else if (_activeTab === 'project') _renderProjectDetails(el);
+  else if (_activeTab === 'members') _renderMembers(el);
   else                               _renderStub(el, _activeTab);
+}
+
+// ── Discussions stub ───────────────────────────────────────────────────────
+
+function _renderStub(el) {
+  el.innerHTML = `
+    <div style="text-align:center;padding:3.5rem 1rem;color:#9CA3AF;">
+      <div style="font-size:36px;margin-bottom:.75rem;">💬</div>
+      <div style="font-family:'Cormorant Garamond',Georgia,serif;font-size:20px;font-weight:600;color:#C9A84C;margin-bottom:.4rem;">Discussions</div>
+      <div style="font-size:13px;">Coming soon</div>
+    </div>`;
 }
 
 // ── Tasks tab ──────────────────────────────────────────────────────────────
 
-function _personnelName(id) {
-  if (!id) return null;
-  return (store.personnel || []).find(p => p.id === id)?.name || null;
-}
-
 function _renderTasks(el) {
   const active    = _tasks.filter(t => !t.completed);
-  const completed = _tasks.filter(t => t.completed);
+  const completed = _tasks.filter(t =>  t.completed);
 
   let html = '';
-
   if (!_tasks.length) {
     html = `<div style="font-size:13px;color:#9CA3AF;font-style:italic;margin-bottom:1rem;">No tasks yet.</div>`;
   } else {
-    if (active.length) {
-      html += active.map(t => _taskRow(t)).join('');
-    }
+    html += active.map(t => _taskRow(t)).join('');
     if (completed.length) {
       html += `<div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#C4BDB3;text-transform:uppercase;margin:1rem 0 .5rem;">Completed</div>`;
       html += completed.map(t => _taskRow(t)).join('');
@@ -187,10 +207,10 @@ function _taskRow(t) {
 function _bindTaskEvents() {
   document.querySelectorAll('.pd-task-check').forEach(cb => {
     cb.addEventListener('change', async () => {
-      const taskId = cb.dataset.taskId;
+      const taskId  = cb.dataset.taskId;
       const checked = cb.checked;
       const { error } = await sb.from('tasks').update({
-        completed: checked,
+        completed:    checked,
         completed_at: checked ? new Date().toISOString() : null,
       }).eq('id', taskId);
       if (error) { alert('Update failed: ' + error.message); return; }
@@ -244,8 +264,7 @@ function _appendAddTaskArea(el) {
       <div style="display:flex;gap:8px;">
         <button id="pd-task-save" style="
           padding:.35rem .85rem;background:#1C2B3A;color:#fff;border:none;
-          border-radius:5px;font-size:12.5px;font-family:'Inter',sans-serif;
-          cursor:pointer;font-weight:500;
+          border-radius:5px;font-size:12.5px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
         ">Add task</button>
         <button id="pd-task-cancel" style="
           padding:.35rem .85rem;background:none;color:#6B7280;
@@ -277,14 +296,13 @@ function _appendAddTaskArea(el) {
   document.getElementById('pd-task-save').addEventListener('click', async () => {
     const title = document.getElementById('pd-task-title').value.trim();
     if (!title) { document.getElementById('pd-task-title').focus(); return; }
-    const payload = {
+    const { data, error } = await sb.from('tasks').insert({
       title,
       project_id:  _projectId,
       assigned_to: _taskPicker?.getId() || null,
       due_date:    document.getElementById('pd-task-due').value || null,
       completed:   false,
-    };
-    const { data, error } = await sb.from('tasks').insert(payload).select().single();
+    }).select().single();
     if (error) { alert('Failed to add task: ' + error.message); return; }
     _tasks.push(data);
     _taskPicker = null;
@@ -293,27 +311,110 @@ function _appendAddTaskArea(el) {
   });
 }
 
-// ── Discussions stub ───────────────────────────────────────────────────────
+// ── Members tab (multi-person assignees) ───────────────────────────────────
 
-function _renderStub(el, tab) {
-  const icons  = { discussions: '💬' };
-  const labels = { discussions: 'Discussions' };
-  el.innerHTML = `
-    <div style="text-align:center;padding:3.5rem 1rem;color:#9CA3AF;">
-      <div style="font-size:36px;margin-bottom:.75rem;">${icons[tab] || '🔧'}</div>
-      <div style="font-family:'Cormorant Garamond',Georgia,serif;font-size:20px;font-weight:600;color:#C9A84C;margin-bottom:.4rem;">${labels[tab] || tab}</div>
-      <div style="font-size:13px;">Coming soon</div>
-    </div>`;
+function _renderMembers(el) {
+  _renderMembersList(el);
 }
 
-// ── Details tab ────────────────────────────────────────────────────────────
+function _renderMembersList(el) {
+  const people = (store.personnel || []);
 
-function _renderDetails(el) {
+  let listHtml = '';
+  if (!_assigneeIds.length) {
+    listHtml = `<div style="font-size:13px;color:#9CA3AF;font-style:italic;margin-bottom:1rem;">No members assigned yet.</div>`;
+  } else {
+    listHtml = _assigneeIds.map(id => {
+      const name = _personnelName(id) || id;
+      const p = people.find(x => x.id === id);
+      return `
+        <div style="display:flex;align-items:center;gap:10px;padding:.65rem 0;border-bottom:.5px solid #F0EDE8;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:14px;font-weight:500;color:#1C2B3A;">${name}</div>
+            ${p?.title ? `<div style="font-size:12px;color:#6B7280;">${p.title}</div>` : ''}
+          </div>
+          <button data-remove-id="${id}" style="
+            background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:14px;
+            padding:2px 4px;flex-shrink:0;line-height:1;
+          " onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#D1D5DB'"
+            title="Remove from project">✕</button>
+        </div>`;
+    }).join('');
+  }
+
+  el.innerHTML = `
+    <div id="pd-member-list">${listHtml}</div>
+    <div id="pd-member-add-area" style="margin-top:1rem;">
+      <button id="pd-add-member-btn" style="
+        font-size:13px;color:#8B1A2F;background:none;border:none;
+        cursor:pointer;font-family:'Inter',sans-serif;padding:0;font-weight:500;
+      ">+ Add member</button>
+      <div id="pd-member-picker-wrap" style="display:none;margin-top:.75rem;background:#F8F7F4;border:.5px solid #E2DDD6;border-radius:8px;padding:.85rem .9rem;">
+        <div style="font-size:12px;font-weight:600;color:#555;margin-bottom:8px;">Add member</div>
+        <div id="pd-member-cp" style="margin-bottom:8px;"></div>
+        <div style="display:flex;gap:8px;">
+          <button id="pd-member-confirm" style="
+            padding:.35rem .85rem;background:#1C2B3A;color:#fff;border:none;
+            border-radius:5px;font-size:12.5px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
+          ">Add</button>
+          <button id="pd-member-cancel" style="
+            padding:.35rem .85rem;background:none;color:#6B7280;
+            border:.5px solid #D1C9BE;border-radius:5px;
+            font-size:12.5px;font-family:'Inter',sans-serif;cursor:pointer;
+          ">Cancel</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Remove buttons
+  el.querySelectorAll('[data-remove-id]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.removeId;
+      _assigneeIds = _assigneeIds.filter(x => x !== id);
+      await _saveAssignees();
+      _renderMembersList(el);
+    });
+  });
+
+  document.getElementById('pd-add-member-btn').addEventListener('click', () => {
+    document.getElementById('pd-member-picker-wrap').style.display = 'block';
+    document.getElementById('pd-add-member-btn').style.display = 'none';
+    _memberPicker = createContactPicker({
+      container: document.getElementById('pd-member-cp'),
+      placeholder: 'Search person…',
+      onSelect: () => {},
+    });
+  });
+
+  document.getElementById('pd-member-cancel').addEventListener('click', () => {
+    document.getElementById('pd-member-picker-wrap').style.display = 'none';
+    document.getElementById('pd-add-member-btn').style.display = '';
+    _memberPicker = null;
+  });
+
+  document.getElementById('pd-member-confirm').addEventListener('click', async () => {
+    const person = _memberPicker?.getValue();
+    if (!person) { alert('Please select a person.'); return; }
+    if (_assigneeIds.includes(person.id)) { alert(`${person.name || 'This person'} is already assigned.`); return; }
+    _assigneeIds.push(person.id);
+    _memberPicker = null;
+    await _saveAssignees();
+    _renderMembersList(el);
+  });
+}
+
+async function _saveAssignees() {
+  const { error } = await sb.from('projects')
+    .update({ assigned_to: _assigneeIds, updated_at: new Date().toISOString() })
+    .eq('id', _projectId);
+  if (error) console.error('[projectDashboard] assignee save:', error);
+}
+
+// ── Project (details) tab ─────────────────────────────────────────────────
+
+function _renderProjectDetails(el) {
   if (!_project) return;
-
-  const teams = store.teams || [];
-  const teamOpts = `<option value="">— None —</option>` +
-    teams.map(t => `<option value="${t.id}"${t.id === _project.team_id ? ' selected' : ''}>${t.name}</option>`).join('');
 
   el.innerHTML = `
     <div style="max-width:520px;">
@@ -333,10 +434,6 @@ function _renderDetails(el) {
         ">
           ${Object.entries(STATUS).map(([k, v]) => `<option value="${k}"${k === _project.status_code ? ' selected' : ''}>${v.label}</option>`).join('')}
         </select>
-      </div>
-      <div style="margin-bottom:.85rem;">
-        <label style="font-size:11.5px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px;">Assigned to</label>
-        <div id="det-assignee-cp"></div>
       </div>
       <div style="margin-bottom:.85rem;">
         <label style="font-size:11.5px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px;">Due date</label>
@@ -369,25 +466,16 @@ function _renderDetails(el) {
     </div>
   `;
 
-  // Init contact picker with current value
-  _detailPicker = createContactPicker({
-    container: document.getElementById('det-assignee-cp'),
-    placeholder: 'Search person…',
-    initialValue: _project.assigned_to || undefined,
-    onSelect: () => {},
-  });
-
-  document.getElementById('det-save').addEventListener('click', _saveDetails);
+  document.getElementById('det-save').addEventListener('click', _saveProjectDetails);
   document.getElementById('det-delete').addEventListener('click', _deleteProject);
 }
 
-async function _saveDetails() {
+async function _saveProjectDetails() {
   const title = document.getElementById('det-title').value.trim();
   if (!title) { document.getElementById('det-title').focus(); return; }
   const payload = {
     title,
     status_code: document.getElementById('det-status').value,
-    assigned_to: _detailPicker?.getId() || null,
     due_date:    document.getElementById('det-due').value || null,
     notes:       document.getElementById('det-notes').value.trim() || null,
     updated_at:  new Date().toISOString(),
@@ -395,10 +483,8 @@ async function _saveDetails() {
   const { error } = await sb.from('projects').update(payload).eq('id', _projectId);
   if (error) { alert('Save failed: ' + error.message); return; }
   Object.assign(_project, payload);
-  // Refresh header
   const container = document.getElementById('project-dashboard-root');
   if (container) _render(container);
-  // Also refresh topbar title
   document.getElementById('topbar-title').textContent = title;
 }
 

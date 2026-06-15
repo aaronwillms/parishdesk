@@ -18,6 +18,7 @@ import { renderTeamDashboard } from './panels/teamDashboard.js';
 import { loadTasks } from './panels/tasks.js';
 import { initNotifications } from './notifications.js';
 import { setActiveTeamSubNavItem } from './ui/navigation.js';
+import { sb } from './supabase.js';
 
 async function startApp(user) {
   window.openModal = (type, defaultStatus) => {
@@ -72,6 +73,31 @@ async function startApp(user) {
   loadCalendar();
   await Promise.all([loadInit(), loadPersonnel(), loadTeamsStore()]);
   if (user?.id) initNotifications(user.id);
+  syncParishStaff();
+}
+
+async function syncParishStaff() {
+  const { data: team } = await sb
+    .from('teams')
+    .select('id')
+    .eq('is_protected', true)
+    .eq('name', 'Parish Staff')
+    .maybeSingle();
+  if (!team) return;
+
+  const [{ data: staff }, { data: existing }] = await Promise.all([
+    sb.from('personnel').select('id').in('employment_type', ['full-time', 'part-time']),
+    sb.from('team_members').select('personnel_id').eq('team_id', team.id),
+  ]);
+  if (!staff?.length) return;
+
+  const existingIds = new Set((existing || []).map(m => m.personnel_id));
+  const toInsert = staff
+    .filter(p => !existingIds.has(p.id))
+    .map(p => ({ team_id: team.id, personnel_id: p.id }));
+  if (!toInsert.length) return;
+
+  await sb.from('team_members').insert(toInsert);
 }
 
 (async () => {

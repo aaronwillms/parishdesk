@@ -104,6 +104,17 @@ export async function loadAnnouncements() {
   renderAnnouncements();
 }
 
+function _teamName(id) {
+  return (store.teams || []).find(t => t.id === id)?.name || null;
+}
+
+function _visibilityLabel(a) {
+  if (!a.visible_to?.length) return '';
+  const names = a.visible_to.map(id => _teamName(id)).filter(Boolean);
+  if (!names.length) return '';
+  return `<span style="font-size:11px;color:#8FA8BF;margin-left:4px;">· 👥 ${names.join(', ')}</span>`;
+}
+
 function renderAnnouncements() {
   const c = document.getElementById('dash-announcements');
   if (!c) return;
@@ -113,11 +124,13 @@ function renderAnnouncements() {
     return;
   }
   c.innerHTML = visible.map(a => `
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:.5rem 0;border-bottom:.5px solid var(--stone);last-child:border-bottom:none;" class="annc-item">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:.5rem 0;border-bottom:.5px solid var(--stone);" class="annc-item">
       <div style="flex:1;min-width:0;">
         ${a.pinned ? `<span style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#922B21;text-transform:uppercase;margin-right:6px;">📌 Pinned</span>` : ''}
         <span style="font-size:14px;color:var(--navy);line-height:1.5;">${a.message}</span>
-        <div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${timeAgo(a.created_at)}${a.expires_at ? ` · expires ${fmtDate(a.expires_at)}` : ''}</div>
+        <div style="font-size:11px;color:#9CA3AF;margin-top:3px;">
+          ${timeAgo(a.created_at)}${a.expires_at ? ` · expires ${fmtDate(a.expires_at)}` : ''}${_visibilityLabel(a)}
+        </div>
       </div>
       <button onclick="dismissAnnouncement('${a.id}')" title="Dismiss" style="background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:14px;padding:0;flex-shrink:0;line-height:1;margin-top:2px;" onmouseover="this.style.color='#6B7280'" onmouseout="this.style.color='#D1D5DB'">✕</button>
     </div>`).join('');
@@ -137,12 +150,43 @@ function openAnnouncementModal(data) {
 }
 
 function announcementForm(data) {
+  const existingTeamIds = new Set(data?.visible_to || []);
+  const visAll = !existingTeamIds.size;
+  const teams  = store.teams || [];
+
+  const teamCheckboxes = teams.length
+    ? teams.map(t => `
+        <label style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:.5px solid #F0EDE8;cursor:pointer;font-weight:400;">
+          <input type="checkbox" class="af-team-cb" value="${t.id}" ${existingTeamIds.has(t.id) ? 'checked' : ''}
+            style="width:14px;height:14px;accent-color:var(--cardinal);flex-shrink:0;" />
+          <span style="font-size:13px;color:var(--navy);">${t.name}</span>
+        </label>`).join('')
+    : '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No teams found.</div>';
+
   return `<div class="modal-title">${data ? 'Edit announcement' : 'Add announcement'}</div>
   <label>Message</label><textarea id="af-msg" rows="3">${data?.message || ''}</textarea>
   <label>Expires (optional)</label><input type="date" id="af-exp" value="${data?.expires_at || ''}" />
   <div style="display:flex;align-items:center;gap:8px;margin:.5rem 0;">
     <input type="checkbox" id="af-pin" ${data?.pinned ? 'checked' : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />
     <label for="af-pin" style="margin:0;cursor:pointer;">Pin to top</label>
+  </div>
+  <label>Visible to</label>
+  <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;">
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;">
+      <input type="radio" name="af-vis" id="af-vis-all" value="all" ${visAll ? 'checked' : ''}
+        style="accent-color:var(--cardinal);"
+        onchange="document.getElementById('af-teams-wrap').style.display='none'" />
+      <span style="font-size:13px;">All staff</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;">
+      <input type="radio" name="af-vis" id="af-vis-teams" value="teams" ${!visAll ? 'checked' : ''}
+        style="accent-color:var(--cardinal);"
+        onchange="document.getElementById('af-teams-wrap').style.display='block'" />
+      <span style="font-size:13px;">Specific teams…</span>
+    </label>
+  </div>
+  <div id="af-teams-wrap" style="display:${visAll ? 'none' : 'block'};background:var(--parch);border:.5px solid var(--stone);border-radius:var(--radius-sm);padding:.6rem .75rem;margin-bottom:8px;max-height:200px;overflow-y:auto;">
+    ${teamCheckboxes}
   </div>
   <div class="modal-actions" style="justify-content:space-between;">
     ${data ? `<button class="btn-delete" onclick="deleteAnnouncement('${data.id}')">Delete</button>` : '<span></span>'}
@@ -156,10 +200,20 @@ function announcementForm(data) {
 async function saveAnnouncement(id) {
   const message = document.getElementById('af-msg').value.trim();
   if (!message) { alert('Message is required.'); return; }
+
+  const visAll = document.getElementById('af-vis-all')?.checked !== false &&
+                 document.querySelector('input[name="af-vis"]:checked')?.value !== 'teams';
+  let visible_to = null;
+  if (!visAll) {
+    const checked = Array.from(document.querySelectorAll('.af-team-cb:checked')).map(cb => cb.value);
+    visible_to = checked.length ? checked : null;
+  }
+
   const payload = {
     message,
     expires_at: document.getElementById('af-exp').value || null,
     pinned:     !!document.getElementById('af-pin').checked,
+    visible_to,
     active:     true,
   };
   let err;

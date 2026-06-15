@@ -17,7 +17,8 @@ const GROUP_ORDER = ['in_progress', 'blocked', 'not_started', 'complete'];
 
 // ── Module state ───────────────────────────────────────────────────────────
 
-let _newProjPicker = null;
+let _newProjPicker    = null;
+let _newProjAssignees = [];  // array of {id, name} objects for multi-person modal
 
 // ── Data ───────────────────────────────────────────────────────────────────
 
@@ -109,6 +110,7 @@ function projectCard(p) {
 // ── New project modal ──────────────────────────────────────────────────────
 
 export function openNewProjectModal() {
+  _newProjAssignees = [];
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-title">New project</div>
     <label>Title</label>
@@ -117,8 +119,9 @@ export function openNewProjectModal() {
     <select id="pf-status">
       ${Object.entries(STATUS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}
     </select>
-    <label>Assigned to (optional)</label>
-    <div id="pf-assignee-cp" style="margin-bottom:.25rem;"></div>
+    <label>Members (optional)</label>
+    <div id="pf-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;min-height:0;"></div>
+    <div id="pf-assignee-cp"></div>
     <label>Due date</label>
     <input type="date" id="pf-due" />
     <label>Notes</label>
@@ -129,10 +132,47 @@ export function openNewProjectModal() {
     </div>
   `;
   document.getElementById('modal-overlay').classList.add('open');
+  _initNewProjPicker();
+}
+
+function _initNewProjPicker() {
   _newProjPicker = createContactPicker({
     container: document.getElementById('pf-assignee-cp'),
-    placeholder: 'Search person…',
-    onSelect: () => {},
+    placeholder: 'Add a member…',
+    onSelect: (person) => {
+      if (!person) return;
+      if (_newProjAssignees.find(p => p.id === person.id)) {
+        _newProjPicker.clear();
+        return;
+      }
+      _newProjAssignees.push(person);
+      _renderNewProjChips();
+      _newProjPicker.clear();
+    },
+  });
+}
+
+function _renderNewProjChips() {
+  const el = document.getElementById('pf-chips');
+  if (!el) return;
+  el.innerHTML = _newProjAssignees.map(p => `
+    <span style="
+      display:inline-flex;align-items:center;gap:5px;
+      background:#1C2B3A;color:#fff;border-radius:20px;
+      padding:.25rem .65rem .25rem .75rem;font-size:12.5px;font-family:'Inter',sans-serif;
+    ">
+      ${p.name || '—'}
+      <button data-remove-id="${p.id}" type="button" style="
+        background:none;border:none;color:rgba(255,255,255,.65);
+        cursor:pointer;font-size:13px;padding:0;line-height:1;
+      " onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,.65)'">✕</button>
+    </span>
+  `).join('');
+  el.querySelectorAll('[data-remove-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _newProjAssignees = _newProjAssignees.filter(p => p.id !== btn.dataset.removeId);
+      _renderNewProjChips();
+    });
   });
 }
 
@@ -142,14 +182,15 @@ async function saveNewProject() {
   const payload = {
     title,
     status_code: document.getElementById('pf-status').value,
-    assigned_to: _newProjPicker?.getId() || null,
+    assigned_to: _newProjAssignees.length ? _newProjAssignees.map(p => p.id) : null,
     due_date:    document.getElementById('pf-due').value || null,
     notes:       document.getElementById('pf-notes').value.trim() || null,
     updated_at:  new Date().toISOString(),
   };
   const { error } = await sb.from('projects').insert(payload);
   if (error) { alert('Save failed: ' + error.message); return; }
-  _newProjPicker = null;
+  _newProjPicker    = null;
+  _newProjAssignees = [];
   closeModal();
   loadProjects();
 }

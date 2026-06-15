@@ -5,14 +5,14 @@ import { createContactPicker } from '../ui/contactPicker.js';
 let _currentTeamId = null;
 let _team = null;
 let _members = [];
-let _activeTab = 'members';
+let _activeTab = 'projects';
 let _memberPicker = null;
 
 // ── Public entry point ─────────────────────────────────────────────────────
 
 export async function renderTeamDashboard(container, teamId) {
   _currentTeamId = teamId;
-  _activeTab = 'members';
+  _activeTab = 'projects';
   _memberPicker = null;
   container.innerHTML = '<div style="padding:2rem;text-align:center;color:#9CA3AF;">Loading…</div>';
   await _loadData();
@@ -25,7 +25,7 @@ async function _loadData() {
   const [teamRes, membersRes] = await Promise.all([
     sb.from('teams').select('*').eq('id', _currentTeamId).single(),
     sb.from('team_members')
-      .select('*, personnel(id,name,title,phone,email,institution)')
+      .select('*, personnel(id,name,title,phone,email,institution,employment_type)')
       .eq('team_id', _currentTeamId)
       .order('sort_order', { nullsFirst: false }),
   ]);
@@ -38,12 +38,11 @@ async function _loadData() {
 // ── Render ─────────────────────────────────────────────────────────────────
 
 const TABS = [
-  { key: 'members',     label: 'Members' },
-  { key: 'discussions', label: 'Discussions' },
-  { key: 'schedule',    label: 'Schedule' },
   { key: 'projects',    label: 'Projects' },
   { key: 'tasks',       label: 'Tasks' },
+  { key: 'schedule',    label: 'Schedule' },
   { key: 'documents',   label: 'Documents' },
+  { key: 'members',     label: 'Members' },
 ];
 
 function _render(container) {
@@ -65,13 +64,14 @@ function _render(container) {
           <h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-size:26px;font-weight:700;color:#1C2B3A;margin:0;line-height:1.2;">${_team.name}</h1>
           ${_team.description ? `<div style="font-size:13.5px;color:#6B7280;margin-top:4px;">${_team.description}</div>` : ''}
         </div>
+        ${_team.is_protected ? '' : `
         <button onclick="openTeamSettings('${_team.id}')" title="Edit team" style="
           background:none;border:.5px solid #D1C9BE;border-radius:6px;
           padding:.3rem .65rem;font-size:12px;font-family:'Inter',sans-serif;
           color:#6B7280;cursor:pointer;flex-shrink:0;margin-top:4px;
         " onmouseover="this.style.borderColor='#1C2B3A';this.style.color='#1C2B3A';" onmouseout="this.style.borderColor='#D1C9BE';this.style.color='#6B7280';">
           ⚙ Edit
-        </button>
+        </button>`}
       </div>
 
       <!-- Tab bar -->
@@ -192,8 +192,15 @@ function _renderMembers(el) {
   document.getElementById('td-picker-confirm').addEventListener('click', _confirmAddMember);
 }
 
+const STAFF_TYPES = new Set(['full-time', 'part-time']);
+
+function _isAutoSyncedMember(m) {
+  return _team?.is_protected && STAFF_TYPES.has(m.personnel?.employment_type);
+}
+
 function _memberRow(m) {
   const p = m.personnel || {};
+  const canRemove = !_isAutoSyncedMember(m);
   return `
     <div class="td-member-row" data-member-id="${m.id}" style="
       display:flex;align-items:center;gap:10px;
@@ -211,11 +218,12 @@ function _memberRow(m) {
         "
         title="Click to edit role"
       />
+      ${canRemove ? `
       <button class="td-remove-btn" data-member-id="${m.id}" data-team-id="${_currentTeamId}"
         title="Remove from team"
         style="background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:14px;padding:2px 4px;line-height:1;flex-shrink:0;"
         onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#D1D5DB'"
-      >✕</button>
+      >✕</button>` : `<span style="width:22px;flex-shrink:0;"></span>`}
     </div>
   `;
 }

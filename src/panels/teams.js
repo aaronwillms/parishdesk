@@ -83,7 +83,7 @@ export function updateTeamsSubNav() {
 
 function openTeamSettings(id) {
   const t = allTeams.find(x => x.id === id);
-  if (!t) return;
+  if (!t || t.is_protected) return;
   document.getElementById('modal-content').innerHTML = teamSettingsForm(t);
   document.getElementById('modal-overlay').classList.add('open');
 }
