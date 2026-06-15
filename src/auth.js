@@ -8,10 +8,6 @@ function showAuth() {
 function showApp(user) {
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
-  const name = user.user_metadata?.display_name || user.email || '';
-  document.getElementById('user-display').textContent = name;
-  // TODO (multi-tenancy): fetch user_profiles(user_id) here to get parish_id, role, display_name
-  // and pass them along to restrict Supabase queries by parish_id.
 }
 
 export async function initAuth(onLogin) {
