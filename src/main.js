@@ -4,6 +4,7 @@ import { initLiturgical } from './liturgical.js';
 import { loadCalendar, loadInit } from './panels/dashboard.js';
 import { initNavigation, renderSidebarProfileWidget, setActiveTeamSubNavItem, applyNavVisibility, resetNavVisibility, applyParishName } from './ui/navigation.js';
 import { loadUserRoles } from './roles.js';
+import { clearUserScope } from './ui/userScope.js';
 import { loadAdmin } from './panels/admin.js';
 import { initModal } from './ui/modal.js';
 import { loadUserProfile } from './panels/userProfile.js';
@@ -99,6 +100,7 @@ async function startApp(user) {
   if (user?.id) {
     initNotifications(user.id);
     try { await loadUserProfile(); } catch (e) { console.error('[startApp] loadUserProfile failed:', e); }
+    clearUserScope(); // bust cache so scope re-fetches with the now-loaded profile
     try { await loadUserRoles(); } catch (e) { console.error('[startApp] loadUserRoles failed — defaulting to basic access:', e); }
     renderSidebarProfileWidget(user);
     applyNavVisibility();

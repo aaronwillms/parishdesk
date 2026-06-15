@@ -2,6 +2,7 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST } from '../utils.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
+import { isSuperAdmin } from '../roles.js';
 
 const CAL_COLOR_MAP = { '2': 'school', '3': 'conf', '5': 'mass', '7': 'personal' };
 
@@ -260,8 +261,6 @@ const FEED_ICONS = {
   task:     '☑',
 };
 
-const SUPER_ADMIN_EMAILS_FEED = ['aaron.willms@icloud.com'];
-
 // Programs whose coordinator_ids include personnelId
 async function _coordinatorPrograms(personnelId) {
   if (!personnelId) return new Set();
@@ -277,8 +276,7 @@ async function _coordinatorPrograms(personnelId) {
 
 async function loadActivityFeed() {
   const limit = 15;
-  const { data: { user } } = await sb.auth.getUser();
-  const isSuperAdmin = SUPER_ADMIN_EMAILS_FEED.includes(user?.email);
+  const superAdmin = isSuperAdmin();
 
   const scope = await getUserScope();
   const { personnelId, teamIds } = scope;
@@ -287,7 +285,7 @@ async function loadActivityFeed() {
   const accessibleProjectIds = new Set((store.allProjects || []).map(p => p.id));
 
   // Sacramental coordinator programs (marriage covers couples; annulments covers cases; ocia covers ocia)
-  const coordPrograms = isSuperAdmin
+  const coordPrograms = superAdmin
     ? new Set(['marriage', 'annulments', 'ocia', 'baptism', 'firstcomm', 'confirmation'])
     : await _coordinatorPrograms(personnelId);
 
@@ -295,39 +293,39 @@ async function loadActivityFeed() {
     sb.from('projects').select('id,title,updated_at').order('updated_at', { ascending: false }).limit(limit),
     sb.from('tasks').select('id,title,updated_at,created_by,assigned_to,team_id').order('updated_at', { ascending: false }).limit(limit),
   ];
-  if (isSuperAdmin || coordPrograms.has('marriage'))   queries.push(sb.from('couples').select('id,groom_name,bride_name,updated_at').order('updated_at', { ascending: false }).limit(limit));
-  if (isSuperAdmin || coordPrograms.has('annulments')) queries.push(sb.from('annulment_cases').select('id,petitioner,respondent,updated_at').order('updated_at', { ascending: false }).limit(limit));
-  if (isSuperAdmin || coordPrograms.has('ocia'))       queries.push(sb.from('sacramental_ocia').select('id,name,updated_at').order('updated_at', { ascending: false }).limit(limit));
+  if (superAdmin || coordPrograms.has('marriage'))   queries.push(sb.from('couples').select('id,groom_name,bride_name,updated_at').order('updated_at', { ascending: false }).limit(limit));
+  if (superAdmin || coordPrograms.has('annulments')) queries.push(sb.from('annulment_cases').select('id,petitioner,respondent,updated_at').order('updated_at', { ascending: false }).limit(limit));
+  if (superAdmin || coordPrograms.has('ocia'))       queries.push(sb.from('sacramental_ocia').select('id,name,updated_at').order('updated_at', { ascending: false }).limit(limit));
 
   const [projRes, tasksRes, ...sacRes] = await Promise.all(queries);
 
   const items = [];
 
   // Projects — filter to accessible IDs
-  (projRes.data || []).filter(r => isSuperAdmin || accessibleProjectIds.has(r.id)).forEach(r => {
+  (projRes.data || []).filter(r => superAdmin || accessibleProjectIds.has(r.id)).forEach(r => {
     items.push({ icon: FEED_ICONS.project, label: 'Project updated', name: r.title || 'Unknown', ts: r.updated_at });
   });
 
   // Tasks — apply same visibility logic
-  (tasksRes.data || []).filter(r => isSuperAdmin || isVisible(r, scope)).forEach(r => {
+  (tasksRes.data || []).filter(r => superAdmin || isVisible(r, scope)).forEach(r => {
     items.push({ icon: FEED_ICONS.task, label: 'Task updated', name: r.title || 'Unknown', ts: r.updated_at });
   });
 
   // Sacramental — only fetched if coordinator, so include all returned rows
   let sacIdx = 0;
-  if (isSuperAdmin || coordPrograms.has('marriage')) {
+  if (superAdmin || coordPrograms.has('marriage')) {
     (sacRes[sacIdx++]?.data || []).forEach(r => {
       const name = [r.groom_name, r.bride_name].filter(Boolean).join(' & ') || 'Unknown couple';
       items.push({ icon: FEED_ICONS.couple, label: 'Marriage prep updated', name, ts: r.updated_at });
     });
   }
-  if (isSuperAdmin || coordPrograms.has('annulments')) {
+  if (superAdmin || coordPrograms.has('annulments')) {
     (sacRes[sacIdx++]?.data || []).forEach(r => {
       const name = [r.petitioner, r.respondent].filter(Boolean).join(' v. ') || 'Unknown case';
       items.push({ icon: FEED_ICONS.case, label: 'Annulment case updated', name, ts: r.updated_at });
     });
   }
-  if (isSuperAdmin || coordPrograms.has('ocia')) {
+  if (superAdmin || coordPrograms.has('ocia')) {
     (sacRes[sacIdx++]?.data || []).forEach(r => {
       items.push({ icon: FEED_ICONS.ocia, label: 'OCIA record updated', name: r.name || 'Unknown', ts: r.updated_at });
     });
