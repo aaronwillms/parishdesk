@@ -507,9 +507,11 @@ async function saveCase(id) {
   if(id && payload.status_code==='affirm' && payload.judgement_finalized==='yes') {
     const prior = allCases.find(c=>c.id===id);
     const wasAlreadyFinal = prior?.status_code==='affirm' && prior?.judgement_finalized==='yes';
+    console.log('[annulments] affirm+finalized save — wasAlreadyFinal:', wasAlreadyFinal, '| prior:', prior?.status_code, prior?.judgement_finalized);
     if(!wasAlreadyFinal) {
       const resp = payload.respondent ? ` v. ${payload.respondent}` : '';
-      createNotification(`Annulment granted: ${payload.petitioner}${resp}`, 'success', 'annulments', id);
+      console.log('[annulments] firing createNotification for:', payload.petitioner);
+      await createNotification(`Annulment granted: ${payload.petitioner}${resp}`, 'success', 'annulments', id);
     }
   }
   closeModal(); loadCases();

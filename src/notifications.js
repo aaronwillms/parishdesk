@@ -12,14 +12,20 @@ export function setNotificationUser(userId) {
 // ── Core data ──────────────────────────────────────────────────────────────
 
 export async function createNotification(message, type = 'info', module = null, record_id = null) {
-  if (!currentUserId) return;
-  await sb.from('notifications').insert({
+  console.log('[notifications] createNotification — userId:', currentUserId, '| message:', message);
+  if (!currentUserId) {
+    console.warn('[notifications] createNotification skipped — no currentUserId set');
+    return;
+  }
+  const { error } = await sb.from('notifications').insert({
     user_id: currentUserId,
     message,
     type,
     module,
     record_id,
   });
+  if (error) console.error('[notifications] insert failed:', error);
+  else console.log('[notifications] insert succeeded');
 }
 
 export async function loadNotifications() {
@@ -167,6 +173,7 @@ function closePanel() {
 
 export function subscribeNotifications() {
   if (!currentUserId || realtimeChannel) return;
+  console.log('[notifications] subscribing realtime for userId:', currentUserId);
   realtimeChannel = sb
     .channel('notifications-' + currentUserId)
     .on('postgres_changes', {
@@ -192,6 +199,7 @@ export function unsubscribeNotifications() {
 // ── Init ───────────────────────────────────────────────────────────────────
 
 export function initNotifications(userId) {
+  console.log('[notifications] initNotifications called — userId:', userId);
   currentUserId = userId;
   store.notifications = [];
 
