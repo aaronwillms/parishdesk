@@ -72,9 +72,13 @@ export function renderProjects() {
   el.innerHTML = html;
 }
 
-function personnelName(id) {
-  if (!id) return null;
-  return (store.personnel || []).find(p => p.id === id)?.name || null;
+function assigneeLabel(ids) {
+  if (!ids?.length) return null;
+  const people = store.personnel || [];
+  const names = ids.map(id => people.find(p => p.id === id)?.name).filter(Boolean);
+  if (!names.length) return null;
+  const shown = names.slice(0, 2).join(', ');
+  return names.length > 2 ? `${shown} +${names.length - 2} more` : shown;
 }
 
 function statusBadge(code) {
@@ -83,7 +87,7 @@ function statusBadge(code) {
 }
 
 function projectCard(p) {
-  const person = personnelName(p.assigned_to);
+  const assignees = assigneeLabel(p.assigned_to);
   return `
     <div onclick="window.showProjectDashboard('${p.id}')" style="
       background:#FFFFFF;border:.5px solid #E2DDD6;border-radius:8px;
@@ -98,7 +102,7 @@ function projectCard(p) {
           ${p.notes ? `<div style="font-size:12px;color:#6B7280;margin-bottom:5px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${p.notes}</div>` : ''}
           <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
             ${statusBadge(p.status_code)}
-            ${person ? `<span style="font-size:11.5px;color:#6B7280;">👤 ${person}</span>` : ''}
+            ${assignees ? `<span style="font-size:11.5px;color:#6B7280;">👤 ${assignees}</span>` : ''}
             ${p.due_date ? `<span style="font-size:11.5px;color:#6B7280;">📅 ${fmtDate(p.due_date)}</span>` : ''}
           </div>
         </div>

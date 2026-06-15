@@ -25,7 +25,7 @@ async function _loadData() {
   const [teamRes, membersRes] = await Promise.all([
     sb.from('teams').select('*').eq('id', _currentTeamId).single(),
     sb.from('team_members')
-      .select('*, personnel(id,name,title,phone,email,institution,employment_type)')
+      .select('*, personnel(id,name,title,phone,email,institution,employment)')
       .eq('team_id', _currentTeamId)
       .order('sort_order', { nullsFirst: false }),
   ]);
@@ -195,7 +195,7 @@ function _renderMembers(el) {
 const STAFF_TYPES = new Set(['full-time', 'part-time']);
 
 function _isAutoSyncedMember(m) {
-  return _team?.is_protected && STAFF_TYPES.has(m.personnel?.employment_type);
+  return _team?.is_protected && STAFF_TYPES.has(m.personnel?.employment);
 }
 
 function _memberRow(m) {

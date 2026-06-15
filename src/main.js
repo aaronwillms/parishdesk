@@ -86,7 +86,7 @@ async function syncParishStaff() {
   if (!team) return;
 
   const [{ data: staff }, { data: existing }] = await Promise.all([
-    sb.from('personnel').select('id').in('employment_type', ['full-time', 'part-time']),
+    sb.from('personnel').select('id').in('employment', ['full-time', 'part-time']),
     sb.from('team_members').select('personnel_id').eq('team_id', team.id),
   ]);
   if (!staff?.length) return;

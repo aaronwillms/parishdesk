@@ -182,7 +182,7 @@ export function createContactPicker({ container, placeholder = 'Search by name�
   }
 
   function personSub(p) {
-    return [p.title || p.role, p.institution].filter(Boolean).join(' · ');
+    return [p.title, p.institution].filter(Boolean).join(' · ');
   }
 
   function showChip(person) {
