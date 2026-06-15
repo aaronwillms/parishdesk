@@ -68,8 +68,11 @@
     <div id="season-bar"></div>
     <div id="topbar">
       <button id="hamburger" onclick="toggleSidebar()">☰</button>
-      <div class="page-title" id="topbar-title">Rector's Dashboard</div>
-      <div class="lit-tag"><i class="ti ti-sun"></i><span id="topbar-season">Loading...</span></div>
+      <div class="page-title" id="topbar-title">Parish Dashboard</div>
+      <div style="position:relative;display:flex;align-items:center;">
+        <i class="ti ti-bell" style="font-size:20px;color:#6B7280;cursor:pointer;" title="Notifications"></i>
+        <span id="notif-badge" style="display:none;position:absolute;top:-4px;right:-5px;background:#C0392B;color:#fff;border-radius:50%;font-size:9px;font-weight:700;min-width:16px;height:16px;line-height:16px;text-align:center;padding:0 3px;">0</span>
+      </div>
     </div>
     <div id="content">
 

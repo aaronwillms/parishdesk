@@ -25,7 +25,7 @@ export function daysUntil(iso) {
 }
 
 export const PANEL_TITLES = {
-  dashboard:    "Rector's Dashboard",
+  dashboard:    "Parish Dashboard",
   marriage:     'Marriage preparation',
   annulments:   'Annulments',
   baptism:      'Baptismal Preparation',
