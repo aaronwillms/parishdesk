@@ -12,7 +12,9 @@ import { loadOcia } from './panels/ocia.js';
 import { loadCoordData } from './ui/coordinator.js';
 import { loadSchool } from './panels/school.js';
 import { loadPersonnel } from './panels/personnel.js';
-async function startApp() {
+import { initNotifications } from './notifications.js';
+
+async function startApp(user) {
   window.openModal = (type, defaultStatus) => {
     if (type === 'couple') { openCoupleAdd(); return; }
     let html;
@@ -39,9 +41,10 @@ async function startApp() {
   initLiturgical();
   loadCalendar();
   await Promise.all([loadInit(), loadPersonnel()]);
+  if (user?.id) initNotifications(user.id);
 }
 
 (async () => {
   const user = await initAuth(startApp);
-  if (user) startApp();
+  if (user) startApp(user);
 })();

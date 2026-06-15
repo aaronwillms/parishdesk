@@ -1,4 +1,5 @@
 import { sb } from '../supabase.js';
+import { createNotification } from '../notifications.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST } from '../utils.js';
 
@@ -503,6 +504,14 @@ async function saveCase(id) {
     err = r.error;
   }
   if(err){alert('Save failed: '+err.message);return;}
+  if(id && payload.status_code==='affirm' && payload.judgement_finalized==='yes') {
+    const prior = allCases.find(c=>c.id===id);
+    const wasAlreadyFinal = prior?.status_code==='affirm' && prior?.judgement_finalized==='yes';
+    if(!wasAlreadyFinal) {
+      const resp = payload.respondent ? ` v. ${payload.respondent}` : '';
+      createNotification(`Annulment granted: ${payload.petitioner}${resp}`, 'success', 'annulments', id);
+    }
+  }
   closeModal(); loadCases();
 }
 

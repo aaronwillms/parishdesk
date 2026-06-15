@@ -3,4 +3,5 @@ export const store = {
   allCases: [],
   institutions: [],
   personnel: [],
+  notifications: [],
 };

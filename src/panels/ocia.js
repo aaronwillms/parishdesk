@@ -2,6 +2,7 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST } from '../utils.js';
 import { CASE_STATUS, expandCase } from './annulments.js';
+import { createNotification } from '../notifications.js';
 
 const OCIA_STATUS = {
   inquirer:    {label:'Inquirer',                color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED'},
@@ -357,6 +358,9 @@ async function linkOciaPriorCase(personId, pmIndex) {
   const {error} = await sb.from('sacramental_ocia').update({prior_marriages:pm,updated_at:new Date().toISOString()}).eq('id',personId);
   if(error){alert('Save failed: '+error.message);return;}
   person.prior_marriages = pm;
+  if(caseIsConfirmed(sel.value)) {
+    createNotification(`${person.name}'s annulment has been confirmed — review OCIA status`, 'success', 'ocia', personId);
+  }
   renderOcia();
 }
 
