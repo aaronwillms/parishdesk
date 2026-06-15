@@ -13,7 +13,9 @@
       "Bash(sed -n '441,450p' /Volumes/RemovableDrive/parishdesk/src/panels/sacramental.js)",
       "Bash(npx vite *)",
       "mcp__Claude_Preview__preview_start",
-      "Bash(curl -s http://localhost:5173/)"
+      "Bash(curl -s http://localhost:5173/)",
+      "mcp__Claude_in_Chrome__navigate",
+      "mcp__Claude_in_Chrome__tabs_context_mcp"
     ]
   }
 }

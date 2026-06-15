@@ -393,15 +393,15 @@
           <div class="stat-card"><div class="stat-num" id="pstat-blocked">—</div><div class="stat-label">Blocked</div></div>
           <div class="stat-card"><div class="stat-num" id="pstat-complete">—</div><div class="stat-label">Complete</div></div>
         </div>
-        <div style="display:flex;gap:8px;margin-bottom:1rem;flex-wrap:wrap;align-items:center;">
-          <button class="btn-primary" onclick="openModal('project')">+ New project</button>
-          <button class="btn-primary proj-filter-btn" data-filter="all" onclick="setProjectFilter('all')">All</button>
-          <button class="btn-secondary proj-filter-btn" data-filter="not_started" onclick="setProjectFilter('not_started')">Not Started</button>
-          <button class="btn-secondary proj-filter-btn" data-filter="in_progress" onclick="setProjectFilter('in_progress')">In Progress</button>
-          <button class="btn-secondary proj-filter-btn" data-filter="blocked" onclick="setProjectFilter('blocked')">Blocked</button>
-          <button class="btn-secondary proj-filter-btn" data-filter="complete" onclick="setProjectFilter('complete')">Complete</button>
+        <div style="margin-bottom:1rem;">
+          <button class="btn-primary" onclick="openNewProjectModal()">+ New project</button>
         </div>
         <div id="projects-list"><span class="pulse"></span></div>
+      </div>
+
+      <!-- PROJECT WORKSPACE (dynamic) -->
+      <div id="panel-projectDashboard" class="panel">
+        <div id="project-dashboard-root"></div>
       </div>
 
       <!-- TASKS -->

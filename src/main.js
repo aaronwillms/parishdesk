@@ -6,7 +6,8 @@ import { initNavigation } from './ui/navigation.js';
 import { initModal } from './ui/modal.js';
 import { openCoupleAdd, loadCouples } from './panels/marriage.js';
 import { caseForm, loadCases } from './panels/annulments.js';
-import { projectForm, loadProjects } from './panels/projects.js';
+import { projectForm, loadProjects, openNewProjectModal } from './panels/projects.js';
+import { renderProjectDashboard } from './panels/projectDashboard.js';
 import { loadSacramental } from './panels/sacramental.js';
 import { loadOcia } from './panels/ocia.js';
 import { loadCoordData } from './ui/coordinator.js';
@@ -20,13 +21,23 @@ import { setActiveTeamSubNavItem } from './ui/navigation.js';
 
 async function startApp(user) {
   window.openModal = (type, defaultStatus) => {
-    if (type === 'couple') { openCoupleAdd(); return; }
+    if (type === 'couple')  { openCoupleAdd(); return; }
+    if (type === 'project') { openNewProjectModal(); return; }
     let html;
-    if (type === 'case')    html = caseForm();
-    if (type === 'project') html = projectForm(defaultStatus);
+    if (type === 'case') html = caseForm();
     if (!html) return;
     document.getElementById('modal-content').innerHTML = html;
     document.getElementById('modal-overlay').classList.add('open');
+  };
+
+  window.showProjectDashboard = (projectId) => {
+    const container = document.getElementById('project-dashboard-root');
+    if (!container) return;
+    window.switchPanel('projectDashboard', { title: 'Projects' });
+    renderProjectDashboard(container, projectId).then(() => {
+      const h1 = container.querySelector('h1');
+      if (h1) document.getElementById('topbar-title').textContent = h1.textContent.trim();
+    });
   };
 
   window.showTeamDashboard = (teamId) => {
@@ -52,7 +63,8 @@ async function startApp(user) {
     ocia:          () => { loadOcia(); loadCoordData('ocia'); },
     teams:         () => { loadTeams(); setActiveTeamSubNavItem(null); },
     tasks:         loadTasks,
-    teamDashboard: () => {},   // handled by showTeamDashboard
+    teamDashboard:    () => {},   // handled by showTeamDashboard
+    projectDashboard: () => {},   // handled by showProjectDashboard
   });
 
   initModal();

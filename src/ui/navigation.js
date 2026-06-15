@@ -22,7 +22,8 @@ function toggleSidebar() {
 
 // panelName may be 'teamDashboard' — the associated nav item is 'teams'
 const NAV_PANEL_MAP = {
-  teamDashboard: 'teams',
+  teamDashboard:    'teams',
+  projectDashboard: 'projects',
 };
 
 function switchPanel(name, opts) {

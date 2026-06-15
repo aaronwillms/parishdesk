@@ -2,17 +2,24 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate } from '../utils.js';
 import { updateProjectStats, renderDashProjects } from './dashboard.js';
+import { createContactPicker } from '../ui/contactPicker.js';
+
+// ── Status config ──────────────────────────────────────────────────────────
 
 const STATUS = {
-  not_started: { label: 'Not Started', color: '#6B7280', bg: '#F3F4F6' },
-  in_progress:  { label: 'In Progress',  color: '#1B4F72', bg: '#EBF5FB' },
-  blocked:      { label: 'Blocked',      color: '#922B21', bg: '#FDEDEC' },
-  complete:     { label: 'Complete',     color: '#1E8449', bg: '#EAFAF1' },
+  in_progress:  { label: 'In Progress',  color: '#7A5C00', bg: '#FDF3D0', dot: '#C9A84C' },
+  blocked:      { label: 'Blocked',      color: '#7A1020', bg: '#FDEAED', dot: '#8B1A2F' },
+  not_started:  { label: 'Not Started',  color: '#4B5563', bg: '#F3F4F6', dot: '#9CA3AF' },
+  complete:     { label: 'Complete',     color: '#F5F1EB', bg: '#1C2B3A', dot: '#1C2B3A' },
 };
 
-const ORDER = ['blocked', 'in_progress', 'not_started', 'complete'];
+const GROUP_ORDER = ['in_progress', 'blocked', 'not_started', 'complete'];
 
-let activeFilter = 'all';
+// ── Module state ───────────────────────────────────────────────────────────
+
+let _newProjPicker = null;
+
+// ── Data ───────────────────────────────────────────────────────────────────
 
 export async function loadProjects() {
   const { data, error } = await sb
@@ -27,42 +34,39 @@ export async function loadProjects() {
   renderDashProjects();
 }
 
+// ── Landing render ─────────────────────────────────────────────────────────
+
 export function renderProjects() {
   const el = document.getElementById('projects-list');
   if (!el) return;
 
-  const items = activeFilter === 'all'
-    ? store.allProjects
-    : store.allProjects.filter(p => p.status_code === activeFilter);
-
-  // Update active filter button styles
-  document.querySelectorAll('.proj-filter-btn').forEach(b => {
-    b.classList.toggle('btn-primary', b.dataset.filter === activeFilter);
-    b.classList.toggle('btn-secondary', b.dataset.filter !== activeFilter);
-  });
+  const items = store.allProjects;
 
   if (!items.length) {
-    el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No projects.</div>';
+    el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No projects yet. Use the button above to create one.</div>';
     return;
   }
 
   const grouped = {};
   items.forEach(p => {
-    if (!grouped[p.status_code]) grouped[p.status_code] = [];
-    grouped[p.status_code].push(p);
+    const key = p.status_code || 'not_started';
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(p);
   });
 
   let html = '';
-  ORDER.forEach(s => {
+  GROUP_ORDER.forEach(s => {
     const group = grouped[s];
     if (!group?.length) return;
-    const st = STATUS[s] || STATUS.not_started;
-    html += `<div style="margin-bottom:1.25rem;">
-      <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">${st.label}</div>`;
-    group.forEach(p => {
-      html += projectCard(p);
-    });
-    html += `</div>`;
+    const st = STATUS[s];
+    html += `
+      <div style="margin-bottom:1.5rem;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.6rem;display:flex;align-items:center;gap:6px;">
+          <span style="width:7px;height:7px;border-radius:50%;background:${st.dot};flex-shrink:0;display:inline-block;"></span>
+          ${st.label} <span style="font-weight:400;color:#C4BDB3;">(${group.length})</span>
+        </div>
+        ${group.map(p => projectCard(p)).join('')}
+      </div>`;
   });
   el.innerHTML = html;
 }
@@ -72,51 +76,96 @@ function personnelName(id) {
   return (store.personnel || []).find(p => p.id === id)?.name || null;
 }
 
-function teamName(id) {
-  if (!id) return null;
-  return (store.teams || []).find(t => t.id === id)?.name || null;
-}
-
 function statusBadge(code) {
   const st = STATUS[code] || STATUS.not_started;
-  return `<span style="font-size:11px;font-weight:600;background:${st.bg};color:${st.color};border-radius:20px;padding:2px 9px;white-space:nowrap;">${st.label}</span>`;
+  return `<span style="font-size:10.5px;font-weight:700;background:${st.bg};color:${st.color};border-radius:20px;padding:2px 9px;white-space:nowrap;letter-spacing:.02em;">${st.label}</span>`;
 }
 
 function projectCard(p) {
   const person = personnelName(p.assigned_to);
-  const team   = teamName(p.team_id);
-  return `<div class="evt-item clickable" onclick="openProjectDetail('${p.id}')">
-    <div style="flex:1;min-width:0;">
-      <div class="evt-title">${p.title}</div>
-      <div class="evt-sub" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:3px;">
-        ${statusBadge(p.status_code)}
-        ${person ? `<span style="font-size:11.5px;color:#6B7280;">👤 ${person}</span>` : ''}
-        ${team   ? `<span style="font-size:11.5px;color:#6B7280;">🏛 ${team}</span>` : ''}
-        ${p.due_date ? `<span style="font-size:11.5px;color:#6B7280;">📅 ${fmtDate(p.due_date)}</span>` : ''}
+  return `
+    <div onclick="window.showProjectDashboard('${p.id}')" style="
+      background:#FFFFFF;border:.5px solid #E2DDD6;border-radius:8px;
+      padding:.9rem 1.05rem;margin-bottom:.55rem;cursor:pointer;
+      transition:box-shadow .15s,border-color .15s;
+    "
+    onmouseover="this.style.boxShadow='0 4px 16px rgba(28,43,58,.12)';this.style.borderColor='#C9A84C';"
+    onmouseout="this.style.boxShadow='';this.style.borderColor='#E2DDD6';">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14.5px;font-weight:600;color:#1C2B3A;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.title}</div>
+          ${p.notes ? `<div style="font-size:12px;color:#6B7280;margin-bottom:5px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${p.notes}</div>` : ''}
+          <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+            ${statusBadge(p.status_code)}
+            ${person ? `<span style="font-size:11.5px;color:#6B7280;">👤 ${person}</span>` : ''}
+            ${p.due_date ? `<span style="font-size:11.5px;color:#6B7280;">📅 ${fmtDate(p.due_date)}</span>` : ''}
+          </div>
+        </div>
+        <span style="color:#C9A84C;font-size:18px;margin-top:1px;flex-shrink:0;">›</span>
       </div>
-      ${p.notes ? `<div style="font-size:12px;color:#9CA3AF;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.notes}</div>` : ''}
+    </div>`;
+}
+
+// ── New project modal ──────────────────────────────────────────────────────
+
+export function openNewProjectModal() {
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-title">New project</div>
+    <label>Title</label>
+    <input id="pf-title" placeholder="Project name" />
+    <label>Status</label>
+    <select id="pf-status">
+      ${Object.entries(STATUS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}
+    </select>
+    <label>Assigned to (optional)</label>
+    <div id="pf-assignee-cp" style="margin-bottom:.25rem;"></div>
+    <label>Due date</label>
+    <input type="date" id="pf-due" />
+    <label>Notes</label>
+    <textarea id="pf-notes" rows="3" placeholder="Optional description or notes"></textarea>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" onclick="saveNewProject()">Save</button>
     </div>
-  </div>`;
-}
-
-function teamOptions(selectedId) {
-  const teams = store.teams || [];
-  return `<option value="">— None —</option>` +
-    teams.map(t => `<option value="${t.id}"${t.id === selectedId ? ' selected' : ''}>${t.name}</option>`).join('');
-}
-
-function personnelOptions(selectedId) {
-  const people = [...(store.personnel || [])].sort((a, b) => {
-    const la = (a.name || '').split(' ').pop();
-    const lb = (b.name || '').split(' ').pop();
-    return la.localeCompare(lb);
+  `;
+  document.getElementById('modal-overlay').classList.add('open');
+  _newProjPicker = createContactPicker({
+    container: document.getElementById('pf-assignee-cp'),
+    placeholder: 'Search person…',
+    onSelect: () => {},
   });
-  return `<option value="">— None —</option>` +
-    people.map(p => `<option value="${p.id}"${p.id === selectedId ? ' selected' : ''}>${p.name}</option>`).join('');
 }
+
+async function saveNewProject() {
+  const title = document.getElementById('pf-title').value.trim();
+  if (!title) { alert('Title is required.'); return; }
+  const payload = {
+    title,
+    status_code: document.getElementById('pf-status').value,
+    assigned_to: _newProjPicker?.getId() || null,
+    due_date:    document.getElementById('pf-due').value || null,
+    notes:       document.getElementById('pf-notes').value.trim() || null,
+    updated_at:  new Date().toISOString(),
+  };
+  const { error } = await sb.from('projects').insert(payload);
+  if (error) { alert('Save failed: ' + error.message); return; }
+  _newProjPicker = null;
+  closeModal();
+  loadProjects();
+}
+
+// ── Legacy modal support (used by openModal('project') in main.js) ─────────
 
 export function projectForm(defaultStatus, data) {
   const sc = data?.status_code || defaultStatus || 'not_started';
+  const teams = store.teams || [];
+  const people = [...(store.personnel || [])].sort((a, b) =>
+    (a.name || '').split(' ').pop().localeCompare((b.name || '').split(' ').pop())
+  );
+  const teamOpts = `<option value="">— None —</option>` +
+    teams.map(t => `<option value="${t.id}"${t.id === data?.team_id ? ' selected' : ''}>${t.name}</option>`).join('');
+  const peopleOpts = `<option value="">— None —</option>` +
+    people.map(p => `<option value="${p.id}"${p.id === data?.assigned_to ? ' selected' : ''}>${p.name}</option>`).join('');
   return `<div class="modal-title">${data ? 'Edit project' : 'Add project'}</div>
   <label>Title</label><input id="f-title" value="${data?.title || ''}" placeholder="Project name" />
   <label>Status</label>
@@ -124,9 +173,9 @@ export function projectForm(defaultStatus, data) {
     ${Object.entries(STATUS).map(([k, v]) => `<option value="${k}"${k === sc ? ' selected' : ''}>${v.label}</option>`).join('')}
   </select>
   <label>Team (optional)</label>
-  <select id="f-team">${teamOptions(data?.team_id)}</select>
+  <select id="f-team">${teamOpts}</select>
   <label>Assigned to (optional)</label>
-  <select id="f-assigned">${personnelOptions(data?.assigned_to)}</select>
+  <select id="f-assigned">${peopleOpts}</select>
   <label>Due date</label><input type="date" id="f-due" value="${data?.due_date || ''}" />
   <label>Visibility</label>
   <select id="f-vis">
@@ -184,8 +233,10 @@ function openProjectDetail(id) {
 }
 
 function setProjectFilter(f) {
-  activeFilter = f;
   renderProjects();
 }
 
-Object.assign(window, { saveProject, deleteProject, openProjectDetail, setProjectFilter, renderProjects });
+Object.assign(window, {
+  saveProject, deleteProject, openProjectDetail, setProjectFilter,
+  renderProjects, saveNewProject, openNewProjectModal,
+});
