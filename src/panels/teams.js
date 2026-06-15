@@ -1,5 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
+import { isAdmin } from '../roles.js';
 
 let allTeams = [];
 
@@ -61,12 +62,18 @@ function renderTeamsLanding() {
   const el = document.getElementById('teams-list');
   if (!el) return;
 
-  if (!allTeams.length) {
-    el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No teams yet. Use the button above to create one.</div>';
+  // Basic users only see teams they belong to
+  const myTeamIds = new Set(store.currentUserRoles?.teamIds || []);
+  const visibleTeams = isAdmin()
+    ? allTeams
+    : allTeams.filter(t => myTeamIds.has(t.id));
+
+  if (!visibleTeams.length) {
+    el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">You are not a member of any teams yet.</div>';
     return;
   }
 
-  el.innerHTML = allTeams.map(t => {
+  el.innerHTML = visibleTeams.map(t => {
     const icon = t.is_protected ? 'fa-church' : (t.icon || 'fa-users');
     return `
     <div class="team-landing-card" onclick="window.showTeamDashboard('${t.id}')" style="

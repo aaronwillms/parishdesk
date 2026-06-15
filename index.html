@@ -54,7 +54,7 @@
       <div class="nav-item" data-panel="marriage"><i class="ti ti-heart"></i> Marriage Preparation</div>
       <div class="nav-item" data-panel="annulments"><i class="ti ti-scale"></i> Annulments</div>
       <div class="nav-sec">Ministry</div>
-      <div class="nav-item" data-panel="school"><i class="ti ti-school"></i> Cathedral School</div>
+      <div id="ministry-nav"></div>
       <div class="nav-item" data-panel="teams"><i class="ti ti-users-group"></i> Teams</div>
       <div id="teams-subnav" style="display:none;"></div>
       <div class="nav-item" data-panel="projects"><i class="ti ti-clipboard-list"></i> My Projects</div>
@@ -377,7 +377,7 @@
         <div class="card">
           <div class="card-header">
             <div class="card-title"><i class="ti ti-users-group"></i> Teams</div>
-            <button class="card-action" onclick="openAddTeam()">+ New team</button>
+            <button id="btn-new-team" class="card-action" onclick="openAddTeam()">+ New team</button>
           </div>
           <div id="teams-list"><span class="pulse"></span></div>
         </div>
@@ -396,7 +396,7 @@
           <div class="stat-card"><div class="stat-num" id="pstat-complete">—</div><div class="stat-label">Complete</div></div>
         </div>
         <div style="margin-bottom:1rem;">
-          <button class="btn-primary" onclick="openNewProjectModal()">+ New project</button>
+          <button id="btn-new-project" class="btn-primary" onclick="openNewProjectModal()">+ New project</button>
         </div>
         <div id="projects-list"><span class="pulse"></span></div>
       </div>
@@ -404,6 +404,10 @@
       <!-- PROJECT WORKSPACE (dynamic) -->
       <div id="panel-projectDashboard" class="panel">
         <div id="project-dashboard-root"></div>
+      </div>
+
+      <div id="panel-institutionDashboard" class="panel">
+        <div id="institution-dashboard-root"></div>
       </div>
 
       <!-- USER PROFILE -->

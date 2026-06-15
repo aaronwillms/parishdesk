@@ -270,6 +270,7 @@ function _changeLinkUser(userId, detailEl) {
 function _userDetail(u) {
   const isSelf = u.userId === _currentAuthUserId;
   const isSA = u.roles.includes('super_admin');
+  const isAdminRole = u.roles.includes('admin');
   const teams = store.teams || [];
 
   const sacramentChecks = SACRAMENTS.map(s => {
@@ -348,6 +349,12 @@ function _userDetail(u) {
               style="width:14px;height:14px;accent-color:#1C2B3A;margin:0;cursor:${isSelf ? 'not-allowed' : 'pointer'};flex-shrink:0;" />
             <label for="au-sa-${u.userId}" style="font-size:13px;color:#1C2B3A;cursor:${isSelf ? 'not-allowed' : 'pointer'};margin:0;">Super Admin</label>
           </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+            <input type="checkbox" id="au-admin-${u.userId}" class="au-admin-cb" ${(isAdminRole || isSA) ? 'checked' : ''} ${isSA ? 'disabled title="Included via Super Admin"' : ''}
+              style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${isSA ? 'not-allowed' : 'pointer'};flex-shrink:0;${isSA ? 'opacity:0.45;' : ''}" />
+            <label for="au-admin-${u.userId}" style="font-size:13px;color:#1C2B3A;cursor:${isSA ? 'not-allowed' : 'pointer'};margin:0;">Admin</label>
+          </div>
+          ${isSA ? '<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">Admin included via Super Admin</div>' : ''}
         </div>
         <div>
           <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">Sacramental Roles</div>
@@ -375,7 +382,7 @@ function _userDetail(u) {
           padding:.4rem 1.1rem;background:#C9A84C;color:#fff;border:none;
           border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;
           cursor:pointer;font-weight:500;
-        ">Reset Password</button>` : ''}
+        ">Send Password Reset Email</button>` : ''}
         <div class="au-status" style="font-size:12px;color:#6B7280;min-height:16px;"></div>
       </div>
     </div>
@@ -400,6 +407,18 @@ async function _saveUser(userId) {
       await sb.from('user_roles').upsert({ user_id: userId, role: 'super_admin' }, { onConflict: 'user_id,role' });
     } else if (!wantsSA && u.roles.includes('super_admin')) {
       await sb.from('user_roles').delete().eq('user_id', userId).eq('role', 'super_admin');
+    }
+  }
+
+  // Admin role (skip if user is super_admin — it's derived)
+  if (!wantsSA) {
+    const wantsAdmin = detail.querySelector('.au-admin-cb:not(:disabled)')?.checked;
+    if (wantsAdmin !== undefined) {
+      if (wantsAdmin && !u.roles.includes('admin')) {
+        await sb.from('user_roles').upsert({ user_id: userId, role: 'admin' }, { onConflict: 'user_id,role' });
+      } else if (!wantsAdmin && u.roles.includes('admin')) {
+        await sb.from('user_roles').delete().eq('user_id', userId).eq('role', 'admin');
+      }
     }
   }
 

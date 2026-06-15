@@ -69,7 +69,10 @@ function _render(container) {
           line-height:1;margin-top:3px;flex-shrink:0;
         " title="Back to Teams" onmouseover="this.style.color='#1C2B3A'" onmouseout="this.style.color='#8FA8BF'">←</button>
         <div style="flex:1;min-width:0;">
-          <h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-size:26px;font-weight:700;color:#1C2B3A;margin:0;line-height:1.2;">${_team.name}</h1>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <i class="fa-solid ${_team.is_protected ? 'fa-church' : (_team.icon || 'fa-users')}" style="font-size:26px;color:#8B1A2F;flex-shrink:0;"></i>
+            <h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-size:26px;font-weight:700;color:#1C2B3A;margin:0;line-height:1.2;">${_team.name}</h1>
+          </div>
           ${_team.description ? `<div style="font-size:13.5px;color:#6B7280;margin-top:4px;">${_team.description}</div>` : ''}
         </div>
         ${(!_team.is_protected && isTeamAdmin(_team.id)) ? `

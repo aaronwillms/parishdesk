@@ -19,12 +19,26 @@ export async function loadUserRoles() {
       : Promise.resolve({ data: [] }),
   ]);
 
-  const roles = rolesRes.data || [];
+  const roles   = rolesRes.data || [];
+  const teamIds = (teamsRes.data || []).map(r => r.team_id);
+
+  // Personnel IDs of everyone sharing a team with this user — used for directory filtering
+  let teamPersonnelIds = [];
+  if (personnelId && teamIds.length) {
+    const { data: tpData } = await sb
+      .from('team_members')
+      .select('personnel_id')
+      .in('team_id', teamIds);
+    teamPersonnelIds = [...new Set((tpData || []).map(r => r.personnel_id).filter(Boolean))];
+  }
+
   store.currentUserRoles = {
-    isSuperAdmin: roles.some(r => r.role === 'super_admin'),
-    sacraments:   (sacramentRes.data || []).map(r => r.sacrament),
-    panelGrants:  (grantsRes.data || []).map(r => r.panel),
-    teamIds:      (teamsRes.data || []).map(r => r.team_id),
+    isSuperAdmin:     roles.some(r => r.role === 'super_admin'),
+    isAdmin:          roles.some(r => r.role === 'admin' || r.role === 'super_admin'),
+    sacraments:       (sacramentRes.data || []).map(r => r.sacrament),
+    panelGrants:      (grantsRes.data || []).map(r => r.panel),
+    teamIds,
+    teamPersonnelIds,
   };
 }
 
@@ -32,6 +46,10 @@ export async function loadUserRoles() {
 
 export function isSuperAdmin() {
   return !!store.currentUserRoles?.isSuperAdmin;
+}
+
+export function isAdmin() {
+  return !!store.currentUserRoles?.isAdmin;  // true for admin AND super_admin
 }
 
 export function canAccessSacrament(sacrament) {
@@ -45,14 +63,30 @@ export function canAccessPanel(panel) {
   const r = store.currentUserRoles;
   if (!r) return false;
 
-  // Always-on panels
-  if (['dashboard', 'tasks', 'personnel', 'projects', 'userProfile'].includes(panel)) return true;
+  // Always-on panels (all authenticated users)
+  if (['dashboard', 'tasks', 'userProfile'].includes(panel)) return true;
 
-  // Teams — member of at least one team
-  if (panel === 'teams') return r.teamIds.length > 0;
+  // Personnel + Projects: all authenticated users see the panel, but content is scoped
+  if (panel === 'personnel' || panel === 'projects') return true;
+
+  // Teams: admin sees all; basic users need team membership
+  if (panel === 'teams') return isAdmin() || r.teamIds.length > 0;
+
+  // Admin panel: super_admin only
+  if (panel === 'admin') return false;
+
+  // School: admin+
+  if (panel === 'school') return isAdmin();
 
   // Sacramental panels
-  const SACRAMENTAL = { baptism: 'baptism', firstcomm: 'first_communion', confirmation: 'confirmation', ocia: 'ocia', marriage: 'marriage', annulments: 'annulments' };
+  const SACRAMENTAL = {
+    baptism:      'baptism',
+    firstcomm:    'first_communion',
+    confirmation: 'confirmation',
+    ocia:         'ocia',
+    marriage:     'marriage',
+    annulments:   'annulments',
+  };
   if (SACRAMENTAL[panel]) return canAccessSacrament(SACRAMENTAL[panel]);
 
   // Panel grants catch-all
@@ -60,7 +94,6 @@ export function canAccessPanel(panel) {
 }
 
 export function isTeamAdmin(teamId) {
-  if (isSuperAdmin()) return true;
-  // For now team admin = team member; dedicated team_admin role can be layered in later
+  if (isAdmin()) return true;  // admin and super_admin can manage all teams
   return store.currentUserRoles?.teamIds.includes(teamId) || false;
 }

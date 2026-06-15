@@ -1,5 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
+import { isAdmin } from '../roles.js';
 
 // Clergy/religious types appear first, in this fixed order
 const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
@@ -49,16 +50,18 @@ function contactChips(p) {
 }
 
 function personCard(p) {
+  const controls = isAdmin() ? `
+    <div style="display:flex;gap:6px;flex-shrink:0;">
+      <button class="card-action" onclick="openPersonnelModal('${p.id}')">Edit</button>
+      <button class="card-action" style="color:#C0392B;" onclick="deletePersonnel('${p.id}')">Delete</button>
+    </div>` : '';
   return `<div class="evt-item" style="cursor:default;">
     <div style="flex:1;min-width:0;">
       <div style="font-weight:500;font-size:14px;color:var(--navy);">${p.name}</div>
       ${p.title ? `<div style="font-size:12px;color:#6B7280;margin-top:1px;">${p.title}</div>` : ''}
       ${contactChips(p)}
     </div>
-    <div style="display:flex;gap:6px;flex-shrink:0;">
-      <button class="card-action" onclick="openPersonnelModal('${p.id}')">Edit</button>
-      <button class="card-action" style="color:#C0392B;" onclick="deletePersonnel('${p.id}')">Delete</button>
-    </div>
+    ${controls}
   </div>`;
 }
 
@@ -76,8 +79,14 @@ function groupPill(label) {
 function renderPersonnel() {
   const el = document.getElementById('personnel-list');
   if (!el) return;
-  const all  = store.personnel    || [];
   const insts = store.institutions || [];
+
+  // Basic users only see personnel who share a team with them
+  const rawAll = store.personnel || [];
+  const teamPersonnelIds = store.currentUserRoles?.teamPersonnelIds;
+  const all = isAdmin() || !teamPersonnelIds
+    ? rawAll
+    : rawAll.filter(p => teamPersonnelIds.includes(p.id));
 
   if (!insts.length && !all.length) {
     el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No institutions or personnel added yet.</div>';
@@ -161,12 +170,62 @@ function renderPersonnel() {
   el.innerHTML = html || '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No personnel added yet.</div>';
 }
 
+// ── Institution icon picker ────────────────────────────────────────────────────
+
+const INST_ICONS = [
+  { cls: 'fa-church',              label: 'Church' },
+  { cls: 'fa-school',              label: 'School' },
+  { cls: 'fa-graduation-cap',      label: 'College' },
+  { cls: 'fa-hospital',            label: 'Healthcare' },
+  { cls: 'fa-hand-holding-heart',  label: 'Outreach' },
+  { cls: 'fa-building',            label: 'General' },
+  { cls: 'fa-baby',                label: 'Childcare' },
+  { cls: 'fa-cross',               label: 'Religious' },
+  { cls: 'fa-book-open',           label: 'Ministry' },
+  { cls: 'fa-dove',                label: 'Campus' },
+];
+
+function _instIconPickerHtml(currentIcon) {
+  const selected = currentIcon || 'fa-building';
+  return `
+    <label>Icon</label>
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:.85rem;">
+      ${INST_ICONS.map(ic => {
+        const isSel = ic.cls === selected;
+        return `<button type="button" class="if-icon-btn" data-icon="${ic.cls}"
+          onclick="selectInstIcon('${ic.cls}')"
+          style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:.55rem .2rem;
+            border-radius:6px;cursor:pointer;font-family:'Inter',sans-serif;font-size:10px;
+            color:${isSel ? '#C9A84C' : '#6B7280'};
+            border:1.5px solid ${isSel ? '#C9A84C' : '#E2DDD6'};
+            background:${isSel ? '#FEF9E7' : '#fff'};"
+          title="${ic.label}">
+          <i class="fa-solid ${ic.cls}" style="font-size:14px;color:${isSel ? '#C9A84C' : '#9CA3AF'};"></i>
+          <span>${ic.label}</span>
+        </button>`;
+      }).join('')}
+    </div>
+    <input type="hidden" id="if-icon" value="${selected}" />`;
+}
+
+window.selectInstIcon = function(icon) {
+  document.getElementById('if-icon').value = icon;
+  document.querySelectorAll('.if-icon-btn').forEach(btn => {
+    const sel = btn.dataset.icon === icon;
+    btn.style.border = `1.5px solid ${sel ? '#C9A84C' : '#E2DDD6'}`;
+    btn.style.background = sel ? '#FEF9E7' : '#fff';
+    btn.style.color = sel ? '#C9A84C' : '#6B7280';
+    btn.querySelector('i').style.color = sel ? '#C9A84C' : '#9CA3AF';
+  });
+};
+
 // ── Institution modals ─────────────────────────────────────────────────────────
 
 function openInstitutionModal() {
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-title">Add institution</div>
     <label>Name</label><input id="if-name" placeholder="e.g. Outreach Center" />
+    ${_instIconPickerHtml('fa-building')}
     <label>Sort order</label><input type="number" id="if-sort" placeholder="0" style="width:80px;" />
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">Cancel</button>
@@ -180,6 +239,7 @@ async function saveInstitution() {
   if (!name) { alert('Name is required.'); return; }
   const { error } = await sb.from('institutions').insert({
     name,
+    icon: document.getElementById('if-icon')?.value || 'fa-building',
     sort_order: parseInt(document.getElementById('if-sort').value) || 0,
   });
   if (error) { alert('Save failed: ' + error.message); return; }
@@ -190,11 +250,13 @@ async function saveInstitution() {
 function openInstitutionSettingsModal(id, currentName) {
   const inst = (store.institutions || []).find(i => i.id === id);
   const currentSort = inst?.sort_order ?? '';
+  const currentIcon = inst?.icon || 'fa-building';
   const safeName = currentName.replace(/'/g, "\\'");
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-title">Institution settings</div>
     <label>Name</label>
     <input id="if-rename" value="${currentName}" />
+    ${_instIconPickerHtml(currentIcon)}
     <label>Sort order</label>
     <input type="number" id="if-sort" value="${currentSort}" placeholder="0" style="width:80px;" />
     <div class="modal-actions">
@@ -209,10 +271,11 @@ function openInstitutionSettingsModal(id, currentName) {
 }
 
 async function saveInstitutionSettings(id, oldName) {
-  const newName  = document.getElementById('if-rename').value.trim();
+  const newName   = document.getElementById('if-rename').value.trim();
   const sortOrder = parseInt(document.getElementById('if-sort').value) || 0;
+  const icon      = document.getElementById('if-icon')?.value || 'fa-building';
   if (!newName) { alert('Name is required.'); return; }
-  const { error: instErr } = await sb.from('institutions').update({ name: newName, sort_order: sortOrder }).eq('id', id);
+  const { error: instErr } = await sb.from('institutions').update({ name: newName, sort_order: sortOrder, icon }).eq('id', id);
   if (instErr) { alert('Save failed: ' + instErr.message); return; }
   if (newName !== oldName) {
     const { error: persErr } = await sb.from('personnel')

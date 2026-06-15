@@ -4,6 +4,7 @@ import { fmtDate } from '../utils.js';
 import { updateProjectStats, renderDashProjects } from './dashboard.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { getUserScope, isVisible, scopeNotice } from '../ui/userScope.js';
+import { isAdmin } from '../roles.js';
 
 // ── Status config ──────────────────────────────────────────────────────────
 
@@ -131,6 +132,7 @@ function projectCard(p) {
 // ── New project modal ──────────────────────────────────────────────────────
 
 export function openNewProjectModal() {
+  if (!isAdmin()) return;  // basic users cannot create projects
   _newProjAssignees = [];
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-title">New project</div>

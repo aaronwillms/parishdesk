@@ -2,7 +2,7 @@ import './styles/main.css';
 import { initAuth, setSignOutCallback } from './auth.js';
 import { initLiturgical } from './liturgical.js';
 import { loadCalendar, loadInit } from './panels/dashboard.js';
-import { initNavigation, renderSidebarProfileWidget, setActiveTeamSubNavItem, applyNavVisibility, resetNavVisibility, applyParishName } from './ui/navigation.js';
+import { initNavigation, renderSidebarProfileWidget, setActiveTeamSubNavItem, applyNavVisibility, resetNavVisibility, applyParishName, renderMinistryNav } from './ui/navigation.js';
 import { loadUserRoles } from './roles.js';
 import { clearUserScope } from './ui/userScope.js';
 import { loadAdmin } from './panels/admin.js';
@@ -19,6 +19,7 @@ import { loadSchool } from './panels/school.js';
 import { loadPersonnel } from './panels/personnel.js';
 import { loadTeams, loadTeamsStore } from './panels/teams.js';
 import { renderTeamDashboard } from './panels/teamDashboard.js';
+import { renderInstitutionDashboard } from './panels/institutionDashboard.js';
 import { loadTasks } from './panels/tasks.js';
 import { initNotifications } from './notifications.js';
 import { sb } from './supabase.js';
@@ -43,6 +44,17 @@ async function startApp(user) {
     if (!html) return;
     document.getElementById('modal-content').innerHTML = html;
     document.getElementById('modal-overlay').classList.add('open');
+  };
+
+  window.showInstitutionDashboard = (institutionId) => {
+    const container = document.getElementById('institution-dashboard-root');
+    if (!container) return;
+    // Highlight the matching nav item
+    document.querySelectorAll('.nav-institution-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.institutionId === institutionId);
+    });
+    window.switchPanel('institutionDashboard', { title: 'Ministry' });
+    renderInstitutionDashboard(container, institutionId);
   };
 
   window.showProjectDashboard = (projectId) => {
@@ -78,8 +90,9 @@ async function startApp(user) {
     ocia:          () => { loadOcia(); loadCoordData('ocia'); },
     teams:         () => { loadTeams(); setActiveTeamSubNavItem(null); },
     tasks:         loadTasks,
-    teamDashboard:    () => {},   // handled by showTeamDashboard
-    projectDashboard: () => {},   // handled by showProjectDashboard
+    teamDashboard:         () => {},   // handled by showTeamDashboard
+    projectDashboard:      () => {},   // handled by showProjectDashboard
+    institutionDashboard:  () => {},   // handled by showInstitutionDashboard
     userProfile:      loadUserProfile,
     admin:            loadAdmin,
   });

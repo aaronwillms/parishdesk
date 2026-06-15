@@ -1,7 +1,7 @@
 import { PANEL_TITLES } from '../utils.js';
 import { store } from '../store.js';
 import { createAvatar } from './avatar.js';
-import { canAccessPanel, isSuperAdmin } from '../roles.js';
+import { canAccessPanel, isSuperAdmin, isAdmin } from '../roles.js';
 
 let _loaderMap = {};
 let _currentPanel = null;
@@ -38,6 +38,7 @@ function switchPanel(name, opts) {
 
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.nav-institution-item').forEach(n => n.classList.remove('active'));
 
   document.getElementById('panel-' + name)?.classList.add('active');
   if (navName) {
@@ -135,6 +136,38 @@ export function resetNavVisibility() {
   });
 }
 
+export function renderMinistryNav() {
+  const container = document.getElementById('ministry-nav');
+  if (!container) return;
+
+  const institutions = store.institutions || [];
+  const primaryName  = store.parishSettings?.primary_institution;
+  const teamPersonnelIds = store.currentUserRoles?.teamPersonnelIds;
+  const userIsAdmin  = isAdmin();
+
+  // Non-primary institutions sorted alphabetically
+  const visible = institutions
+    .filter(i => i.name !== primaryName)
+    .filter(i => {
+      if (userIsAdmin) return true;
+      if (!teamPersonnelIds) return false;
+      // Show if any personnel in this institution share a team with the user
+      const personnel = store.personnel || [];
+      return personnel.some(p => p.institution === i.name && teamPersonnelIds.includes(p.id));
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  container.innerHTML = visible.map(inst => {
+    const icon = inst.icon || 'fa-building';
+    return `<div class="nav-item nav-institution-item" data-institution-id="${inst.id}"
+      onclick="window.showInstitutionDashboard('${inst.id}')"
+      style="display:flex;align-items:center;gap:8px;">
+      <i class="fa-solid ${icon}" style="font-size:13px;width:16px;text-align:center;flex-shrink:0;"></i>
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${inst.name}</span>
+    </div>`;
+  }).join('');
+}
+
 export function applyNavVisibility() {
   const show = (panel, visible) => {
     const el = document.querySelector(`.nav-item[data-panel="${panel}"]`);
@@ -152,12 +185,20 @@ export function applyNavVisibility() {
   const anySacramental = SACRAMENTAL_PANELS.some(p => canAccessPanel(p));
   showSec('Sacramental', anySacramental);
 
-  show('school', isSuperAdmin());
+  show('school', isAdmin());
   show('teams', canAccessPanel('teams'));
   const teamsSubNav = document.getElementById('teams-subnav');
   if (teamsSubNav && !canAccessPanel('teams')) teamsSubNav.style.display = 'none';
 
   show('admin', isSuperAdmin());
+
+  renderMinistryNav();
+
+  // New Team / New Project buttons: admin+ only
+  const newTeamBtn = document.getElementById('btn-new-team');
+  if (newTeamBtn) newTeamBtn.style.display = isAdmin() ? '' : 'none';
+  const newProjectBtn = document.getElementById('btn-new-project');
+  if (newProjectBtn) newProjectBtn.style.display = isAdmin() ? '' : 'none';
 }
 
 export function applyParishName(name) {
