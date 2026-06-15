@@ -34,6 +34,7 @@ export const PANEL_TITLES = {
   ocia:         'OCIA',
   homily:       'Homily preparation',
   school:       'Cathedral Catholic School',
+  teams:        'Teams',
   projects:     'Projects & deadlines',
   personnel:    'Personnel',
 };

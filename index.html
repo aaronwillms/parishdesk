@@ -54,6 +54,7 @@
       <div class="nav-item" data-panel="annulments"><i class="ti ti-scale"></i> Annulments</div>
       <div class="nav-sec">Ministry</div>
       <div class="nav-item" data-panel="school"><i class="ti ti-school"></i> Cathedral School</div>
+      <div class="nav-item" data-panel="teams"><i class="ti ti-users-group"></i> Teams</div>
       <div class="nav-sec">Administration</div>
       <div class="nav-item" data-panel="projects"><i class="ti ti-clipboard-list"></i> Projects</div>
       <div class="nav-item" data-panel="personnel"><i class="ti ti-users"></i> Personnel</div>
@@ -349,6 +350,17 @@
             <div class="card-header"><div class="card-title"><i class="ti ti-book-2"></i> Theology department</div><button class="card-action" onclick="openSchoolModal('theology')">+ Add item</button></div>
             <div id="school-theology-list"><span class="pulse"></span></div>
           </div>
+        </div>
+      </div>
+
+      <!-- TEAMS -->
+      <div id="panel-teams" class="panel">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i class="ti ti-users-group"></i> Teams</div>
+            <button class="card-action" onclick="openAddTeam()">+ Add team</button>
+          </div>
+          <div id="teams-list"><span class="pulse"></span></div>
         </div>
       </div>
 

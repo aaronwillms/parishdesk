@@ -12,6 +12,7 @@ import { loadOcia } from './panels/ocia.js';
 import { loadCoordData } from './ui/coordinator.js';
 import { loadSchool } from './panels/school.js';
 import { loadPersonnel } from './panels/personnel.js';
+import { loadTeams } from './panels/teams.js';
 import { initNotifications } from './notifications.js';
 
 async function startApp(user) {
@@ -35,6 +36,7 @@ async function startApp(user) {
     firstcomm:    () => { loadSacramental('firstcomm');    loadCoordData('firstcomm'); },
     confirmation: () => { loadSacramental('confirmation'); loadCoordData('confirmation'); },
     ocia:         () => { loadOcia(); loadCoordData('ocia'); },
+    teams:        loadTeams,
   });
 
   initModal();
