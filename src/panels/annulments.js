@@ -83,7 +83,7 @@ function renderCaseCard(c) {
   const progress = docs.length>0?Math.round((docsDone/docs.length)*100):null;
   const exp = expandedCaseId===c.id;
 
-  let h = `<div class="couple-card" style="border-left:4px solid ${sm.dot};">
+  let h = `<div id="case-card-${c.id}" class="couple-card" style="border-left:4px solid ${sm.dot};">
     <div class="couple-header" onclick="toggleCase('${c.id}')">
       <div style="flex:1;">
         <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;">
@@ -239,14 +239,11 @@ function renderCaseCard(c) {
 function toggleCase(id) {expandedCaseId=expandedCaseId===id?null:id;renderCases();}
 
 // Called from other panels (e.g. OCIA) to navigate to and expand a specific case
-export function expandCase(id) {
+export async function expandCase(id) {
   expandedCaseId = id;
   window.switchPanel('annulments');
-  // loadCases is async; wait for it to render before scrolling
-  setTimeout(() => {
-    const target = document.querySelector('#panel-annulments .couple-body')?.closest('.couple-card');
-    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, 300);
+  await loadCases();
+  document.getElementById('case-card-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 async function quickStatusChange(caseId, newStatus) {
