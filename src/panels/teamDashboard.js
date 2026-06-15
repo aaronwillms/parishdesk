@@ -39,13 +39,19 @@ async function _loadData() {
 
 // ── Render ─────────────────────────────────────────────────────────────────
 
-const TABS = [
+const TABS_BASE = [
   { key: 'projects',    label: 'Projects' },
   { key: 'tasks',       label: 'Tasks' },
   { key: 'schedule',    label: 'Schedule' },
   { key: 'documents',   label: 'Documents' },
   { key: 'members',     label: 'Members' },
 ];
+const TAB_SETTINGS = { key: 'settings', label: 'Settings' };
+function _tabs() {
+  return isTeamAdmin(_currentTeamId)
+    ? [...TABS_BASE, TAB_SETTINGS]
+    : TABS_BASE;
+}
 
 function _render(container) {
   if (!_team) {
@@ -87,7 +93,7 @@ function _render(container) {
 
       <!-- Tab bar -->
       <div id="td-tabs" style="display:flex;gap:0;border-bottom:1.5px solid #E2DDD6;margin-bottom:1.25rem;overflow-x:auto;">
-        ${TABS.map(tab => `
+        ${_tabs().map(tab => `
           <button class="td-tab" data-tab="${tab.key}" style="
             background:none;border:none;border-bottom:2.5px solid transparent;
             padding:.55rem 1rem;font-size:13px;font-family:'Inter',sans-serif;
@@ -187,6 +193,8 @@ function _renderTabContent() {
   if (!el) return;
   if (_activeTab === 'members') {
     _renderMembers(el);
+  } else if (_activeTab === 'settings') {
+    _renderSettings(el);
   } else {
     _renderStub(el, _activeTab);
   }
@@ -206,7 +214,8 @@ function _renderMembers(el) {
     _bindMemberRowEvents();
   }
 
-  // Add member button + picker area
+  // Add member button + picker area — team admins only
+  if (!isTeamAdmin(_currentTeamId)) return;
   const addArea = document.createElement('div');
   addArea.id = 'td-add-area';
   addArea.style.cssText = 'margin-top:1rem;';
@@ -268,9 +277,14 @@ function _isAutoSyncedMember(m) {
   return _team?.is_protected && STAFF_TYPES.has(m.personnel?.employment);
 }
 
+const TEAM_ROLES = ['President', 'Vice President', 'Secretary', 'Treasurer', 'Coordinator', 'Member', 'Other'];
+
 function _memberRow(m) {
   const p = m.personnel || {};
-  const canRemove = !_isAutoSyncedMember(m);
+  const showCog = !_team?.is_protected && isTeamAdmin(_currentTeamId);
+  const roleLabel = m.role && !TEAM_ROLES.slice(0, -1).includes(m.role)
+    ? m.role   // custom "Other" value stored directly
+    : m.role || null;
   return `
     <div class="td-member-row" data-member-id="${m.id}" style="
       display:flex;align-items:center;gap:10px;
@@ -278,56 +292,79 @@ function _memberRow(m) {
     ">
       <div style="flex:1;min-width:0;">
         <div style="font-size:14px;font-weight:500;color:#1C2B3A;">${p.name || '—'}</div>
-        ${p.title ? `<div style="font-size:12px;color:#6B7280;margin-top:1px;">${p.title}</div>` : ''}
+        ${roleLabel ? `<div style="font-size:12px;color:#6B7280;margin-top:1px;">${roleLabel}</div>` :
+          p.title ? `<div style="font-size:12px;color:#6B7280;margin-top:1px;">${p.title}</div>` : ''}
       </div>
-      <input class="td-role-input" data-member-id="${m.id}" value="${m.role || ''}" placeholder="Role in team"
-        style="
-          width:140px;padding:.3rem .55rem;border:.5px solid transparent;border-radius:5px;
-          font-size:12.5px;font-family:'Inter',sans-serif;color:#374151;
-          background:transparent;outline:none;transition:border-color .12s,background .12s;
-        "
-        title="Click to edit role"
-      />
-      ${canRemove ? `
-      <button class="td-remove-btn" data-member-id="${m.id}" data-team-id="${_currentTeamId}"
-        title="Remove from team"
-        style="background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:14px;padding:2px 4px;line-height:1;flex-shrink:0;"
-        onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#D1D5DB'"
-      >✕</button>` : `<span style="width:22px;flex-shrink:0;"></span>`}
+      ${showCog ? `
+      <button class="td-cog-btn" data-member-id="${m.id}"
+        title="Member options"
+        style="background:none;border:none;cursor:pointer;color:#9CA3AF;font-size:15px;padding:3px 5px;line-height:1;flex-shrink:0;"
+        onmouseover="this.style.color='#1C2B3A'" onmouseout="this.style.color='#9CA3AF'"
+      ><i class="fa-solid fa-gear"></i></button>` : ''}
     </div>
   `;
 }
 
 function _bindMemberRowEvents() {
-  document.querySelectorAll('.td-role-input').forEach(input => {
-    input.addEventListener('focus', () => {
-      input.style.borderColor = '#D1C9BE';
-      input.style.background = '#fff';
-    });
-    input.addEventListener('blur', async () => {
-      input.style.borderColor = 'transparent';
-      input.style.background = 'transparent';
-      const memberId = input.dataset.memberId;
-      const role = input.value.trim() || null;
-      const current = _members.find(m => m.id === memberId);
-      if (!current || current.role === role) return;
-      const { error } = await sb.from('team_members').update({ role }).eq('id', memberId);
-      if (error) { alert('Failed to save role: ' + error.message); return; }
-      current.role = role;
-    });
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
+  document.querySelectorAll('.td-cog-btn').forEach(btn => {
+    btn.addEventListener('click', () => _openMemberModal(btn.dataset.memberId));
+  });
+}
+
+function _openMemberModal(memberId) {
+  const m = _members.find(x => x.id === memberId);
+  if (!m) return;
+  const p = m.personnel || {};
+  const canRemove = !_isAutoSyncedMember(m);
+
+  const PRESET_ROLES = ['President', 'Vice President', 'Secretary', 'Treasurer', 'Coordinator', 'Member'];
+  const currentRole = m.role || 'Member';
+  const isOther = currentRole && !PRESET_ROLES.includes(currentRole);
+  const selectVal = isOther ? 'Other' : (currentRole || 'Member');
+
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-title">${p.name || 'Member'}</div>
+    ${p.title ? `<div style="font-size:13px;color:#6B7280;margin-top:-8px;margin-bottom:12px;">${p.title}</div>` : ''}
+    <label>Team role</label>
+    <select id="tm-role-select" onchange="document.getElementById('tm-other-wrap').style.display=this.value==='Other'?'':'none'">
+      ${PRESET_ROLES.map(r => `<option value="${r}"${selectVal===r?' selected':''}>${r}</option>`).join('')}
+      <option value="Other"${isOther?' selected':''}>Other…</option>
+    </select>
+    <div id="tm-other-wrap" style="${isOther ? '' : 'display:none;'}margin-top:.5rem;">
+      <input id="tm-role-other" placeholder="Custom role title" value="${isOther ? currentRole : ''}" style="width:100%;box-sizing:border-box;" />
+    </div>
+    <div class="modal-actions" style="justify-content:space-between;margin-top:1.25rem;">
+      ${canRemove ? `<button id="tm-remove-btn" class="btn-secondary" style="color:#8B1A2F;border-color:#8B1A2F;">Remove from team</button>` : '<span></span>'}
+      <div style="display:flex;gap:8px;">
+        <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+        <button id="tm-save-btn" class="btn-primary">Save</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('modal-overlay').classList.add('open');
+
+  document.getElementById('tm-save-btn').addEventListener('click', async () => {
+    const sel = document.getElementById('tm-role-select').value;
+    const role = sel === 'Other'
+      ? (document.getElementById('tm-role-other')?.value.trim() || 'Other')
+      : sel;
+    const { error } = await sb.from('team_members').update({ role }).eq('id', memberId);
+    if (error) { alert('Failed to save: ' + error.message); return; }
+    m.role = role;
+    closeModal();
+    _renderTabContent();
   });
 
-  document.querySelectorAll('.td-remove-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      if (!confirm('Remove this member from the team?')) return;
-      const memberId = btn.dataset.memberId;
+  if (canRemove) {
+    document.getElementById('tm-remove-btn').addEventListener('click', async () => {
+      if (!confirm(`Remove ${p.name || 'this member'} from the team?`)) return;
       const { error } = await sb.from('team_members').delete().eq('id', memberId);
       if (error) { alert('Failed to remove: ' + error.message); return; }
+      closeModal();
       await _loadData();
       _renderTabContent();
     });
-  });
+  }
 }
 
 async function _confirmAddMember() {
@@ -348,6 +385,91 @@ async function _confirmAddMember() {
   _renderTabContent();
 }
 
+// ── Settings tab ───────────────────────────────────────────────────────────
+
+function _renderSettings(el) {
+  const projCreation = _team?.project_creation || 'admins_only';
+
+  const memberRows = _members.map(m => {
+    const p = m.personnel || {};
+    const isTeamAdminMember = m.team_role === 'admin';
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:.6rem 0;border-bottom:.5px solid #F0EDE8;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:500;color:#1C2B3A;">${p.name || '—'}</div>
+          ${p.title ? `<div style="font-size:12px;color:#6B7280;">${p.title}</div>` : ''}
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#374151;white-space:nowrap;">
+          <input type="checkbox" class="ts-admin-cb" data-member-id="${m.id}"
+            ${isTeamAdminMember ? 'checked' : ''}
+            style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;" />
+          Team admin
+        </label>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:1rem;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.75rem;">Team Admins</div>
+      ${memberRows || '<div style="font-size:13px;color:#6B7280;font-style:italic;">No members yet.</div>'}
+    </div>
+
+    <div class="card" style="margin-bottom:1rem;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.75rem;">Project Creation</div>
+      <div style="font-size:13px;color:#374151;margin-bottom:.6rem;">Who can create projects within this team?</div>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:.5rem;cursor:pointer;font-size:13px;color:#1C2B3A;">
+        <input type="radio" name="ts-proj-creation" value="admins_only" ${projCreation === 'admins_only' ? 'checked' : ''}
+          style="accent-color:#8B1A2F;margin:0;" />
+        Team admins only
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#1C2B3A;">
+        <input type="radio" name="ts-proj-creation" value="all_members" ${projCreation === 'all_members' ? 'checked' : ''}
+          style="accent-color:#8B1A2F;margin:0;" />
+        All team members
+      </label>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;">
+      <button id="ts-save-btn" style="
+        padding:.4rem 1.1rem;background:#1C2B3A;color:#fff;border:none;
+        border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;
+        cursor:pointer;font-weight:500;
+      ">Save</button>
+      <div id="ts-status" style="font-size:12px;color:#6B7280;"></div>
+    </div>
+  `;
+
+  document.getElementById('ts-save-btn').addEventListener('click', _saveSettings);
+}
+
+async function _saveSettings() {
+  const statusEl = document.getElementById('ts-status');
+  statusEl.textContent = 'Saving…';
+
+  // team_role updates for each member
+  const cbs = document.querySelectorAll('.ts-admin-cb');
+  const updates = Array.from(cbs).map(cb => {
+    const memberId = cb.dataset.memberId;
+    const newRole = cb.checked ? 'admin' : 'member';
+    const current = _members.find(m => m.id === memberId);
+    if (!current || current.team_role === newRole) return null;
+    return sb.from('team_members').update({ team_role: newRole }).eq('id', memberId)
+      .then(({ error }) => { if (!error) current.team_role = newRole; return error; });
+  }).filter(Boolean);
+
+  // project_creation setting on team
+  const projCreation = document.querySelector('input[name="ts-proj-creation"]:checked')?.value || 'admins_only';
+  updates.push(
+    sb.from('teams').update({ project_creation: projCreation }).eq('id', _currentTeamId)
+      .then(({ error }) => { if (!error && _team) _team.project_creation = projCreation; return error; })
+  );
+
+  const results = await Promise.all(updates);
+  const errs = results.filter(Boolean);
+  statusEl.textContent = errs.length ? 'Some changes failed to save.' : 'Saved.';
+  setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 2500);
+}
+
 // ── Stub tabs ──────────────────────────────────────────────────────────────
 
 const STUB_ICONS = {
@@ -359,7 +481,7 @@ const STUB_ICONS = {
 };
 
 function _renderStub(el, tab) {
-  const label = TABS.find(t => t.key === tab)?.label || tab;
+  const label = _tabs().find(t => t.key === tab)?.label || tab;
   el.innerHTML = `
     <div style="
       text-align:center;padding:3.5rem 1rem;color:#9CA3AF;

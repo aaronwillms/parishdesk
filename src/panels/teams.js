@@ -107,7 +107,9 @@ function renderTeamsLanding() {
 export function updateTeamsSubNav() {
   const subNav = document.getElementById('teams-subnav');
   if (!subNav) return;
-  subNav.innerHTML = allTeams.map(t => `
+  const myTeamIds = new Set(store.currentUserRoles?.teamIds || []);
+  const visibleForSubNav = isAdmin() ? allTeams : allTeams.filter(t => myTeamIds.has(t.id));
+  subNav.innerHTML = visibleForSubNav.map(t => `
     <div class="nav-subnav-item" data-team-id="${t.id}" onclick="window.showTeamDashboard('${t.id}')"
       style="padding:.35rem .6rem .35rem 2.4rem;font-size:12.5px;color:#8FA8BF;cursor:pointer;border-radius:4px;transition:background .12s,color .12s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
       onmouseover="if(!this.classList.contains('active')){this.style.background='rgba(255,255,255,.07)';this.style.color='#E5DDD0';}"

@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { isAdmin } from '../roles.js';
+import { isAdmin, isSuperAdmin } from '../roles.js';
 
 // Clergy/religious types appear first, in this fixed order
 const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
@@ -98,6 +98,9 @@ function renderPersonnel() {
   insts.forEach(inst => {
     const group = all.filter(p => p.institution === inst.name);
 
+    // Fix 5: basic users skip institutions with no visible personnel
+    if (!isAdmin() && !group.length) return;
+
     const clergy     = group.filter(isClergy);
     const layStaff   = group.filter(isLayStaff);
     const volunteers = group.filter(isVolunteer);
@@ -105,12 +108,17 @@ function renderPersonnel() {
 
     html += `<div class="card">`;
 
-    // Institution header with settings cogwheel
-    const safeId = inst.id;
+    // Fix 1: institution icon; Fix 6: cogwheel only for super_admin
+    const safeId   = inst.id;
     const safeName = inst.name.replace(/'/g, "\\'");
-    html += `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:2px solid var(--navy);">
+    const instIcon = inst.icon || 'fa-building';
+    const cogwheel = isSuperAdmin()
+      ? `<button onclick="openInstitutionSettingsModal('${safeId}','${safeName}')" title="Institution settings" style="background:none;border:none;cursor:pointer;font-size:15px;color:#9CA3AF;padding:2px 4px;line-height:1;flex-shrink:0;" onmouseover="this.style.color='var(--navy)'" onmouseout="this.style.color='#9CA3AF'">⚙</button>`
+      : '';
+    html += `<div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:2px solid var(--navy);">
+      <i class="fa-solid ${instIcon}" style="font-size:17px;color:#8B1A2F;flex-shrink:0;"></i>
       <span style="font-size:17px;font-weight:700;color:var(--navy);letter-spacing:-.01em;flex:1;">${inst.name}</span>
-      <button onclick="openInstitutionSettingsModal('${safeId}','${safeName}')" title="Institution settings" style="background:none;border:none;cursor:pointer;font-size:15px;color:#9CA3AF;padding:2px 4px;line-height:1;" onmouseover="this.style.color='var(--navy)'" onmouseout="this.style.color='#9CA3AF'">⚙</button>
+      ${cogwheel}
     </div>`;
 
     if (!group.length) {

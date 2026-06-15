@@ -58,8 +58,8 @@
       <div class="nav-item" data-panel="teams"><i class="ti ti-users-group"></i> Teams</div>
       <div id="teams-subnav" style="display:none;"></div>
       <div class="nav-item" data-panel="projects"><i class="ti ti-clipboard-list"></i> My Projects</div>
-      <div class="nav-sec">Administration</div>
       <div class="nav-item" data-panel="tasks"><i class="ti ti-checkbox"></i> Tasks</div>
+      <div class="nav-sec">Administration</div>
       <div class="nav-item" data-panel="personnel"><i class="ti ti-users"></i> Directory</div>
       <div class="nav-item" data-panel="admin" style="display:none;"><i class="ti ti-settings"></i> Admin</div>
     </nav>
@@ -439,8 +439,8 @@
 
       <div id="panel-personnel" class="panel">
         <div style="display:flex;gap:8px;margin-bottom:1rem;">
-          <button class="btn-primary" onclick="openPersonnelModal(null)">+ Add person</button>
-          <button class="btn-secondary" onclick="openInstitutionModal()">+ Add institution</button>
+          <button id="btn-add-person" class="btn-primary" onclick="openPersonnelModal(null)">+ Add person</button>
+          <button id="btn-add-institution" class="btn-secondary" onclick="openInstitutionModal()">+ Add institution</button>
         </div>
         <div id="personnel-list"><span class="pulse"></span></div>
       </div>

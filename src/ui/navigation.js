@@ -194,6 +194,12 @@ export function applyNavVisibility() {
 
   renderMinistryNav();
 
+  // Personnel panel buttons
+  const addPersonBtn = document.getElementById('btn-add-person');
+  if (addPersonBtn) addPersonBtn.style.display = isAdmin() ? '' : 'none';
+  const addInstBtn = document.getElementById('btn-add-institution');
+  if (addInstBtn) addInstBtn.style.display = isSuperAdmin() ? '' : 'none';
+
   // New Team / New Project buttons: admin+ only
   const newTeamBtn = document.getElementById('btn-new-team');
   if (newTeamBtn) newTeamBtn.style.display = isAdmin() ? '' : 'none';

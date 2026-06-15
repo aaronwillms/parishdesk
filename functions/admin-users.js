@@ -16,7 +16,7 @@ export async function onRequestGet(context) {
   let allAuthUsers = [];
   let page = 1;
   while (true) {
-    const res = await fetch(`${supaUrl}/auth/v1/admin/users?page=${page}&per_page=100`, { headers });
+    const res = await fetch(`${supaUrl}/auth/v1/admin/users?page=${page}&per_page=50`, { headers });
     if (!res.ok) {
       const msg = await res.text();
       return new Response(JSON.stringify({ error: `Auth API error: ${msg}` }), {
@@ -26,7 +26,7 @@ export async function onRequestGet(context) {
     const body = await res.json();
     const batch = body.users || [];
     allAuthUsers.push(...batch);
-    if (!body.nextPage || batch.length < 100) break;
+    if (batch.length < 50) break;  // fewer than per_page means last page
     page++;
   }
 
