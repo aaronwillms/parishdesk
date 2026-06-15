@@ -176,9 +176,9 @@ function _renderUsersTab() {
     createContactPicker({
       container: slot,
       placeholder: 'Search directory…',
-      onSelect: async (personnelId) => {
-        if (!personnelId) return;
-        const { error } = await sb.from('user_profiles').upsert({ user_id: userId, personnel_id: personnelId }, { onConflict: 'user_id' });
+      onSelect: async (person) => {
+        if (!person?.id) return;
+        const { error } = await sb.from('user_profiles').upsert({ user_id: userId, personnel_id: person.id }, { onConflict: 'user_id' });
         if (error) { alert('Link failed: ' + error.message); return; }
         await _loadUsers();
       },
@@ -258,9 +258,9 @@ function _changeLinkUser(userId, detailEl) {
   createContactPicker({
     container: slot,
     placeholder: 'Search directory…',
-    onSelect: async (personnelId) => {
-      if (!personnelId) return;
-      const { error } = await sb.from('user_profiles').upsert({ user_id: userId, personnel_id: personnelId }, { onConflict: 'user_id' });
+    onSelect: async (person) => {
+      if (!person?.id) return;
+      const { error } = await sb.from('user_profiles').upsert({ user_id: userId, personnel_id: person.id }, { onConflict: 'user_id' });
       if (error) { alert('Link failed: ' + error.message); return; }
       await _loadUsers();
     },
