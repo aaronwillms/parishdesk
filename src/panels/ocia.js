@@ -175,6 +175,7 @@ function renderOciaCard(person) {
           ${person.preparation_type==='special'?`<span style="font-size:11px;background:#FEF9E7;color:#7D6608;border-radius:20px;padding:2px 8px;">Special preparation</span>`:person.preparation_type==='enrolled'&&person.status_code==='preparation'?`<span style="font-size:11px;background:#FEF9E7;color:#7D6608;border-radius:20px;padding:2px 8px;">Enrolled in OCIA class</span>`:''}
           ${progress!==null?(progress===100?'<span style="font-size:11px;color:#2D6A4F;">✅ docs complete</span>':`<span style="font-size:11px;color:#922B21;">${docsDone}/${docs.length} docs</span>`):''}
           ${(()=>{
+            if(!['preparation','complete'].includes(person.status_code)) return '';
             if(person.reception_date_type==='easter'&&person.reception_date) {
               const yr = new Date(person.reception_date+'T00:00:00').getFullYear();
               return `<span style="font-size:11px;background:#FEF9E7;color:#7D6608;border-radius:20px;padding:2px 8px;">🕊 Easter ${yr}</span>`;
