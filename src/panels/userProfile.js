@@ -1,12 +1,8 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { createContactPicker } from '../ui/contactPicker.js';
-import { clearUserScope } from '../ui/userScope.js';
 
 let _user = null;
 let _profile = null;
-let _picker = null;
-let _pendingPersonnelId = undefined; // undefined = no change, null = unlink, uuid = link
 
 // ── Public entry point ─────────────────────────────────────────────────────
 
@@ -68,43 +64,13 @@ function _render() {
       <!-- Directory link -->
       <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.1rem 1.2rem;margin-bottom:1rem;">
         <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.75rem;">Linked Directory Entry</div>
-        <div id="up-link-display">
-          ${linkedPerson
-            ? `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                <div>
-                  <div style="font-size:14px;font-weight:500;color:#1C2B3A;">${linkedPerson.name}</div>
-                  ${linkedPerson.title ? `<div style="font-size:12px;color:#6B7280;margin-top:1px;">${linkedPerson.title}</div>` : ''}
-                </div>
-                <button id="up-change-link" style="
-                  font-size:12px;color:#8B1A2F;background:none;border:.5px solid #E2DDD6;
-                  border-radius:5px;padding:.3rem .7rem;cursor:pointer;font-family:'Inter',sans-serif;
-                  white-space:nowrap;
-                ">Change</button>
-              </div>`
-            : `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                <span style="font-size:13px;color:#9CA3AF;font-style:italic;">Not linked</span>
-                <button id="up-link-btn" style="
-                  font-size:12px;color:#8B1A2F;background:none;border:.5px solid #E2DDD6;
-                  border-radius:5px;padding:.3rem .7rem;cursor:pointer;font-family:'Inter',sans-serif;
-                  white-space:nowrap;
-                ">Link to Directory</button>
-              </div>`}
-        </div>
-        <div id="up-picker-area" style="display:none;margin-top:.75rem;">
-          <div id="up-picker-cp"></div>
-          <div style="display:flex;gap:8px;margin-top:8px;">
-            <button id="up-picker-save" style="
-              padding:.35rem .85rem;background:#1C2B3A;color:#fff;border:none;
-              border-radius:5px;font-size:12.5px;font-family:'Inter',sans-serif;cursor:pointer;
-            ">Save link</button>
-            <button id="up-picker-cancel" style="
-              padding:.35rem .85rem;background:none;color:#6B7280;
-              border:.5px solid #D1C9BE;border-radius:5px;font-size:12.5px;
-              font-family:'Inter',sans-serif;cursor:pointer;
-            ">Cancel</button>
-          </div>
-        </div>
-        <div style="font-size:11.5px;color:#9CA3AF;margin-top:.75rem;">An administrator can also link your account from Admin Settings.</div>
+        ${linkedPerson
+          ? `<div>
+              <div style="font-size:14px;font-weight:500;color:#1C2B3A;">${linkedPerson.name}</div>
+              ${linkedPerson.title ? `<div style="font-size:12px;color:#6B7280;margin-top:1px;">${linkedPerson.title}</div>` : ''}
+              <div style="font-size:11.5px;color:#9CA3AF;margin-top:.6rem;">Your account has been linked to your directory entry by an administrator.</div>
+            </div>`
+          : `<div style="font-size:13px;color:#9CA3AF;font-style:italic;">Your account has not yet been linked to a directory entry. Please contact an administrator.</div>`}
       </div>
 
       <!-- Contact Information -->
@@ -129,7 +95,7 @@ function _render() {
             " />
           </div>
           <div style="display:flex;align-items:center;gap:12px;margin-top:.25rem;">
-            <button id="up-save-contact" style="
+            <button onclick="window._upSaveContact()" style="
               padding:.4rem 1rem;background:#1C2B3A;color:#fff;border:none;
               border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;
               cursor:pointer;font-weight:500;
@@ -172,54 +138,8 @@ function _bindEvents() {
   // Remove photo
   document.getElementById('up-remove-photo')?.addEventListener('click', _removePhoto);
 
-  // Link / Change buttons
-  document.getElementById('up-link-btn')?.addEventListener('click', _showPicker);
-  document.getElementById('up-change-link')?.addEventListener('click', _showPicker);
-
-  // Picker confirm/cancel
-  document.getElementById('up-picker-save')?.addEventListener('click', _saveLink);
-  document.getElementById('up-picker-cancel')?.addEventListener('click', _hidePicker);
-
-  // Contact info save
-  document.getElementById('up-save-contact')?.addEventListener('click', _saveContactInfo);
-
   // Change password
   document.getElementById('up-change-pw')?.addEventListener('click', _changePassword);
-}
-
-function _showPicker() {
-  document.getElementById('up-picker-area').style.display = 'block';
-  _picker = createContactPicker({
-    container: document.getElementById('up-picker-cp'),
-    placeholder: 'Search directory…',
-    prefillEmail: _user?.email || '',
-    onSelect: () => {},
-  });
-}
-
-function _hidePicker() {
-  document.getElementById('up-picker-area').style.display = 'none';
-  _picker = null;
-}
-
-async function _saveLink() {
-  if (!_picker) return;
-  const person = _picker.getValue();
-  if (!person) { alert('Please select a person from the directory.'); return; }
-
-  const { error } = await _upsertProfile({ personnel_id: person.id });
-  if (error) { alert('Failed to save: ' + error.message); return; }
-
-  // Re-fetch so the profile has the full personnel record (phone, email, etc.)
-  const { data } = await sb.from('user_profiles')
-    .select('*, personnel(id,name,title,phone,email)')
-    .eq('user_id', _user.id)
-    .maybeSingle();
-  _profile = data || { ..._profile, personnel_id: person.id, personnel: person };
-  store.currentUserProfile = _profile;
-  clearUserScope();
-  _render();
-  _notifySidebarWidget();
 }
 
 async function _handleUpload(e) {
@@ -317,6 +237,9 @@ async function _upsertProfile(fields) {
   const payload = { user_id: _user.id, ...fields, updated_at: new Date().toISOString() };
   return sb.from('user_profiles').upsert(payload, { onConflict: 'user_id' });
 }
+
+// Exposed for inline onclick
+window._upSaveContact = _saveContactInfo;
 
 function _notifySidebarWidget() {
   // Dispatch a custom event so the sidebar widget can re-render

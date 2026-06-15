@@ -33,13 +33,14 @@ export async function loadAdmin() {
 // ── Data ───────────────────────────────────────────────────────────────────
 
 async function _loadUsers() {
-  const [profilesRes, rolesRes, sacramentRes, grantsRes, teamMembersRes, authRes] = await Promise.all([
+  const [profilesRes, rolesRes, sacramentRes, grantsRes, teamMembersRes, authRes, coordRes] = await Promise.all([
     sb.from('user_profiles').select('user_id, personnel_id, avatar_url, personnel(id,name,title)'),
     sb.from('user_roles').select('user_id, role'),
     sb.from('sacramental_roles').select('user_id, sacrament'),
     sb.from('panel_grants').select('user_id, panel'),
     sb.from('team_members').select('team_id, personnel_id'),
     fetch('/admin-users').then(r => r.ok ? r.json() : { users: [] }).catch(() => ({ users: [] })),
+    sb.from('program_coordinators').select('program, coordinator_ids'),
   ]);
 
   const profiles   = profilesRes.data  || [];
@@ -47,6 +48,15 @@ async function _loadUsers() {
   const sacraments = sacramentRes.data || [];
   const grants     = grantsRes.data    || [];
   const authUsers  = authRes.users     || [];
+
+  // Build personnelId → coordinator programs[] map
+  const coordByPersonnel = {};
+  (coordRes.data || []).forEach(row => {
+    (row.coordinator_ids || []).forEach(pid => {
+      if (!coordByPersonnel[pid]) coordByPersonnel[pid] = [];
+      coordByPersonnel[pid].push(row.program);
+    });
+  });
 
   // Build personnel_id → team_id[] index
   const teamsByPersonnel = {};
@@ -79,6 +89,12 @@ async function _loadUsers() {
   // Include auth users not yet in map (invited but no profile/roles yet)
   authUsers.forEach(au => {
     if (!map[au.id]) map[au.id] = { userId: au.id, email: au.email || null, profile: null, roles: [], sacraments: [], grants: [], teamIds: [] };
+  });
+
+  // Attach coordinator-granted sacraments per user
+  Object.values(map).forEach(u => {
+    const pid = u.profile?.personnel_id;
+    u.coordinatorSacraments = pid ? (coordByPersonnel[pid] || []) : [];
   });
 
   const lastName = name => {
@@ -173,16 +189,7 @@ function _renderUsersTab() {
   // Hydrate directory link pickers for unlinked users
   el.querySelectorAll('[id^="au-link-picker-"]').forEach(slot => {
     const userId = slot.id.replace('au-link-picker-', '');
-    createContactPicker({
-      container: slot,
-      placeholder: 'Search directory…',
-      onSelect: async (person) => {
-        if (!person?.id) return;
-        const { error } = await sb.from('user_profiles').upsert({ user_id: userId, personnel_id: person.id }, { onConflict: 'user_id' });
-        if (error) { alert('Link failed: ' + error.message); return; }
-        await _loadUsers();
-      },
-    });
+    _mountLinkPicker(slot, userId);
   });
 
   // Change / Remove link buttons for already-linked users
@@ -252,18 +259,60 @@ function _changeLinkUser(userId, detailEl) {
   if (!detailEl) return;
   const currentBlock = detailEl.querySelector('[data-link-block]');
   if (!currentBlock) return;
-  currentBlock.innerHTML = '<div id="au-change-picker-' + userId + '"></div>';
-  const slot = document.getElementById('au-change-picker-' + userId);
+  const slotId = 'au-change-picker-' + userId;
+  currentBlock.innerHTML = `<div id="${slotId}"></div>`;
+  const slot = document.getElementById(slotId);
   if (!slot) return;
+  _mountLinkPicker(slot, userId);
+}
+
+function _mountLinkPicker(container, userId) {
+  // Two-step: pick → confirm button. Avoids race between onSelect and upsert.
+  let _selectedPerson = null;
+
+  container.innerHTML = `
+    <div id="aup-cp-${userId}"></div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button id="aup-confirm-${userId}" disabled style="
+        padding:.3rem .85rem;background:#1C2B3A;color:#fff;border:none;
+        border-radius:5px;font-size:12.5px;font-family:'Inter',sans-serif;
+        cursor:not-allowed;opacity:0.45;font-weight:500;
+      ">Link</button>
+      <div id="aup-status-${userId}" style="font-size:12px;color:#6B7280;line-height:2;"></div>
+    </div>
+  `;
+
+  const confirmBtn = document.getElementById(`aup-confirm-${userId}`);
+  const statusEl   = document.getElementById(`aup-status-${userId}`);
+
   createContactPicker({
-    container: slot,
+    container: document.getElementById(`aup-cp-${userId}`),
     placeholder: 'Search directory…',
-    onSelect: async (person) => {
-      if (!person?.id) return;
-      const { error } = await sb.from('user_profiles').upsert({ user_id: userId, personnel_id: person.id }, { onConflict: 'user_id' });
-      if (error) { alert('Link failed: ' + error.message); return; }
-      await _loadUsers();
+    onSelect: (person) => {
+      _selectedPerson = person?.id ? person : null;
+      confirmBtn.disabled = !_selectedPerson;
+      confirmBtn.style.opacity = _selectedPerson ? '1' : '0.45';
+      confirmBtn.style.cursor  = _selectedPerson ? 'pointer' : 'not-allowed';
     },
+  });
+
+  confirmBtn.addEventListener('click', async () => {
+    if (!_selectedPerson?.id) return;
+    confirmBtn.disabled = true;
+    statusEl.textContent = 'Saving…';
+    console.log('[admin link] upserting personnel_id:', _selectedPerson.id, 'for user:', userId);
+    const { error } = await sb.from('user_profiles').upsert(
+      { user_id: userId, personnel_id: _selectedPerson.id },
+      { onConflict: 'user_id' }
+    );
+    if (error) {
+      console.error('[admin link] upsert failed:', error);
+      statusEl.textContent = 'Failed: ' + error.message;
+      confirmBtn.disabled = false;
+      return;
+    }
+    statusEl.textContent = 'Linked.';
+    await _loadUsers();
   });
 }
 
@@ -284,16 +333,22 @@ function _userDetail(u) {
       </div>
     </div>` : (() => {
     // Sacraments: always individually editable (admins don't get these by default)
+    const coordinatorSacraments = u.coordinatorSacraments || [];
     const sacramentChecks = SACRAMENTS.map(s => {
       const isGranted = u.sacraments.includes(s);
+      const isCoord   = coordinatorSacraments.includes(s);
+      const isLocked  = isGranted || isCoord;
+      const note = isGranted ? 'Granted via Sacramental Roles'
+                 : isCoord   ? 'Granted via coordinator assignment'
+                 : null;
       return `
       <div style="display:flex;flex-direction:column;padding:4px 0;">
         <div style="display:flex;align-items:center;gap:8px;">
-          <input type="checkbox" class="au-sac-cb" data-sacrament="${s}" ${isGranted ? 'checked disabled' : ''}
-            style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${isGranted ? 'not-allowed' : 'pointer'};flex-shrink:0;${isGranted ? 'opacity:0.45;' : ''}" />
+          <input type="checkbox" class="au-sac-cb" data-sacrament="${s}" ${isLocked ? 'checked disabled' : ''}
+            style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${isLocked ? 'not-allowed' : 'pointer'};flex-shrink:0;${isLocked ? 'opacity:0.45;' : ''}" />
           <span style="font-size:13px;color:#1C2B3A;">${SACRAMENT_LABELS[s]}</span>
         </div>
-        ${isGranted ? '<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">Granted via Sacramental Roles</div>' : ''}
+        ${note ? `<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">${note}</div>` : ''}
       </div>`;
     }).join('');
 

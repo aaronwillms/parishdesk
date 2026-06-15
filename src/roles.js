@@ -25,25 +25,35 @@ export async function loadUserRoles() {
     return;
   }
 
-  // Admins: sacramental access is still individually assigned; teams/panels are rule-based
+  // Admins: sacramental access is individually assigned + coordinator assignments; teams/panels are rule-based
   if (isAdm) {
-    const { data: sacRows } = await sb.from('sacramental_roles').select('sacrament').eq('user_id', user.id);
+    const [sacRes, coordRes] = await Promise.all([
+      sb.from('sacramental_roles').select('sacrament').eq('user_id', user.id),
+      personnelId
+        ? sb.from('program_coordinators').select('program').contains('coordinator_ids', [personnelId])
+        : Promise.resolve({ data: [] }),
+    ]);
+    const sacSacraments   = (sacRes.data   || []).map(r => r.sacrament);
+    const coordSacraments = (coordRes.data || []).map(r => r.program);
     store.currentUserRoles = {
       isSuperAdmin: false, isAdmin: true,
-      sacraments:   (sacRows || []).map(r => r.sacrament),
-      panelGrants:  [],   // not used — panel access is rule-based for admins
-      teamIds:      [],   // not used — team access is rule-based for admins
-      teamPersonnelIds: [], // admins see all personnel, no filtering needed
+      sacraments:   [...new Set([...sacSacraments, ...coordSacraments])],
+      panelGrants:  [],
+      teamIds:      [],
+      teamPersonnelIds: [],
     };
     return;
   }
 
   // Basic users: fetch all grants and team memberships for scoped access
-  const [sacramentRes, grantsRes, teamsRes] = await Promise.all([
+  const [sacramentRes, grantsRes, teamsRes, coordRes] = await Promise.all([
     sb.from('sacramental_roles').select('sacrament').eq('user_id', user.id),
     sb.from('panel_grants').select('panel').eq('user_id', user.id),
     personnelId
       ? sb.from('team_members').select('team_id').eq('personnel_id', personnelId)
+      : Promise.resolve({ data: [] }),
+    personnelId
+      ? sb.from('program_coordinators').select('program').contains('coordinator_ids', [personnelId])
       : Promise.resolve({ data: [] }),
   ]);
 
@@ -59,10 +69,13 @@ export async function loadUserRoles() {
     teamPersonnelIds = [...new Set((tpData || []).map(r => r.personnel_id).filter(Boolean))];
   }
 
+  const sacSacraments   = (sacramentRes.data || []).map(r => r.sacrament);
+  const coordSacraments = (coordRes.data    || []).map(r => r.program);
+
   store.currentUserRoles = {
     isSuperAdmin: false, isAdmin: false,
-    sacraments:       (sacramentRes.data || []).map(r => r.sacrament),
-    panelGrants:      (grantsRes.data || []).map(r => r.panel),
+    sacraments:   [...new Set([...sacSacraments, ...coordSacraments])],
+    panelGrants:  (grantsRes.data || []).map(r => r.panel),
     teamIds,
     teamPersonnelIds,
   };
