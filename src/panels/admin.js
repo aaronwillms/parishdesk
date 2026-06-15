@@ -8,16 +8,17 @@ const SACRAMENTS = ['baptism', 'first_communion', 'confirmation', 'ocia', 'marri
 const SACRAMENT_LABELS = { baptism: 'Baptism', first_communion: 'First Communion', confirmation: 'Confirmation', ocia: 'OCIA', marriage: 'Marriage', annulments: 'Annulments' };
 
 // Only non-sacramental, non-auto panels that can be manually granted
+// (projects and tasks are always available — no grant needed)
 const PANEL_LABELS = {
-  projects: 'My Projects',
-  tasks:    'Tasks',
-  school:   'Cathedral School',
+  school: 'Cathedral School',
 };
 
 let _activeTab = 'users';
 let _users = [];
 let _expandedUserId = null;
 let _currentAuthUserId = null;
+
+const CAL_PRESETS = ['#1C2B3A', '#8B1A2F', '#2E7D32', '#1565C0', '#6A1B9A', '#E65100'];
 
 // ── Public entry point ─────────────────────────────────────────────────────
 
@@ -32,44 +33,62 @@ export async function loadAdmin() {
 // ── Data ───────────────────────────────────────────────────────────────────
 
 async function _loadUsers() {
-  // Fetch users via the admin RPC wrapper — falls back to edge function if no admin key
-  const [profilesRes, rolesRes, sacramentRes, grantsRes] = await Promise.all([
+  const [profilesRes, rolesRes, sacramentRes, grantsRes, teamMembersRes, authRes] = await Promise.all([
     sb.from('user_profiles').select('user_id, personnel_id, avatar_url, personnel(id,name,title)'),
     sb.from('user_roles').select('user_id, role'),
     sb.from('sacramental_roles').select('user_id, sacrament'),
     sb.from('panel_grants').select('user_id, panel'),
+    sb.from('team_members').select('team_id, personnel_id'),
+    fetch('/functions/admin-users').then(r => r.ok ? r.json() : { users: [] }).catch(() => ({ users: [] })),
   ]);
 
-  const profiles  = profilesRes.data  || [];
-  const roles     = rolesRes.data     || [];
+  const profiles   = profilesRes.data  || [];
+  const roles      = rolesRes.data     || [];
   const sacraments = sacramentRes.data || [];
-  const grants    = grantsRes.data    || [];
+  const grants     = grantsRes.data    || [];
+  const authUsers  = authRes.users     || [];
+
+  // Build personnel_id → team_id[] index
+  const teamsByPersonnel = {};
+  (teamMembersRes.data || []).forEach(tm => {
+    if (!teamsByPersonnel[tm.personnel_id]) teamsByPersonnel[tm.personnel_id] = [];
+    teamsByPersonnel[tm.personnel_id].push(tm.team_id);
+  });
+
+  // Build email lookup from auth users
+  const emailById = {};
+  authUsers.forEach(u => { emailById[u.id] = u.email || null; });
 
   // Build a map keyed by user_id
   const map = {};
   profiles.forEach(p => {
-    map[p.user_id] = { userId: p.user_id, profile: p, roles: [], sacraments: [], grants: [] };
+    const pid = p.personnel_id;
+    map[p.user_id] = { userId: p.user_id, email: emailById[p.user_id] || null, profile: p, roles: [], sacraments: [], grants: [], teamIds: pid ? (teamsByPersonnel[pid] || []) : [] };
   });
-  // Include users with roles but no profile yet
   roles.forEach(r => {
-    if (!map[r.user_id]) map[r.user_id] = { userId: r.user_id, profile: null, roles: [], sacraments: [], grants: [] };
+    if (!map[r.user_id]) map[r.user_id] = { userId: r.user_id, email: emailById[r.user_id] || null, profile: null, roles: [], sacraments: [], grants: [], teamIds: [] };
     map[r.user_id].roles.push(r.role);
   });
   sacraments.forEach(r => {
-    if (!map[r.user_id]) map[r.user_id] = { userId: r.user_id, profile: null, roles: [], sacraments: [], grants: [] };
+    if (!map[r.user_id]) map[r.user_id] = { userId: r.user_id, email: emailById[r.user_id] || null, profile: null, roles: [], sacraments: [], grants: [], teamIds: [] };
     map[r.user_id].sacraments.push(r.sacrament);
   });
   grants.forEach(r => {
     if (map[r.user_id]) map[r.user_id].grants.push(r.panel);
   });
+  // Include auth users not yet in map (invited but no profile/roles yet)
+  authUsers.forEach(au => {
+    if (!map[au.id]) map[au.id] = { userId: au.id, email: au.email || null, profile: null, roles: [], sacraments: [], grants: [], teamIds: [] };
+  });
 
   _users = Object.values(map).sort((a, b) => {
     const aName = a.profile?.personnel?.name;
     const bName = b.profile?.personnel?.name;
+    // Linked (have personnel name) sort before unlinked
     if (aName && !bName) return -1;
     if (!aName && bName) return 1;
-    const aKey = (aName || a.userId).toLowerCase();
-    const bKey = (bName || b.userId).toLowerCase();
+    const aKey = (aName || a.email || a.userId).toLowerCase();
+    const bKey = (bName || b.email || b.userId).toLowerCase();
     return aKey.localeCompare(bKey);
   });
   _renderUsersTab();
@@ -82,9 +101,10 @@ function _render() {
   if (!el) return;
 
   const TABS = [
-    { key: 'users',    label: 'Users' },
-    { key: 'settings', label: 'Parish Settings' },
-    { key: 'invite',   label: 'Invite User' },
+    { key: 'users',     label: 'Users' },
+    { key: 'calendars', label: 'Calendars' },
+    { key: 'settings',  label: 'Parish Settings' },
+    { key: 'invite',    label: 'Invite User' },
   ];
 
   el.innerHTML = `
@@ -111,14 +131,16 @@ function _render() {
         b.style.borderBottomColor = b.dataset.tab === _activeTab ? '#8B1A2F' : 'transparent';
         b.style.color = b.dataset.tab === _activeTab ? '#1C2B3A' : '#9CA3AF';
       });
-      if (_activeTab === 'users')    { _renderUsersTab(); await _loadUsers(); }
-      if (_activeTab === 'settings') await _renderSettingsTab();
-      if (_activeTab === 'invite')   _renderInviteTab();
+      if (_activeTab === 'users')     { _renderUsersTab(); await _loadUsers(); }
+      if (_activeTab === 'calendars') await _renderCalendarsTab();
+      if (_activeTab === 'settings')  await _renderSettingsTab();
+      if (_activeTab === 'invite')    _renderInviteTab();
     });
   });
 
-  if (_activeTab === 'settings') _renderSettingsTab();
-  else if (_activeTab === 'invite') _renderInviteTab();
+  if (_activeTab === 'calendars')     _renderCalendarsTab();
+  else if (_activeTab === 'settings') _renderSettingsTab();
+  else if (_activeTab === 'invite')   _renderInviteTab();
   else _renderUsersTab();
 }
 
@@ -175,17 +197,21 @@ function _renderUsersTab() {
 }
 
 function _userRow(u) {
-  const name = u.profile?.personnel?.name || '—';
+  const name = u.profile?.personnel?.name || u.email || u.userId;
   const avatarUrl = u.profile?.avatar_url || null;
   const isExpanded = _expandedUserId === u.userId;
+  const isUnlinked = !u.profile?.personnel_id;
+
+  const parishStaffTeam = (store.teams || []).find(t => t.name === 'Parish Staff');
+  const isParishStaff = parishStaffTeam && (u.teamIds || []).includes(parishStaffTeam.id);
 
   const roleBadges = [
     ...u.roles.map(r => `<span style="font-size:10.5px;font-weight:600;background:${r === 'super_admin' ? '#1C2B3A' : '#F3F4F6'};color:${r === 'super_admin' ? '#F8F7F4' : '#4B5563'};border-radius:20px;padding:2px 8px;">${r === 'super_admin' ? 'Super Admin' : r}</span>`),
     ...u.sacraments.map(s => `<span style="font-size:10.5px;font-weight:600;background:#FDF3D0;color:#7A5C00;border-radius:20px;padding:2px 8px;">${SACRAMENT_LABELS[s] || s}</span>`),
-  ].join(' ');
+    isParishStaff ? `<span style="font-size:10.5px;font-weight:600;background:#F3F4F6;color:#6B7280;border-radius:20px;padding:2px 8px;">🔒 Parish Staff</span>` : '',
+    isUnlinked ? `<span style="font-size:10.5px;font-weight:600;background:#F9FAFB;color:#9CA3AF;border-radius:20px;padding:2px 8px;border:.5px solid #E5E7EB;">Unlinked</span>` : '',
+  ].filter(Boolean).join(' ');
 
-  const avatarWrap = document.createElement('div');
-  avatarWrap.style.cssText = 'flex-shrink:0;';
   // We'll inject avatars after innerHTML — use placeholder
   const avatarHtml = `<div class="admin-avatar-slot" data-uid="${u.userId}" data-name="${name}" data-url="${avatarUrl || ''}" style="width:36px;height:36px;border-radius:50%;background:#E2DDD6;flex-shrink:0;"></div>`;
 
@@ -240,27 +266,45 @@ function _userDetail(u) {
   const isSA = u.roles.includes('super_admin');
   const teams = store.teams || [];
 
-  const sacramentChecks = SACRAMENTS.map(s => `
-    <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
-      <input type="checkbox" class="au-sac-cb" data-sacrament="${s}" ${u.sacraments.includes(s) ? 'checked' : ''}
-        style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:pointer;flex-shrink:0;" />
-      <span style="font-size:13px;color:#1C2B3A;">${SACRAMENT_LABELS[s]}</span>
-    </div>`).join('');
+  const sacramentChecks = SACRAMENTS.map(s => {
+    const isGranted = u.sacraments.includes(s);
+    return `
+    <div style="display:flex;flex-direction:column;padding:4px 0;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" class="au-sac-cb" data-sacrament="${s}" ${isGranted ? 'checked disabled' : ''}
+          style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${isGranted ? 'not-allowed' : 'pointer'};flex-shrink:0;${isGranted ? 'opacity:0.45;' : ''}" />
+        <span style="font-size:13px;color:#1C2B3A;">${SACRAMENT_LABELS[s]}</span>
+      </div>
+      ${isGranted ? '<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">Granted via Sacramental Roles</div>' : ''}
+    </div>`;
+  }).join('');
 
-  const grantChecks = Object.entries(PANEL_LABELS).map(([p, label]) => `
-    <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
-      <input type="checkbox" class="au-grant-cb" data-panel="${p}" ${u.grants.includes(p) ? 'checked' : ''}
-        style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:pointer;flex-shrink:0;" />
-      <span style="font-size:13px;color:#1C2B3A;">${label}</span>
-    </div>`).join('');
+  const grantChecks = Object.entries(PANEL_LABELS).map(([p, label]) => {
+    const lockedBySA = isSA;
+    const isChecked = u.grants.includes(p) || lockedBySA;
+    const note = lockedBySA ? 'Granted via Super Admin' : null;
+    return `
+    <div style="display:flex;flex-direction:column;padding:4px 0;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" class="au-grant-cb" data-panel="${p}" ${isChecked ? 'checked' : ''} ${lockedBySA ? 'disabled' : ''}
+          style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${lockedBySA ? 'not-allowed' : 'pointer'};flex-shrink:0;${lockedBySA ? 'opacity:0.45;' : ''}" />
+        <span style="font-size:13px;color:#1C2B3A;">${label}</span>
+      </div>
+      ${note ? `<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">${note}</div>` : ''}
+    </div>`;
+  }).join('');
 
   const teamChecks = teams.map(t => {
-    const isMember = (store.currentUserRoles?.teamIds || []).includes(t.id); // placeholder — not per-user
+    const isMember = (u.teamIds || []).includes(t.id);
     return `
-    <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
-      <input type="checkbox" class="au-team-cb" data-team-id="${t.id}" data-personnel-id="${u.profile?.personnel_id || ''}"
-        style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:pointer;flex-shrink:0;" />
-      <span style="font-size:13px;color:#1C2B3A;">${t.name}</span>
+    <div style="display:flex;flex-direction:column;padding:4px 0;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" class="au-team-cb" data-team-id="${t.id}" data-personnel-id="${u.profile?.personnel_id || ''}"
+          ${isMember ? 'checked disabled' : ''}
+          style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${isMember ? 'not-allowed' : 'pointer'};flex-shrink:0;${isMember ? 'opacity:0.45;' : ''}" />
+        <span style="font-size:13px;color:#1C2B3A;">${t.name}</span>
+      </div>
+      ${isMember ? '<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">Access via team membership</div>' : ''}
     </div>`;
   }).join('');
 
@@ -315,12 +359,17 @@ function _userDetail(u) {
         <div style="display:flex;flex-wrap:wrap;gap:0 1.5rem;">${teamChecks}</div>
       </div>` : ''}
 
-      <div style="display:flex;align-items:center;gap:12px;margin-top:.5rem;">
+      <div style="display:flex;align-items:center;gap:12px;margin-top:.5rem;flex-wrap:wrap;">
         <button class="au-save-btn" data-user-id="${u.userId}" style="
           padding:.4rem 1.1rem;background:#1C2B3A;color:#fff;border:none;
           border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;
           cursor:pointer;font-weight:500;
         ">Save</button>
+        ${u.email ? `<button class="au-pw-reset-btn" data-user-id="${u.userId}" data-email="${u.email}" style="
+          padding:.4rem 1.1rem;background:#C9A84C;color:#fff;border:none;
+          border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;
+          cursor:pointer;font-weight:500;
+        ">Reset Password</button>` : ''}
         <div class="au-status" style="font-size:12px;color:#6B7280;min-height:16px;"></div>
       </div>
     </div>
@@ -355,8 +404,8 @@ async function _saveUser(userId) {
     await sb.from('sacramental_roles').insert(checkedSacraments.map(s => ({ user_id: userId, sacrament: s })));
   }
 
-  // Panel grants
-  const checkedGrants = Array.from(detail.querySelectorAll('.au-grant-cb:checked')).map(cb => cb.dataset.panel);
+  // Panel grants — exclude locked (derived) checkboxes so we don't write implied access to panel_grants
+  const checkedGrants = Array.from(detail.querySelectorAll('.au-grant-cb:checked:not(:disabled)')).map(cb => cb.dataset.panel);
   await sb.from('panel_grants').delete().eq('user_id', userId);
   if (checkedGrants.length) {
     await sb.from('panel_grants').insert(checkedGrants.map(p => ({ user_id: userId, panel: p })));
@@ -366,7 +415,7 @@ async function _saveUser(userId) {
   const personnelId = u?.profile?.personnel_id;
   if (personnelId) {
     const checkedTeams = Array.from(detail.querySelectorAll('.au-team-cb:checked')).map(cb => cb.dataset.teamId);
-    const uncheckedTeams = Array.from(detail.querySelectorAll('.au-team-cb:not(:checked)')).map(cb => cb.dataset.teamId);
+    const uncheckedTeams = Array.from(detail.querySelectorAll('.au-team-cb:not(:checked):not(:disabled)')).map(cb => cb.dataset.teamId);
     for (const teamId of checkedTeams) {
       await sb.from('team_members').upsert({ team_id: teamId, personnel_id: personnelId }, { onConflict: 'team_id,personnel_id' });
     }
@@ -380,7 +429,138 @@ async function _saveUser(userId) {
   await _loadUsers();
 }
 
+// ── Calendars tab ──────────────────────────────────────────────────────────
+
+async function _renderCalendarsTab() {
+  const el = document.getElementById('admin-tab-content');
+  if (!el) return;
+  el.innerHTML = '<div style="font-size:13px;color:#9CA3AF;">Loading…</div>';
+
+  const { data: cals, error } = await sb
+    .from('calendars')
+    .select('*')
+    .eq('scope', 'parish')
+    .order('created_at');
+  if (error) { el.innerHTML = `<div style="color:#E74C3C;font-size:13px;">Error: ${error.message}</div>`; return; }
+
+  const rows = (cals || []).map(c => `
+    <div style="display:flex;align-items:center;gap:10px;padding:.65rem 0;border-bottom:.5px solid #F0EDE8;">
+      <div style="width:12px;height:12px;border-radius:50%;background:${c.color};flex-shrink:0;"></div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13.5px;font-weight:500;color:#1C2B3A;">${c.name}</div>
+        <div style="font-size:11.5px;color:#9CA3AF;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.url}</div>
+      </div>
+      <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:${c.type === 'google' ? '#E8F5E9' : '#EEF2FF'};color:${c.type === 'google' ? '#2E7D32' : '#3730A3'};">${c.type === 'google' ? 'Google' : 'ICS'}</span>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#6B7280;margin:0;cursor:pointer;letter-spacing:normal;">
+        <input type="checkbox" class="cal-active-cb" data-cal-id="${c.id}" ${c.active ? 'checked' : ''}
+          style="width:auto;accent-color:#8B1A2F;cursor:pointer;" />
+        Active
+      </label>
+      <button class="cal-delete-btn" data-cal-id="${c.id}" data-cal-name="${c.name}" style="
+        background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:15px;padding:0;flex-shrink:0;
+      " title="Delete" onmouseover="this.style.color='#8B1A2F'" onmouseout="this.style.color='#D1D5DB'">✕</button>
+    </div>`).join('');
+
+  el.innerHTML = `
+    <div style="max-width:600px;">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:1rem;">
+        <button id="cal-add-btn" style="
+          padding:.4rem 1rem;background:#1C2B3A;color:#fff;border:none;border-radius:5px;
+          font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
+        ">+ Add Calendar</button>
+      </div>
+      <div id="cal-list">
+        ${rows || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No parish calendars yet.</div>'}
+      </div>
+    </div>
+  `;
+
+  el.querySelectorAll('.cal-active-cb').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      await sb.from('calendars').update({ active: cb.checked }).eq('id', cb.dataset.calId);
+    });
+  });
+
+  el.querySelectorAll('.cal-delete-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm(`Delete "${btn.dataset.calName}"?`)) return;
+      const { error } = await sb.from('calendars').delete().eq('id', btn.dataset.calId);
+      if (error) { alert('Delete failed: ' + error.message); return; }
+      await _renderCalendarsTab();
+    });
+  });
+
+  document.getElementById('cal-add-btn').addEventListener('click', () => _openCalendarModal());
+}
+
+function _openCalendarModal(data) {
+  const colorPickers = CAL_PRESETS.map((c, i) => `
+    <label style="display:inline-flex;align-items:center;margin:0;cursor:pointer;" title="${c}">
+      <input type="radio" name="cal-color" value="${c}" ${(data?.color || CAL_PRESETS[0]) === c ? 'checked' : ''}
+        style="display:none;" />
+      <span style="
+        display:block;width:20px;height:20px;border-radius:50%;background:${c};
+        outline:${(data?.color || CAL_PRESETS[0]) === c ? '2.5px solid #1C2B3A' : '2.5px solid transparent'};
+        outline-offset:2px;cursor:pointer;transition:outline .1s;
+      " onclick="this.previousElementSibling.click();
+        document.querySelectorAll('[name=cal-color]').forEach(r=>{
+          r.nextElementSibling.style.outline=r.checked?'2.5px solid #1C2B3A':'2.5px solid transparent';
+        })"></span>
+    </label>`).join('');
+
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-title">${data ? 'Edit Calendar' : 'Add Calendar'}</div>
+    <label>Name</label>
+    <input id="cal-name" value="${data?.name || ''}" placeholder="e.g. Parish Events" />
+    <label>Type</label>
+    <select id="cal-type" onchange="
+      const lbl = document.getElementById('cal-url-label');
+      lbl.textContent = this.value === 'google' ? 'Calendar ID' : 'Feed URL';
+    ">
+      <option value="ics"    ${(!data || data.type === 'ics')    ? 'selected' : ''}>ICS Feed</option>
+      <option value="google" ${data?.type === 'google' ? 'selected' : ''}>Google Calendar</option>
+    </select>
+    <label id="cal-url-label">${(!data || data.type === 'ics') ? 'Feed URL' : 'Calendar ID'}</label>
+    <input id="cal-url" value="${data?.url || ''}" placeholder="${(!data || data.type === 'ics') ? 'https://…' : 'example@group.calendar.google.com'}" />
+    <label>Color</label>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:4px;">${colorPickers}</div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" onclick="saveCalendar(${data ? `'${data.id}'` : null})">Save</button>
+    </div>
+  `;
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+async function _saveCalendar(id) {
+  const name  = document.getElementById('cal-name').value.trim();
+  const type  = document.getElementById('cal-type').value;
+  const url   = document.getElementById('cal-url').value.trim();
+  const color = document.querySelector('[name="cal-color"]:checked')?.value || CAL_PRESETS[0];
+
+  if (!name) { alert('Name is required.'); return; }
+  if (!url)  { alert('URL / Calendar ID is required.'); return; }
+
+  const payload = { name, type, url, color, scope: 'parish', user_id: null };
+  const { error } = id
+    ? await sb.from('calendars').update(payload).eq('id', id)
+    : await sb.from('calendars').insert(payload);
+  if (error) { alert('Save failed: ' + error.message); return; }
+  closeModal();
+  await _renderCalendarsTab();
+}
+
 // ── Parish Settings tab ────────────────────────────────────────────────────
+
+const US_TIMEZONES = [
+  { value: 'America/New_York',    label: 'Eastern (ET)' },
+  { value: 'America/Chicago',     label: 'Central (CT)' },
+  { value: 'America/Denver',      label: 'Mountain (MT)' },
+  { value: 'America/Phoenix',     label: 'Mountain – Arizona (no DST)' },
+  { value: 'America/Los_Angeles', label: 'Pacific (PT)' },
+  { value: 'America/Anchorage',   label: 'Alaska (AKT)' },
+  { value: 'Pacific/Honolulu',    label: 'Hawaii (HT)' },
+];
 
 async function _renderSettingsTab() {
   const el = document.getElementById('admin-tab-content');
@@ -390,17 +570,36 @@ async function _renderSettingsTab() {
   const { data, error } = await sb.from('parish_settings').select('*').limit(1).maybeSingle();
   if (error) { el.innerHTML = `<div style="color:#E74C3C;font-size:13px;">Error: ${error.message}</div>`; return; }
 
+  const inputStyle = `width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;
+    border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;margin-bottom:.75rem;`;
+  const labelStyle = `display:block;font-size:11.5px;color:#6B7280;margin-bottom:3px;`;
+
+  const tzOptions = US_TIMEZONES.map(tz =>
+    `<option value="${tz.value}" ${(data?.timezone || '') === tz.value ? 'selected' : ''}>${tz.label}</option>`
+  ).join('');
+
   el.innerHTML = `
     <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.2rem 1.4rem;max-width:480px;">
       <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:1rem;">Parish Settings</div>
-      <label style="display:block;font-size:11.5px;color:#6B7280;margin-bottom:3px;">Parish Name</label>
-      <input id="ps-name" value="${data?.parish_name || ''}" style="
-        width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;
-        border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;margin-bottom:.5rem;
-      " />
-      <div style="font-size:11.5px;color:#9CA3AF;margin-bottom:1rem;line-height:1.5;">
-        This name appears on the login screen, top of the navigation sidebar, and identifies your parish institution in the Directory.
+
+      <label style="${labelStyle}">Parish Name</label>
+      <input id="ps-name" value="${data?.parish_name || ''}" style="${inputStyle}" />
+      <div style="font-size:11.5px;color:#9CA3AF;margin-top:-.5rem;margin-bottom:1rem;line-height:1.5;">
+        Appears on the login screen, sidebar, and Directory.
       </div>
+
+      <label style="${labelStyle}">Parish Address</label>
+      <input id="ps-address" value="${(data?.address || '').replace(/"/g, '&quot;')}" placeholder="123 Main St, City, State 00000"
+        style="${inputStyle}" />
+
+      <label style="${labelStyle}">Timezone</label>
+      <select id="ps-tz" style="${inputStyle}cursor:pointer;">
+        ${tzOptions}
+      </select>
+      <div id="ps-tz-note" style="font-size:11.5px;color:#9CA3AF;margin-top:-.5rem;margin-bottom:1rem;line-height:1.5;">
+        ${data?.timezone ? `Detected from address: <strong>${data.timezone}</strong>` : 'Timezone will be auto-detected from the address when you save.'}
+      </div>
+
       <div style="display:flex;align-items:center;gap:12px;">
         <button id="ps-save" style="
           padding:.4rem 1.1rem;background:#1C2B3A;color:#fff;border:none;
@@ -413,15 +612,48 @@ async function _renderSettingsTab() {
 
   document.getElementById('ps-save').addEventListener('click', async () => {
     const statusEl = document.getElementById('ps-status');
+    statusEl.style.color = '#6B7280';
     statusEl.textContent = 'Saving…';
-    const name = document.getElementById('ps-name').value.trim();
+
+    const name    = document.getElementById('ps-name').value.trim();
+    const address = document.getElementById('ps-address').value.trim();
     if (!name) { statusEl.textContent = 'Parish name is required.'; return; }
-    const payload = { parish_name: name, primary_institution: name };
-    const { error } = data
+
+    // Auto-detect timezone from address via Nominatim + BigDataCloud (both free, no key needed)
+    let timezone = document.getElementById('ps-tz').value;
+    if (address) {
+      try {
+        statusEl.textContent = 'Detecting timezone…';
+        const geo = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`,
+          { headers: { 'User-Agent': 'ParishDesk/1.0' } }
+        ).then(r => r.json());
+        if (geo?.[0]) {
+          const { lat, lon } = geo[0];
+          const tzData = await fetch(
+            `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
+          ).then(r => r.json());
+          const detected = tzData?.timezone?.ianaTimeId || tzData?.timezone?.name;
+          if (detected) {
+            timezone = detected;
+            // Update dropdown if it matches a known option, otherwise keep detected value
+            const sel = document.getElementById('ps-tz');
+            const opt = [...sel.options].find(o => o.value === detected);
+            if (opt) { sel.value = detected; }
+            else { sel.insertAdjacentHTML('afterbegin', `<option value="${detected}" selected>${detected}</option>`); }
+            document.getElementById('ps-tz-note').innerHTML = `Detected: <strong>${detected}</strong>`;
+          }
+        }
+      } catch { /* leave manually selected timezone */ }
+    }
+
+    statusEl.textContent = 'Saving…';
+    const payload = { parish_name: name, primary_institution: name, address, timezone };
+    const { error: saveErr } = data
       ? await sb.from('parish_settings').update(payload).eq('id', data.id)
       : await sb.from('parish_settings').insert(payload);
-    if (error) { statusEl.textContent = 'Error: ' + error.message; return; }
-    store.parishSettings = { ...data, ...payload };
+    if (saveErr) { statusEl.textContent = 'Error: ' + saveErr.message; return; }
+    store.parishSettings = { ...store.parishSettings, ...payload };
     applyParishName(name);
     statusEl.textContent = 'Saved.';
     setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
@@ -470,6 +702,21 @@ function _renderInviteTab() {
 // ── Expose save handler globally ───────────────────────────────────────────
 
 document.addEventListener('click', e => {
-  const btn = e.target.closest('.au-save-btn');
-  if (btn) _saveUser(btn.dataset.userId);
+  const saveBtn = e.target.closest('.au-save-btn');
+  if (saveBtn) { _saveUser(saveBtn.dataset.userId); return; }
+
+  const resetBtn = e.target.closest('.au-pw-reset-btn');
+  if (resetBtn) _resetPassword(resetBtn.dataset.email, resetBtn.closest('.admin-user-detail'));
 });
+
+async function _resetPassword(email, detailEl) {
+  const statusEl = detailEl?.querySelector('.au-status');
+  if (!email) { if (statusEl) statusEl.textContent = 'No email address for this user.'; return; }
+  if (statusEl) statusEl.textContent = 'Sending…';
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+  if (error) { if (statusEl) statusEl.textContent = 'Error: ' + error.message; return; }
+  if (statusEl) { statusEl.textContent = `Reset email sent to ${email}`; statusEl.style.color = '#2E7D32'; }
+  setTimeout(() => { if (statusEl) { statusEl.textContent = ''; statusEl.style.color = '#6B7280'; } }, 5000);
+}
+
+window.saveCalendar = _saveCalendar;

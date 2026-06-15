@@ -162,6 +162,5 @@ async function syncParishStaff() {
     store._taskScopeReady = undefined;
     clearUserScope();
   });
-  const user = await initAuth(startApp);
-  if (user) startApp(user);
+  initAuth(startApp);
 })();

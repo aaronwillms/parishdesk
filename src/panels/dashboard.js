@@ -3,8 +3,7 @@ import { store } from '../store.js';
 import { fmtDate, todayCST } from '../utils.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
 import { isSuperAdmin } from '../roles.js';
-
-const CAL_COLOR_MAP = { '2': 'school', '3': 'conf', '5': 'mass', '7': 'personal' };
+import { parseICS } from '../utils/icsParser.js';
 
 let currentUserId = null;
 
@@ -14,24 +13,104 @@ function dotClass(colorId) {
 
 // ── Calendar ───────────────────────────────────────────────────────────────
 
+function _fmtEventTime(date, allDay) {
+  if (allDay) return 'All day';
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+function _fmtEventDate(date) {
+  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+async function _fetchICS(url) {
+  const proxyUrl = '/functions/calendar?url=' + encodeURIComponent(url);
+  const res = await fetch(proxyUrl);
+  if (!res.ok) throw new Error('ICS fetch failed: ' + res.status);
+  return res.text();
+}
+
 export async function loadCalendar() {
   const c = document.getElementById('calendar-sched');
   if (!c) return;
   c.innerHTML = '<span class="pulse"></span>';
+
   try {
-    const res = await fetch('/.netlify/functions/calendar');
-    if (!res.ok) throw new Error('Calendar fetch failed: ' + res.status);
-    const events = await res.json();
-    if (!events.length) {
-      c.innerHTML = '<div style="font-size:13px;color:#6B7280;font-style:italic;">No events today.</div>';
+    const { data: cals, error } = await sb
+      .from('calendars')
+      .select('id, name, type, url, color')
+      .eq('scope', 'parish')
+      .eq('active', true);
+
+    if (error) throw error;
+    if (!cals?.length) {
+      c.innerHTML = '<div style="font-size:13px;color:#6B7280;font-style:italic;">No calendars configured.</div>';
       return;
     }
-    c.innerHTML = events.map(e =>
-      `<div class="sched-item"><span class="sched-time">${e.time}</span><span class="sched-dot dot-${dotClass(e.colorId)}"></span><div class="sched-desc">${e.title}</div></div>`
-    ).join('');
+
+    const now = new Date();
+    const cutoff = new Date(now);
+    cutoff.setDate(cutoff.getDate() + 14);
+
+    const allEvents = [];
+
+    await Promise.allSettled(cals.map(async (cal) => {
+      if (cal.type === 'google') {
+        // Google Calendar stub
+        allEvents.push({
+          _calName:  cal.name,
+          _calColor: cal.color,
+          _stub:     true,
+          start:     new Date(0),
+          title:     `${cal.name} — Google Calendar coming soon`,
+        });
+        return;
+      }
+
+      // ICS
+      const raw = await _fetchICS(cal.url);
+      const events = parseICS(raw);
+      for (const ev of events) {
+        if (!ev.start) continue;
+        if (ev.start >= now && ev.start <= cutoff) {
+          allEvents.push({ ...ev, _calName: cal.name, _calColor: cal.color });
+        }
+      }
+    }));
+
+    // Sort by start date; stubs last
+    allEvents.sort((a, b) => {
+      if (a._stub && !b._stub) return 1;
+      if (!a._stub && b._stub) return -1;
+      return a.start - b.start;
+    });
+
+    if (!allEvents.length) {
+      c.innerHTML = '<div style="font-size:13px;color:#6B7280;font-style:italic;">No upcoming events.</div>';
+      return;
+    }
+
+    c.innerHTML = allEvents.map(ev => {
+      if (ev._stub) {
+        return `<div class="sched-item" style="opacity:.55;font-style:italic;">
+          <span class="sched-dot" style="background:${ev._calColor};flex-shrink:0;"></span>
+          <div class="sched-desc" style="font-size:12.5px;color:#9CA3AF;">${ev.title}</div>
+        </div>`;
+      }
+      return `<div class="sched-item">
+        <span class="sched-dot" style="background:${ev._calColor};flex-shrink:0;margin-top:3px;"></span>
+        <div style="flex:1;min-width:0;">
+          <div class="sched-desc">${ev.title}</div>
+          <div style="font-size:11.5px;color:#9CA3AF;margin-top:1px;">
+            ${_fmtEventDate(ev.start)}${ev.allDay ? '' : ' · ' + _fmtEventTime(ev.start, false)}
+            <span style="margin-left:4px;">${ev._calName}</span>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+
   } catch (e) {
-    console.error('Calendar error:', e);
-    c.innerHTML = '<div style="font-size:13px;color:#922B21;">Could not load schedule — check console.</div>';
+    console.error('[calendar]', e);
+    c.innerHTML = '<div style="font-size:13px;color:#922B21;">Could not load calendar — check console.</div>';
   }
 }
 
@@ -178,7 +257,7 @@ function announcementForm(data) {
       <input type="radio" name="af-vis" id="af-vis-all" value="all" ${visAll ? 'checked' : ''}
         style="accent-color:var(--cardinal);margin:0;flex-shrink:0;cursor:pointer;width:auto;"
         onchange="document.getElementById('af-teams-wrap').style.display='none'" />
-      All staff
+      Visible to all
     </label>
     <label for="af-vis-teams" style="display:flex;align-items:center;gap:8px;margin:0;cursor:pointer;font-size:13px;color:var(--navy);letter-spacing:normal;">
       <input type="radio" name="af-vis" id="af-vis-teams" value="teams" ${!visAll ? 'checked' : ''}

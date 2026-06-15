@@ -1,43 +1,55 @@
 import { sb } from './supabase.js';
 
 let _onSignOut = null;
+let _appStarted = false;
+
 export function setSignOutCallback(fn) { _onSignOut = fn; }
 
 function showAuth() {
-  _onSignOut?.();
-  document.getElementById('app').style.display = 'none';
   document.getElementById('auth-screen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
 }
 
-function showApp(user) {
+function showApp() {
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
 }
 
-export async function initAuth(onLogin) {
-  // Wire logout and auth state change regardless of session state
+export function initAuth(onLogin) {
+  // Single source of truth: all show/hide and app-start logic lives here.
+  // doLogin only calls signInWithPassword — it never touches the DOM directly.
+  sb.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_OUT') {
+      _appStarted = false;
+      _onSignOut?.();
+      showAuth();
+      return;
+    }
+
+    if (session?.user) {
+      showApp();
+      if (!_appStarted) {
+        _appStarted = true;
+        onLogin(session.user);
+      }
+    }
+  });
+
+  // Logout button
   document.getElementById('btn-logout').addEventListener('click', async (e) => {
     const btn = e.currentTarget;
     btn.disabled = true;
     btn.textContent = 'Signing out…';
     const { error } = await sb.auth.signOut();
-    if (error) { console.error('Sign out error:', error); btn.disabled = false; btn.textContent = 'Sign out'; return; }
-    showAuth();
+    if (error) {
+      console.error('Sign out error:', error);
+      btn.disabled = false;
+      btn.textContent = 'Sign out';
+    }
+    // onAuthStateChange SIGNED_OUT handles showAuth and store clear
   });
 
-  sb.auth.onAuthStateChange((event, session) => {
-    if (event === 'SIGNED_OUT') showAuth();
-    if (event === 'SIGNED_IN' && session?.user) showApp(session.user);
-  });
-
-  const { data: { session } } = await sb.auth.getSession();
-  if (session?.user) {
-    showApp(session.user);
-    return session.user;
-  }
-
-  showAuth();
-
+  // Login form
   const loginBtn = document.querySelector('#login-form .auth-submit');
   const errEl = document.getElementById('login-error');
 
@@ -48,20 +60,15 @@ export async function initAuth(onLogin) {
     if (!email || !password) { errEl.textContent = 'Email and password are required.'; return; }
     loginBtn.disabled = true;
     loginBtn.textContent = 'Signing in…';
-
-    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    const { error } = await sb.auth.signInWithPassword({ email, password });
     loginBtn.disabled = false;
     loginBtn.textContent = 'Sign in';
-
-    if (error) { errEl.textContent = error.message; return; }
-    showApp(data.user);
-    onLogin(data.user);
+    if (error) { errEl.textContent = error.message; }
+    // On success: onAuthStateChange fires SIGNED_IN → showApp + onLogin
   }
 
   loginBtn.addEventListener('click', doLogin);
   document.getElementById('login-password').addEventListener('keydown', e => {
     if (e.key === 'Enter') doLogin();
   });
-
-  return null;
 }
