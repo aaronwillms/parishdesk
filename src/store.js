@@ -7,4 +7,5 @@ export const store = {
   teams: [],
   notifications: [],
   parishSettings: null,
+  currentUserProfile: null,
 };

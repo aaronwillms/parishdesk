@@ -16,9 +16,12 @@ function showApp(user) {
 
 export async function initAuth(onLogin) {
   // Wire logout and auth state change regardless of session state
-  document.getElementById('btn-logout').addEventListener('click', async () => {
+  document.getElementById('btn-logout').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Signing out…';
     const { error } = await sb.auth.signOut();
-    if (error) { console.error('Sign out error:', error); }
+    if (error) { console.error('Sign out error:', error); btn.disabled = false; btn.textContent = 'Sign out'; return; }
     showAuth();
   });
 

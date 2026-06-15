@@ -17,8 +17,7 @@
 <!-- AUTH SCREEN -->
 <div id="auth-screen">
   <div class="auth-card">
-    <img src="/icons/logo-login.png" alt="Basilica of Saint Mary" style="display:block;margin:0 auto .75rem;width:120px;height:auto;" />
-    <h1 class="auth-title">ParishDesk</h1>
+    <img src="/icons/logo-login.png" alt="Basilica of Saint Mary" style="display:block;margin:0 auto 1rem;width:170px;height:auto;" />
     <p class="auth-sub">Basilica of Saint Mary · Natchez</p>
     <form id="login-form" autocomplete="on">
       <div class="auth-field">
@@ -63,7 +62,7 @@
       <div class="nav-item" data-panel="personnel"><i class="ti ti-users"></i> Directory</div>
     </nav>
     <div id="sidebar-footer">
-      <div id="user-display"></div>
+      <div id="sidebar-profile-widget"></div>
       <button id="btn-logout" class="logout-btn">Sign out</button>
     </div>
   </div>
@@ -403,6 +402,11 @@
       <!-- PROJECT WORKSPACE (dynamic) -->
       <div id="panel-projectDashboard" class="panel">
         <div id="project-dashboard-root"></div>
+      </div>
+
+      <!-- USER PROFILE -->
+      <div id="panel-userProfile" class="panel">
+        <div id="user-profile-root"></div>
       </div>
 
       <!-- TASKS -->

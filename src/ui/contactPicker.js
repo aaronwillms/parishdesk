@@ -150,7 +150,7 @@ function injectStyles() {
 
 // ── Factory ────────────────────────────────────────────────────────────────
 
-export function createContactPicker({ container, placeholder = 'Search by name…', onSelect, initialValue }) {
+export function createContactPicker({ container, placeholder = 'Search by name…', onSelect, initialValue, prefillEmail = '' }) {
   injectStyles();
 
   // ── State
@@ -258,6 +258,7 @@ export function createContactPicker({ container, placeholder = 'Search by name�
       <div style="font-size:12px;font-weight:600;color:#555;margin-bottom:2px;">New contact</div>
       <input id="cp-new-name"  placeholder="Full name *"  value="${prefillName}" />
       <input id="cp-new-title" placeholder="Title / role (optional)" />
+      <input id="cp-new-email" type="email" placeholder="Email (optional)" value="${prefillEmail}" />
       <div class="cp-new-form-actions">
         <button type="button" class="cp-btn-save"   id="cp-new-save">Add &amp; select</button>
         <button type="button" class="cp-btn-cancel" id="cp-new-cancel">Cancel</button>
@@ -272,9 +273,10 @@ export function createContactPicker({ container, placeholder = 'Search by name�
       e.preventDefault();
       const name  = form.querySelector('#cp-new-name').value.trim();
       const title = form.querySelector('#cp-new-title').value.trim() || null;
+      const email = form.querySelector('#cp-new-email').value.trim() || null;
       if (!name) { form.querySelector('#cp-new-name').focus(); return; }
 
-      const { data, error } = await sb.from('personnel').insert({ name, title, active: true }).select().single();
+      const { data, error } = await sb.from('personnel').insert({ name, title, email, active: true }).select().single();
       if (error) { alert('Failed to add contact: ' + error.message); return; }
 
       // Update in-memory store so the new person appears in future pickers/renders

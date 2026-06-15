@@ -2,8 +2,9 @@ import './styles/main.css';
 import { initAuth } from './auth.js';
 import { initLiturgical } from './liturgical.js';
 import { loadCalendar, loadInit } from './panels/dashboard.js';
-import { initNavigation } from './ui/navigation.js';
+import { initNavigation, renderSidebarProfileWidget, setActiveTeamSubNavItem } from './ui/navigation.js';
 import { initModal } from './ui/modal.js';
+import { loadUserProfile } from './panels/userProfile.js';
 import { openCoupleAdd, loadCouples } from './panels/marriage.js';
 import { caseForm, loadCases } from './panels/annulments.js';
 import { projectForm, loadProjects, openNewProjectModal } from './panels/projects.js';
@@ -17,7 +18,6 @@ import { loadTeams, loadTeamsStore } from './panels/teams.js';
 import { renderTeamDashboard } from './panels/teamDashboard.js';
 import { loadTasks } from './panels/tasks.js';
 import { initNotifications } from './notifications.js';
-import { setActiveTeamSubNavItem } from './ui/navigation.js';
 import { sb } from './supabase.js';
 import { store } from './store.js';
 
@@ -76,13 +76,18 @@ async function startApp(user) {
     tasks:         loadTasks,
     teamDashboard:    () => {},   // handled by showTeamDashboard
     projectDashboard: () => {},   // handled by showProjectDashboard
+    userProfile:      loadUserProfile,
   });
 
   initModal();
   initLiturgical();
   loadCalendar();
   await Promise.all([loadInit(), loadPersonnel(), loadTeamsStore(), loadParishSettings()]);
-  if (user?.id) initNotifications(user.id);
+  if (user?.id) {
+    initNotifications(user.id);
+    await loadUserProfile();
+    renderSidebarProfileWidget(user);
+  }
   syncParishStaff();
 }
 
