@@ -4,6 +4,7 @@ import { fmtDate, todayCST } from '../utils.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
 import { isSuperAdmin } from '../roles.js';
 import { parseICS } from '../utils/icsParser.js';
+import { createAvatar } from '../ui/avatar.js';
 
 let currentUserId = null;
 
@@ -358,12 +359,10 @@ async function loadActivityFeed() {
   const superAdmin = isSuperAdmin();
 
   const scope = await getUserScope();
-  const { personnelId, teamIds } = scope;
+  const { personnelId } = scope;
 
-  // Accessible project IDs come from already-scoped store
   const accessibleProjectIds = new Set((store.allProjects || []).map(p => p.id));
 
-  // Sacramental coordinator programs (marriage covers couples; annulments covers cases; ocia covers ocia)
   const coordPrograms = superAdmin
     ? new Set(['marriage', 'annulments', 'ocia', 'baptism', 'firstcomm', 'confirmation'])
     : await _coordinatorPrograms(personnelId);
@@ -371,26 +370,45 @@ async function loadActivityFeed() {
   const queries = [
     sb.from('projects').select('id,title,updated_at').order('updated_at', { ascending: false }).limit(limit),
     sb.from('tasks').select('id,title,updated_at,created_by,assigned_to,team_id').order('updated_at', { ascending: false }).limit(limit),
+    // activity_log with user attribution — gracefully ignored if table doesn't exist
+    sb.from('activity_log')
+      .select('id,action,entity_name,created_at,triggered_by,user_profiles(personnel_id,avatar_url,personnel(name))')
+      .order('created_at', { ascending: false })
+      .limit(limit),
   ];
   if (superAdmin || coordPrograms.has('marriage'))   queries.push(sb.from('couples').select('id,groom_name,bride_name,updated_at').order('updated_at', { ascending: false }).limit(limit));
   if (superAdmin || coordPrograms.has('annulments')) queries.push(sb.from('annulment_cases').select('id,petitioner,respondent,updated_at').order('updated_at', { ascending: false }).limit(limit));
   if (superAdmin || coordPrograms.has('ocia'))       queries.push(sb.from('sacramental_ocia').select('id,name,updated_at').order('updated_at', { ascending: false }).limit(limit));
 
-  const [projRes, tasksRes, ...sacRes] = await Promise.all(queries);
+  const [projRes, tasksRes, actRes, ...sacRes] = await Promise.all(queries);
 
   const items = [];
 
-  // Projects — filter to accessible IDs
+  // activity_log entries — shown first, attributed to triggering user
+  (actRes.data || []).forEach(r => {
+    const profile = r.user_profiles;
+    items.push({
+      icon: '🔔',
+      label: r.action || 'Action',
+      name: r.entity_name || '',
+      ts: r.created_at,
+      actorName: profile?.personnel?.name || 'System',
+      actorUserId: r.triggered_by || null,
+      actorAvatarUrl: profile?.avatar_url || null,
+    });
+  });
+
+  // Projects
   (projRes.data || []).filter(r => superAdmin || accessibleProjectIds.has(r.id)).forEach(r => {
     items.push({ icon: FEED_ICONS.project, label: 'Project updated', name: r.title || 'Unknown', ts: r.updated_at });
   });
 
-  // Tasks — apply same visibility logic
+  // Tasks
   (tasksRes.data || []).filter(r => superAdmin || isVisible(r, scope)).forEach(r => {
     items.push({ icon: FEED_ICONS.task, label: 'Task updated', name: r.title || 'Unknown', ts: r.updated_at });
   });
 
-  // Sacramental — only fetched if coordinator, so include all returned rows
+  // Sacramental
   let sacIdx = 0;
   if (superAdmin || coordPrograms.has('marriage')) {
     (sacRes[sacIdx++]?.data || []).forEach(r => {
@@ -419,15 +437,29 @@ async function loadActivityFeed() {
     c.innerHTML = '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No recent activity.</div>';
     return;
   }
-  c.innerHTML = top10.map(item => `
-    <div style="display:flex;align-items:baseline;gap:10px;padding:.45rem 0;border-bottom:.5px solid var(--stone);">
+
+  c.innerHTML = top10.map((item, i) => {
+    const actorSlot = item.actorName
+      ? `<span class="feed-avatar-slot" data-idx="${i}" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#E2DDD6;flex-shrink:0;vertical-align:middle;margin-right:4px;"></span><span style="font-weight:500;color:var(--navy);font-size:12px;">${item.actorName}</span> `
+      : '';
+    return `
+    <div style="display:flex;align-items:center;gap:10px;padding:.45rem 0;border-bottom:.5px solid var(--stone);">
       <span style="font-size:15px;flex-shrink:0;">${item.icon}</span>
       <div style="flex:1;min-width:0;">
-        <span style="font-size:13px;color:#6B7280;">${item.label}</span>
-        <span style="font-size:13px;font-weight:500;color:var(--navy);"> · ${item.name}</span>
+        <div style="font-size:12.5px;color:#6B7280;display:flex;align-items:center;flex-wrap:wrap;gap:2px;">
+          ${actorSlot}<span>${item.label}${item.name ? ` · <span style="font-weight:500;color:var(--navy);">${item.name}</span>` : ''}</span>
+        </div>
       </div>
       <span style="font-size:11.5px;color:#9CA3AF;flex-shrink:0;white-space:nowrap;">${timeAgo(item.ts)}</span>
-    </div>`).join('');
+    </div>`;
+  }).join('');
+
+  // Hydrate avatar slots for attributed entries
+  top10.forEach((item, i) => {
+    if (!item.actorName) return;
+    const slot = c.querySelector(`.feed-avatar-slot[data-idx="${i}"]`);
+    if (slot) createAvatar({ container: slot, userId: item.actorUserId || '', name: item.actorName, size: 20 });
+  });
 }
 
 // ── loadInit ───────────────────────────────────────────────────────────────

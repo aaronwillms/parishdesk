@@ -2,6 +2,7 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { isTeamAdmin, isSuperAdmin } from '../roles.js';
+import { createAvatar } from '../ui/avatar.js';
 
 let _currentTeamId = null;
 let _team = null;
@@ -49,6 +50,12 @@ const TABS = [
 function _render(container) {
   if (!_team) {
     container.innerHTML = '<div style="padding:2rem;color:#E74C3C;">Team not found.</div>';
+    return;
+  }
+
+  // Parish Staff public view: non-admins see only a read-only members directory
+  if (_team.is_protected && !isTeamAdmin(_team.id)) {
+    _renderPublicStaffDirectory(container);
     return;
   }
 
@@ -111,6 +118,65 @@ function _render(container) {
   });
 
   _renderTabContent();
+}
+
+function _renderPublicStaffDirectory(container) {
+  const teamName = _team?.name || 'Parish Staff';
+  container.innerHTML = `
+    <div id="td-root" style="max-width:860px;margin:0 auto;">
+      <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:1.5rem;">
+        <button id="td-back" style="
+          background:none;border:none;cursor:pointer;
+          color:#8FA8BF;font-size:20px;padding:0 4px;
+          line-height:1;margin-top:3px;flex-shrink:0;
+        " title="Back to Teams" onmouseover="this.style.color='#1C2B3A'" onmouseout="this.style.color='#8FA8BF'">←</button>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <i class="fa-solid fa-church" style="font-size:20px;color:#8B1A2F;"></i>
+            <h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-size:26px;font-weight:700;color:#1C2B3A;margin:0;line-height:1.2;">${teamName}</h1>
+          </div>
+          ${_team.description ? `<div style="font-size:13.5px;color:#6B7280;margin-top:4px;">${_team.description}</div>` : ''}
+        </div>
+      </div>
+      <div id="td-public-members"></div>
+    </div>
+  `;
+
+  document.getElementById('td-back').addEventListener('click', () => window.switchPanel('teams'));
+
+  const el = document.getElementById('td-public-members');
+  if (!_members.length) {
+    el.innerHTML = '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No members listed.</div>';
+    return;
+  }
+
+  el.innerHTML = _members.map((m, i) => {
+    const p = m.personnel || {};
+    return `
+      <div class="td-pub-row" data-idx="${i}" style="
+        display:flex;align-items:center;gap:12px;
+        padding:.75rem 0;border-bottom:.5px solid #F0EDE8;
+      ">
+        <div class="td-pub-avatar" data-idx="${i}" style="
+          width:36px;height:36px;border-radius:50%;background:#E2DDD6;
+          flex-shrink:0;overflow:hidden;
+        "></div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:500;color:#1C2B3A;">${p.name || '—'}</div>
+          ${p.title ? `<div style="font-size:12px;color:#6B7280;margin-top:1px;">${p.title}</div>` : ''}
+        </div>
+        ${p.email ? `<a href="mailto:${p.email}" style="font-size:12px;color:#8B1A2F;text-decoration:none;white-space:nowrap;flex-shrink:0;"
+          onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${p.email}</a>` : ''}
+      </div>`;
+  }).join('');
+
+  // Hydrate avatars
+  _members.forEach((m, i) => {
+    const slot = el.querySelector(`.td-pub-avatar[data-idx="${i}"]`);
+    if (!slot) return;
+    const p = m.personnel || {};
+    createAvatar({ container: slot, userId: m.personnel_id || '', name: p.name || '', size: 36 });
+  });
 }
 
 function _renderTabContent() {

@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, todayCST } from '../utils.js';
+import { fmtDate, fmtDateYear, todayCST } from '../utils.js';
 import { CASE_STATUS, expandCase } from './annulments.js';
 import { createNotification } from '../notifications.js';
 
@@ -251,7 +251,7 @@ function renderOciaCard(person) {
 
 
     if(ociaIsMinor(person)&&person.parental_consent) {
-      h += `<div style="margin-top:8px;padding:6px 10px;background:#D8F3DC;border-left:3px solid #2D6A4F;border-radius:3px;font-size:13px;color:#2D6A4F;">✅ Parental consent received${person.consent_parent_name?' — '+person.consent_parent_name:''}${person.consent_date?' on '+fmtDate(person.consent_date):''}</div>`;
+      h += `<div style="margin-top:8px;padding:6px 10px;background:#D8F3DC;border-left:3px solid #2D6A4F;border-radius:3px;font-size:13px;color:#2D6A4F;">✅ Parental consent received${person.consent_parent_name?' — '+person.consent_parent_name:''}${person.consent_date?' on '+fmtDateYear(person.consent_date):''}</div>`;
     }
 
     if(person.baptismal_status==='baptized') {
@@ -656,9 +656,14 @@ function ociaCollectPriorMarriages() {
   return pms;
 }
 
+let _ociaSaving = false;
 async function saveOcia(id) {
+  if (_ociaSaving) return;
   const name = document.getElementById('of-name').value.trim();
   if(!name){alert('Full legal name is required.');return;}
+  _ociaSaving = true;
+  const saveBtn = document.querySelector('#modal-content .btn-primary[onclick*="saveOcia"]');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
   const marr = document.getElementById('of-marr')?.value||null;
   const remarried = document.getElementById('of-remarried')?.checked||false;
   const bapStatus = document.getElementById('of-bap-status')?.value||'unbaptized';
@@ -699,14 +704,31 @@ async function saveOcia(id) {
     : (document.getElementById('of-rec-date')?.value || null);
 
   let err;
-  if(id) {
-    const r = await sb.from('sacramental_ocia').update(payload).eq('id',id); err = r.error;
-  } else {
-    payload.documents = [];
-    payload.timeline = [{date:todayCST(), event:'Record created'}];
-    const r = await sb.from('sacramental_ocia').insert(payload); err = r.error;
+  try {
+    if(id) {
+      const r = await sb.from('sacramental_ocia').update(payload).eq('id',id); err = r.error;
+    } else {
+      payload.documents = [];
+      payload.timeline = [{date:todayCST(), event:'Record created'}];
+      const r = await sb.from('sacramental_ocia').upsert(payload); err = r.error;
+    }
+  } catch(e) {
+    err = { message: e.message };
+  } finally {
+    _ociaSaving = false;
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
   }
   if(err){alert('Save failed: '+err.message);return;}
+  // Log to activity_log (fire-and-forget — ignore errors if table doesn't exist yet)
+  sb.auth.getUser().then(({ data }) => {
+    const uid = data?.user?.id || null;
+    sb.from('activity_log').insert({
+      triggered_by: uid,
+      action: id ? 'OCIA record updated' : 'OCIA record created',
+      entity_type: 'ocia',
+      entity_name: name,
+    }).then(() => {});
+  });
   closeModal();
   loadOcia();
 }
