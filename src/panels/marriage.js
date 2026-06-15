@@ -42,8 +42,18 @@ export async function loadCouples() {
   renderCouples();
 }
 
+function marriageCaseIsConfirmed(caseId) {
+  if(!caseId) return false;
+  const c = (store.allCases||[]).find(c => c.id===caseId);
+  return !!(c && c.status_code==='affirm' && c.judgement_finalized==='yes');
+}
+
+function pmResolved(p) {
+  return p.annulment_granted || marriageCaseIsConfirmed(p.annulment_case_id);
+}
+
 function hasMissingAnnulment(c) {
-  return (c.prior_marriages||[]).some(p => !p.annulment_granted);
+  return (c.prior_marriages||[]).some(p => !pmResolved(p));
 }
 
 function updateCoupleStats() {
@@ -104,13 +114,20 @@ function renderPriorMarriages(c) {
     out += '<div style="font-size:11px;color:#AAA;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">'+spouseName+' — Prior Marriage'+(list.length>1?'s':'')+'</div>';
     out += list.map(p => {
       const linkedCase = p.annulment_case_id ? (store.allCases||[]).find(ca=>ca.id===p.annulment_case_id) : null;
+      const autoConfirmed = marriageCaseIsConfirmed(p.annulment_case_id);
+      const resolved = p.annulment_granted || autoConfirmed;
       const caseLink = linkedCase
         ? ' — <span onclick="window.expandCase(\''+linkedCase.id+'\')" style="cursor:pointer;text-decoration:underline;"><strong>'+linkedCase.petitioner+(linkedCase.respondent?' v. '+linkedCase.respondent:'')+'</strong></span>'
         : '';
-      const annulmentLine = p.annulment_granted
-        ? '<span style="color:#2D6A4F;font-size:12px;">✅ Annulment granted'+caseLink+'</span>'
-        : '<span style="color:#922B21;font-size:12px;">⚠️ No annulment'+caseLink+'</span>';
-      return '<div style="font-size:13px;color:#555;margin-bottom:5px;padding:6px 10px;background:#FFF8EE;border-left:3px solid '+(p.annulment_granted?'#2D6A4F':'#922B21')+';border-radius:3px;">'
+      let annulmentLine;
+      if(autoConfirmed) {
+        annulmentLine = '<span style="color:#2D6A4F;font-size:12px;">✅ Annulment confirmed — case resolved'+caseLink+'</span>';
+      } else if(p.annulment_granted) {
+        annulmentLine = '<span style="color:#2D6A4F;font-size:12px;">✅ Annulment granted'+caseLink+'</span>';
+      } else {
+        annulmentLine = '<span style="color:#922B21;font-size:12px;">⚠️ No annulment'+caseLink+'</span>';
+      }
+      return '<div style="font-size:13px;color:#555;margin-bottom:5px;padding:6px 10px;background:#FFF8EE;border-left:3px solid '+(resolved?'#2D6A4F':'#922B21')+';border-radius:3px;">'
         + '<div style="font-weight:600;">'+(p.ex_spouse_name||'(unnamed)')+'</div>'
         + '<div>'+annulmentLine+'</div>'
         + '</div>';
@@ -153,7 +170,6 @@ function renderCoupleCard(c) {
     h += '<div style="margin-top:10px;">';
     if(c.location) h += '<span class="detail-chip">📍 '+c.location+'</span>';
     if(c.celebrant) h += '<span class="detail-chip">✝ '+c.celebrant+'</span>';
-    if(c.form) h += '<span class="detail-chip">⛪ '+c.form+'</span>';
     if(c.fee) h += '<span class="detail-chip" style="background:#FEF9E7;">💰 '+c.fee+'</span>';
     h += '</div>';
     if(missingAnnulment) {
@@ -414,7 +430,6 @@ export function coupleForm(data) {
   + '<label>Wedding time</label><input id="f-wt" value="'+(data?.wedding_time||'')+'" placeholder="e.g. 3:00 PM" />'
   + '<label>Location</label><input id="f-loc" value="'+(data?.location||'')+'" />'
   + '<label>Celebrant</label><input id="f-cel" value="'+(data?.celebrant||'')+'" />'
-  + '<label>Form</label><input id="f-form" value="'+(data?.form||'')+'" placeholder="e.g. Nuptial Mass" />'
   + '<label>Type of marriage</label><select id="f-mtype">'+marriageTypeOptions+'</select>'
   + '<label>Status</label><select id="f-st">'+statuses+'</select>'
   + '<label>Bride phone</label><input id="f-bp" value="'+(data?.bride_phone||'')+'" />'
@@ -460,7 +475,6 @@ async function saveCouple(id) {
     wedding_time:document.getElementById('f-wt').value.trim()||null,
     location:document.getElementById('f-loc').value.trim(),
     celebrant:document.getElementById('f-cel').value.trim(),
-    form:document.getElementById('f-form').value.trim()||null,
     marriage_type:document.getElementById('f-mtype').value||null,
     status_code:document.getElementById('f-st').value,
     bride_phone:document.getElementById('f-bp').value.trim()||null,

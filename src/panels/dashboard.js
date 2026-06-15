@@ -71,8 +71,7 @@ export async function loadInit() {
   try {
     const [projRes, caseRes, coupleRes, collectRes, alertRes] = await Promise.all([
       sb.from('projects').select('id,title,status_code,due_date,date_note,type,owner').order('sort_order').order('due_date',{nullsFirst:false}),
-      // Expanded select so store.allCases has petitioner/respondent for OCIA dropdowns
-      sb.from('annulment_cases').select('id,status_code,archived,petitioner,respondent'),
+      sb.from('annulment_cases').select('id,status_code,archived,petitioner,respondent,judgement_finalized'),
       sb.from('couples').select('id,status_code,archived'),
       sb.from('collect_cache').select('collect_text').eq('feast_date',dateStr).maybeSingle(),
       sb.from('alerts').select('*').eq('active',true)

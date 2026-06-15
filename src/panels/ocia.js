@@ -77,10 +77,20 @@ function ociaAge(dob) {
   return age;
 }
 
+function caseIsConfirmed(caseId) {
+  if(!caseId) return false;
+  const c = store.allCases.find(c => c.id===caseId);
+  return !!(c && c.status_code==='affirm' && c.judgement_finalized==='yes');
+}
+
+function pmIsResolved(m) {
+  return m.annulment_granted || caseIsConfirmed(m.annulment_case_id);
+}
+
 function ociaHasAnnulmentIssue(person) {
   const pm = person.prior_marriages||[];
-  if(person.marriage_status==='married'&&person.remarried&&pm.some(m=>!m.annulment_granted)) return true;
-  if(person.marriage_status==='divorced'&&pm.some(m=>!m.annulment_granted)) return true;
+  if(person.marriage_status==='married'&&person.remarried&&pm.some(m=>!pmIsResolved(m))) return true;
+  if(person.marriage_status==='divorced'&&pm.some(m=>!pmIsResolved(m))) return true;
   return false;
 }
 
@@ -177,7 +187,7 @@ function renderOciaCard(person) {
         ${(()=>{
           const flags=[];
           const pm=person.prior_marriages||[];
-          pm.forEach(m=>{if(!m.annulment_granted&&m.ex_name) flags.push(`<div style="margin-top:5px;background:#FDEDEC;border-left:3px solid #E74C3C;border-radius:3px;padding:4px 10px;font-size:12px;font-weight:600;color:#922B21;">❗ Annulment needed — ${m.ex_name}</div>`);});
+          pm.forEach(m=>{if(!pmIsResolved(m)&&m.ex_name) flags.push(`<div style="margin-top:5px;background:#FDEDEC;border-left:3px solid #E74C3C;border-radius:3px;padding:4px 10px;font-size:12px;font-weight:600;color:#922B21;">❗ Annulment needed — ${m.ex_name}</div>`);});
           if(ociaIsMinor(person)&&!person.parental_consent) flags.push(`<div style="margin-top:5px;background:#FEF9E7;border-left:3px solid #D4AC0D;border-radius:3px;padding:4px 10px;font-size:12px;font-weight:600;color:#7D6608;">⚠ Parental consent outstanding</div>`);
           return flags.join('');
         })()}
@@ -207,11 +217,22 @@ function renderOciaCard(person) {
         h += `<div style="font-size:13px;margin-bottom:4px;">Spouse: <strong>${person.spouse_name}</strong></div>`;
       }
       pm.forEach((m,i) => {
-        const annFlag = !m.annulment_granted;
         const linkedCase = m.annulment_case_id?store.allCases.find(c=>c.id===m.annulment_case_id):null;
-        h += `<div style="padding:6px 10px;background:${annFlag?'#FEF9E7':'#F8F7F4'};border-left:3px solid ${annFlag?'#D4AC0D':'var(--stone)'};border-radius:3px;margin-bottom:6px;font-size:13px;">
+        const autoConfirmed = caseIsConfirmed(m.annulment_case_id);
+        const resolved = m.annulment_granted || autoConfirmed;
+        const bgColor = resolved?'#F8F7F4':'#FEF9E7';
+        const borderColor = resolved?'var(--stone)':'#D4AC0D';
+        let annulmentLine;
+        if(autoConfirmed) {
+          annulmentLine = `<div style="font-size:11px;margin-top:2px;color:#2D6A4F;">✅ Annulment confirmed — case resolved</div>`;
+        } else if(m.annulment_granted) {
+          annulmentLine = `<div style="font-size:11px;margin-top:2px;color:#2D6A4F;">✅ Annulment granted</div>`;
+        } else {
+          annulmentLine = `<div style="font-size:11px;margin-top:2px;color:#854F0B;">⚠ Annulment needed</div>`;
+        }
+        h += `<div style="padding:6px 10px;background:${bgColor};border-left:3px solid ${borderColor};border-radius:3px;margin-bottom:6px;font-size:13px;">
           <div>Prior marriage ${i+1}: <strong>${m.ex_name||'—'}</strong></div>
-          <div style="font-size:11px;margin-top:2px;color:${annFlag?'#854F0B':'#2D6A4F'};">${annFlag?'⚠ Annulment needed':'✅ Annulment granted'}</div>
+          ${annulmentLine}
           ${linkedCase
             ? `<div style="font-size:11px;color:#1B4F72;margin-top:4px;display:flex;align-items:center;gap:6px;">🔗 <span onclick="window.expandCase('${linkedCase.id}')" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px;"><strong>${linkedCase.petitioner}${linkedCase.respondent?' v. '+linkedCase.respondent:''}</strong></span> <button onclick="unlinkOciaPriorCase('${person.id}',${i})" style="background:none;border:none;cursor:pointer;color:#AAA;font-size:11px;padding:0;margin-left:4px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#AAA'">✕ unlink</button></div>`
             : `<div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
