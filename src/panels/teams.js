@@ -24,6 +24,8 @@ export async function loadTeams() {
     ...t,
     memberCount: members.filter(m => m.team_id === t.id).length,
   }));
+  // Protected teams (Parish Staff) always sort to top
+  allTeams.sort((a, b) => (b.is_protected ? 1 : 0) - (a.is_protected ? 1 : 0));
   store.teams = allTeams.map(({ id, name }) => ({ id, name }));
   renderTeamsLanding();
   updateTeamsSubNav();

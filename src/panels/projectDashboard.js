@@ -14,9 +14,9 @@ const STATUS = {
 
 const TABS = [
   { key: 'discussions', label: 'Discussions' },
-  { key: 'project',     label: 'Project' },
   { key: 'tasks',       label: 'Tasks' },
   { key: 'members',     label: 'Members' },
+  { key: 'project',     label: 'Project Information' },
 ];
 
 // ── Module state ───────────────────────────────────────────────────────────
