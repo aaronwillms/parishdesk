@@ -6,6 +6,12 @@ let expandedTeamId = null;
 
 // ── Data ───────────────────────────────────────────────────────────────────
 
+export async function loadTeamsStore() {
+  const { data, error } = await sb.from('teams').select('id,name').order('name');
+  if (error) console.error('[teams] store load error:', error);
+  store.teams = data || [];
+}
+
 export async function loadTeams() {
   const [{ data: teamsData, error: teamsErr }, { data: membersData, error: membersErr }] = await Promise.all([
     sb.from('teams').select('*').order('sort_order', { nullsFirst: false }).order('name'),
@@ -19,6 +25,7 @@ export async function loadTeams() {
     ...t,
     members: members.filter(m => m.team_id === t.id),
   }));
+  store.teams = allTeams.map(({ id, name }) => ({ id, name }));
   renderTeams();
 }
 

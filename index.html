@@ -57,6 +57,7 @@
       <div class="nav-item" data-panel="teams"><i class="ti ti-users-group"></i> Teams</div>
       <div class="nav-sec">Administration</div>
       <div class="nav-item" data-panel="projects"><i class="ti ti-clipboard-list"></i> Projects</div>
+      <div class="nav-item" data-panel="tasks"><i class="ti ti-checkbox"></i> Tasks</div>
       <div class="nav-item" data-panel="personnel"><i class="ti ti-users"></i> Personnel</div>
     </nav>
     <div id="sidebar-footer">
@@ -89,9 +90,9 @@
         </div>
         <div id="alert-strip-container"></div>
         <div class="stat-row">
-          <div class="stat-card"><div class="stat-num" id="stat-deadlines"><span class="pulse" style="width:30px"></span></div><div class="stat-label">Deadlines</div></div>
-          <div class="stat-card"><div class="stat-num" id="stat-action"><span class="pulse" style="width:30px"></span></div><div class="stat-label">My action</div></div>
-          <div class="stat-card"><div class="stat-num" id="stat-waiting"><span class="pulse" style="width:30px"></span></div><div class="stat-label">Waiting on</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-inprogress"><span class="pulse" style="width:30px"></span></div><div class="stat-label">In Progress</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-blocked"><span class="pulse" style="width:30px"></span></div><div class="stat-label">Blocked</div></div>
+          <div class="stat-card"><div class="stat-num" id="stat-complete"><span class="pulse" style="width:30px"></span></div><div class="stat-label">Complete</div></div>
         </div>
         <div class="two-col">
           <div class="card">
@@ -103,18 +104,27 @@
           </div>
           <div class="card" style="overflow:hidden;">
             <div class="card-header">
-              <div class="card-title"><i class="ti ti-clipboard-list"></i> Projects &amp; deadlines</div>
+              <div class="card-title"><i class="ti ti-clipboard-list"></i> Projects</div>
               <button class="card-action" onclick="switchPanel('projects')">Full log →</button>
             </div>
             <div id="dash-projects"><span class="pulse"></span></div>
           </div>
         </div>
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title"><i class="ti ti-pray"></i> Collect</div>
-            <button class="card-action" style="display:none"></button>
+        <div class="two-col">
+          <div class="card" style="overflow:hidden;">
+            <div class="card-header">
+              <div class="card-title"><i class="ti ti-checkbox"></i> Tasks today</div>
+              <button class="card-action" onclick="switchPanel('tasks')">All tasks →</button>
+            </div>
+            <div id="dash-tasks"><span class="pulse"></span></div>
           </div>
-          <div id="collect-container"><span class="pulse"></span></div>
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title"><i class="ti ti-pray"></i> Collect</div>
+              <button class="card-action" style="display:none"></button>
+            </div>
+            <div id="collect-container"><span class="pulse"></span></div>
+          </div>
         </div>
       </div>
 
@@ -367,23 +377,37 @@
       <!-- PROJECTS -->
       <div id="panel-projects" class="panel">
         <div class="stat-row">
-          <div class="stat-card"><div class="stat-num" id="pstat-deadlines">—</div><div class="stat-label">Deadlines</div></div>
-          <div class="stat-card"><div class="stat-num" id="pstat-action">—</div><div class="stat-label">My action</div></div>
-          <div class="stat-card"><div class="stat-num" id="pstat-waiting">—</div><div class="stat-label">Waiting on</div></div>
+          <div class="stat-card"><div class="stat-num" id="pstat-inprogress">—</div><div class="stat-label">In Progress</div></div>
+          <div class="stat-card"><div class="stat-num" id="pstat-blocked">—</div><div class="stat-label">Blocked</div></div>
+          <div class="stat-card"><div class="stat-num" id="pstat-complete">—</div><div class="stat-label">Complete</div></div>
         </div>
-        <div style="display:flex;gap:8px;margin-bottom:1rem;flex-wrap:wrap;">
+        <div style="display:flex;gap:8px;margin-bottom:1rem;flex-wrap:wrap;align-items:center;">
           <button class="btn-primary" onclick="openModal('project')">+ New project</button>
-          <select id="project-filter" onchange="renderProjects()" style="border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;">
-            <option value="all">All statuses</option>
-            <option value="deadline">Deadlines</option>
-            <option value="action">My action</option>
-            <option value="waiting">Waiting on</option>
-            <option value="capital">Capital</option>
-            <option value="standing">Standing</option>
-            <option value="done">Done</option>
-          </select>
+          <button class="btn-primary proj-filter-btn" data-filter="all" onclick="setProjectFilter('all')">All</button>
+          <button class="btn-secondary proj-filter-btn" data-filter="not_started" onclick="setProjectFilter('not_started')">Not Started</button>
+          <button class="btn-secondary proj-filter-btn" data-filter="in_progress" onclick="setProjectFilter('in_progress')">In Progress</button>
+          <button class="btn-secondary proj-filter-btn" data-filter="blocked" onclick="setProjectFilter('blocked')">Blocked</button>
+          <button class="btn-secondary proj-filter-btn" data-filter="complete" onclick="setProjectFilter('complete')">Complete</button>
         </div>
         <div id="projects-list"><span class="pulse"></span></div>
+      </div>
+
+      <!-- TASKS -->
+      <div id="panel-tasks" class="panel">
+        <div class="stat-row">
+          <div class="stat-card"><div class="stat-num" id="tstat-open">—</div><div class="stat-label">Open</div></div>
+          <div class="stat-card"><div class="stat-num" id="tstat-today">—</div><div class="stat-label">Due Today</div></div>
+          <div class="stat-card"><div class="stat-num" id="tstat-overdue">—</div><div class="stat-label">Overdue</div></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:1rem;flex-wrap:wrap;align-items:center;">
+          <button class="btn-primary" onclick="openAddTask()">+ New task</button>
+          <button class="btn-primary task-filter-btn" data-filter="all" onclick="setTaskFilter('all')">All</button>
+          <button class="btn-secondary task-filter-btn" data-filter="mine" onclick="setTaskFilter('mine')">Mine</button>
+          <button class="btn-secondary task-filter-btn" data-filter="team" onclick="setTaskFilter('team')">Team</button>
+          <button class="btn-secondary task-filter-btn" data-filter="personal" onclick="setTaskFilter('personal')">Personal</button>
+          <button class="btn-secondary task-filter-btn" data-filter="complete" onclick="setTaskFilter('complete')">Complete</button>
+        </div>
+        <div id="tasks-list"><span class="pulse"></span></div>
       </div>
 
       <div id="panel-personnel" class="panel">

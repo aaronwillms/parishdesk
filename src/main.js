@@ -12,7 +12,8 @@ import { loadOcia } from './panels/ocia.js';
 import { loadCoordData } from './ui/coordinator.js';
 import { loadSchool } from './panels/school.js';
 import { loadPersonnel } from './panels/personnel.js';
-import { loadTeams } from './panels/teams.js';
+import { loadTeams, loadTeamsStore } from './panels/teams.js';
+import { loadTasks } from './panels/tasks.js';
 import { initNotifications } from './notifications.js';
 
 async function startApp(user) {
@@ -37,12 +38,13 @@ async function startApp(user) {
     confirmation: () => { loadSacramental('confirmation'); loadCoordData('confirmation'); },
     ocia:         () => { loadOcia(); loadCoordData('ocia'); },
     teams:        loadTeams,
+    tasks:        loadTasks,
   });
 
   initModal();
   initLiturgical();
   loadCalendar();
-  await Promise.all([loadInit(), loadPersonnel()]);
+  await Promise.all([loadInit(), loadPersonnel(), loadTeamsStore()]);
   if (user?.id) initNotifications(user.id);
 }
 
