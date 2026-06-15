@@ -172,18 +172,18 @@ function announcementForm(data) {
   </div>
   <label>Visible to</label>
   <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;">
-    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;">
+    <div style="display:flex;align-items:center;gap:8px;cursor:pointer;" onclick="document.getElementById('af-vis-all').click()">
       <input type="radio" name="af-vis" id="af-vis-all" value="all" ${visAll ? 'checked' : ''}
-        style="accent-color:var(--cardinal);"
+        style="accent-color:var(--cardinal);margin:0;flex-shrink:0;cursor:pointer;"
         onchange="document.getElementById('af-teams-wrap').style.display='none'" />
-      <span style="font-size:13px;">All staff</span>
-    </label>
-    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;">
+      <span style="font-size:13px;cursor:pointer;">All staff</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;cursor:pointer;" onclick="document.getElementById('af-vis-teams').click()">
       <input type="radio" name="af-vis" id="af-vis-teams" value="teams" ${!visAll ? 'checked' : ''}
-        style="accent-color:var(--cardinal);"
+        style="accent-color:var(--cardinal);margin:0;flex-shrink:0;cursor:pointer;"
         onchange="document.getElementById('af-teams-wrap').style.display='block'" />
-      <span style="font-size:13px;">Specific teams…</span>
-    </label>
+      <span style="font-size:13px;cursor:pointer;">Specific teams…</span>
+    </div>
   </div>
   <div id="af-teams-wrap" style="display:${visAll ? 'none' : 'block'};background:var(--parch);border:.5px solid var(--stone);border-radius:var(--radius-sm);padding:.6rem .75rem;margin-bottom:8px;max-height:200px;overflow-y:auto;">
     ${teamCheckboxes}
