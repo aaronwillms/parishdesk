@@ -359,13 +359,22 @@ export async function loadInit() {
     const { data: authData } = await sb.auth.getUser();
     currentUserId = authData?.user?.id || null;
 
-    const [projRes, caseRes, coupleRes, alertRes, tasksRes, scope] = await Promise.all([
-      sb.from('projects').select('id,title,status_code,due_date,assigned_to,team_id,created_by').order('due_date', { nullsFirst: false }),
+    const scope = await getUserScope();
+
+    // Skip project/task fetches if already loaded (e.g. called a second time)
+    const projectsAlreadyLoaded = store.allProjects?.length > 0 && store._projectScopeReady !== undefined;
+    const tasksAlreadyLoaded    = store.allTasks?.length > 0    && store._taskScopeReady    !== undefined;
+
+    const [projRes, caseRes, coupleRes, alertRes, tasksRes] = await Promise.all([
+      projectsAlreadyLoaded
+        ? Promise.resolve({ data: null, error: null })
+        : sb.from('projects').select('*').order('due_date', { nullsFirst: false }),
       sb.from('annulment_cases').select('id,status_code,archived,petitioner,respondent,judgement_finalized'),
       sb.from('couples').select('id,status_code,archived'),
       sb.from('alerts').select('*').eq('active', true),
-      sb.from('tasks').select('id,title,due_date,completed,assigned_to,team_id,visibility').order('due_date', { nullsFirst: false }),
-      getUserScope(),
+      tasksAlreadyLoaded
+        ? Promise.resolve({ data: null, error: null })
+        : sb.from('tasks').select('id,title,due_date,completed,assigned_to,team_id,visibility').order('due_date', { nullsFirst: false }),
     ]);
 
     if (projRes.error)   console.error('projects error:',   projRes.error.message);
@@ -374,8 +383,10 @@ export async function loadInit() {
     if (alertRes.error)  console.error('alerts error:',     alertRes.error.message);
     if (tasksRes.error)  console.error('tasks error:',      tasksRes.error.message);
 
-    store.allProjects = (projRes.data || []).filter(p => isVisible(p, scope));
-    store._projectScopeReady = scope.ready;
+    if (!projectsAlreadyLoaded && projRes.data) {
+      store.allProjects = projRes.data.filter(p => isVisible(p, scope));
+      store._projectScopeReady = scope.ready;
+    }
     updateProjectStats();
     renderDashProjects();
 
@@ -391,7 +402,12 @@ export async function loadInit() {
     set('stat-nearly',          activeCouples.filter(c => c.status_code === 'complete').length);
     set('stat-needs-attention', activeCouples.filter(c => c.status_code === 'inprogress').length);
 
-    store.allTasks = tasksRes.data || [];
+    if (!tasksAlreadyLoaded && tasksRes.data) {
+      store.allTasks = tasksRes.data.filter(t => isVisible(t, scope));
+      store._taskScopeReady = scope.ready;
+    } else if (!store.allTasks) {
+      store.allTasks = [];
+    }
 
     const ac = document.getElementById('alert-strip-container');
     if (alertRes.data?.length) {

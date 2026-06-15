@@ -23,7 +23,18 @@ let _newProjAssignees = [];  // array of {id, name} objects for multi-person mod
 
 // ── Data ───────────────────────────────────────────────────────────────────
 
+export async function invalidateProjects() {
+  store.allProjects = [];
+  store._projectScopeReady = undefined;
+}
+
 export async function loadProjects() {
+  // Use cached store data if scope is already resolved (e.g. populated by loadInit)
+  if (store.allProjects?.length > 0 && store._projectScopeReady !== undefined) {
+    renderProjects();
+    return;
+  }
+
   const scope = await getUserScope();
 
   const { data, error } = await sb
@@ -202,6 +213,7 @@ async function saveNewProject() {
   _newProjPicker    = null;
   _newProjAssignees = [];
   closeModal();
+  await invalidateProjects();
   loadProjects();
 }
 
@@ -264,6 +276,7 @@ async function saveProject(id) {
   }
   if (err) { alert('Save failed: ' + err.message); return; }
   closeModal();
+  await invalidateProjects();
   loadProjects();
 }
 
@@ -273,6 +286,7 @@ async function deleteProject(id) {
   const { error } = await sb.from('projects').delete().eq('id', id);
   if (error) { alert('Delete failed: ' + error.message); return; }
   closeModal();
+  await invalidateProjects();
   loadProjects();
 }
 

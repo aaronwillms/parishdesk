@@ -88,23 +88,34 @@ async function startApp(user) {
   initLiturgical();
   loadCalendar();
 
+  // Phase 1 — non-user-dependent data (parallel)
   try {
-    await Promise.all([loadInit(), loadPersonnel(), loadTeamsStore(), loadParishSettings()]);
+    await Promise.all([loadParishSettings(), loadPersonnel(), loadTeamsStore()]);
   } catch (e) {
-    console.error('[startApp] init data load failed:', e);
+    console.error('[startApp] phase-1 init failed:', e);
+  }
+
+  // Phase 2 — user context (sequential, order matters)
+  if (user?.id) {
+    initNotifications(user.id);
+    try { await loadUserProfile(); } catch (e) { console.error('[startApp] loadUserProfile failed:', e); }
+    clearUserScope(); // ensure scope re-fetches with now-loaded profile
+    try { await loadUserRoles(); } catch (e) { console.error('[startApp] loadUserRoles failed:', e); }
+    renderSidebarProfileWidget(user);
+    applyNavVisibility();
+  }
+
+  // Phase 3 — dashboard render (scope and roles are now in place)
+  try {
+    await loadInit();
+  } catch (e) {
+    console.error('[startApp] loadInit failed:', e);
   }
 
   console.log('[startApp] switching to dashboard');
   window.switchPanel('dashboard');
 
-  if (user?.id) {
-    initNotifications(user.id);
-    try { await loadUserProfile(); } catch (e) { console.error('[startApp] loadUserProfile failed:', e); }
-    clearUserScope(); // bust cache so scope re-fetches with the now-loaded profile
-    try { await loadUserRoles(); } catch (e) { console.error('[startApp] loadUserRoles failed — defaulting to basic access:', e); }
-    renderSidebarProfileWidget(user);
-    applyNavVisibility();
-  }
+  // Phase 4 — background maintenance
   syncParishStaff();
 }
 
@@ -147,6 +158,9 @@ async function syncParishStaff() {
     store.currentUserRoles = null;
     store.allProjects = [];
     store.allTasks = [];
+    store._projectScopeReady = undefined;
+    store._taskScopeReady = undefined;
+    clearUserScope();
   });
   const user = await initAuth(startApp);
   if (user) startApp(user);

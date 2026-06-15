@@ -12,7 +12,18 @@ let activeFilter = 'all';
 
 // ── Data ───────────────────────────────────────────────────────────────────
 
+export function invalidateTasks() {
+  store.allTasks = [];
+  store._taskScopeReady = undefined;
+}
+
 export async function loadTasks() {
+  // Use cached store data if scope is already resolved
+  if (store.allTasks?.length > 0 && store._taskScopeReady !== undefined) {
+    renderTasks();
+    return;
+  }
+
   const scope = await getUserScope();
 
   const { data, error } = await sb
@@ -259,6 +270,7 @@ async function saveTask(id) {
   }
   if (err) { alert('Save failed: ' + err.message); return; }
   closeModal();
+  invalidateTasks();
   loadTasks();
 }
 
@@ -268,6 +280,7 @@ async function deleteTask(id) {
   const { error } = await sb.from('tasks').delete().eq('id', id);
   if (error) { alert('Delete failed: ' + error.message); return; }
   closeModal();
+  invalidateTasks();
   loadTasks();
 }
 
