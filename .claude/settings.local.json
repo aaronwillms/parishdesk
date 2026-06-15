@@ -3,7 +3,8 @@
     "allow": [
       "Bash(npx supabase *)",
       "Bash(env)",
-      "Bash(xxd)"
+      "Bash(xxd)",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

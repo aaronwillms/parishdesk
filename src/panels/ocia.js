@@ -230,7 +230,7 @@ function renderOciaCard(person) {
       const linked = store.allCases.find(c => c.id===person.linked_annulment_id);
       if(linked) {
         const lsm = CASE_STATUS[linked.status_code]||CASE_STATUS.prep;
-        h += `<div onclick="expandCase('${linked.id}')" style="margin-top:6px;padding:6px 10px;background:#D6EAF8;border-left:3px solid #1B4F72;border-radius:3px;font-size:13px;cursor:pointer;" onmouseover="this.style.background='#C5D9EE'" onmouseout="this.style.background='#D6EAF8'">
+        h += `<div onclick="console.log('[OCIA] linked case clicked, id=${linked.id}', 'switchPanel='+typeof window.switchPanel, 'expandCase='+typeof window.expandCase); window.expandCase && window.expandCase('${linked.id}');" style="margin-top:6px;padding:6px 10px;background:#D6EAF8;border-left:3px solid #1B4F72;border-radius:3px;font-size:13px;cursor:pointer;" onmouseover="this.style.background='#C5D9EE'" onmouseout="this.style.background='#D6EAF8'">
           <div style="color:#1B4F72;font-weight:600;font-size:11px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:2px;">Linked annulment case · <span style="font-weight:400;text-transform:none;letter-spacing:0;">tap to open →</span></div>
           <div>${linked.petitioner} v. ${linked.respondent||'—'} · <span style="color:${lsm.color};">${lsm.label}</span></div>
         </div>`;

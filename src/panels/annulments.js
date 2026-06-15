@@ -240,10 +240,15 @@ function toggleCase(id) {expandedCaseId=expandedCaseId===id?null:id;renderCases(
 
 // Called from other panels (e.g. OCIA) to navigate to and expand a specific case
 export async function expandCase(id) {
+  console.log('[expandCase] called with id:', id, 'expandedCaseId set to:', id);
   expandedCaseId = id;
+  console.log('[expandCase] calling switchPanel, window.switchPanel=', typeof window.switchPanel);
   window.switchPanel('annulments');
+  console.log('[expandCase] awaiting loadCases');
   await loadCases();
-  document.getElementById('case-card-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const card = document.getElementById('case-card-' + id);
+  console.log('[expandCase] card element:', card);
+  card?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 async function quickStatusChange(caseId, newStatus) {
