@@ -7,7 +7,7 @@ export const CASE_STATUS = {
   tribunal: {label:'In Tribunal',             color:'#7D6608', bg:'#FEF9E7', dot:'#D4AC0D'},
   affirm:   {label:'Affirmative Judgement',   color:'#2D6A4F', bg:'#D8F3DC', dot:'#2D6A4F'},
   negative: {label:'Negative Judgement',      color:'#922B21', bg:'#FDEDEC', dot:'#E74C3C'},
-  archived: {label:'Archived',                color:'#616A6B', bg:'#F2F3F4', dot:'#AAB7B8'},
+  archived: {label:'Inactive',                color:'#616A6B', bg:'#F2F3F4', dot:'#AAB7B8'},
 };
 
 let allCases = [], caseFilter = 'all', expandedCaseId = null;
@@ -306,6 +306,12 @@ function onCaseTypeChange(val) {
   label.textContent = val==='Briefer Process'?'Co-petitioner':'Respondent';
 }
 
+function onCaseStatusChange(val) {
+  const wrap = document.getElementById('f-jf-wrap');
+  if(!wrap) return;
+  wrap.style.display = (val==='affirm'||val==='negative') ? 'block' : 'none';
+}
+
 async function toggleCaseDoc(caseId, docIndex) {
   const cas = allCases.find(c => c.id===caseId);
   if(!cas) return;
@@ -433,12 +439,14 @@ export function caseForm(data) {
     <option value="">— Select type —</option>
     ${typeOpts}
   </select>
-  <label>Status</label><select id="f-sc">${statuses}</select>
+  <label>Status</label><select id="f-sc" onchange="onCaseStatusChange(this.value)">${statuses}</select>
+  <div id="f-jf-wrap" style="display:${(data?.status_code==='affirm'||data?.status_code==='negative')?'block':'none'};">
   <label>Judgement finalized</label>
   <select id="f-jf">
     <option value="no"${!data?.judgement_finalized||data?.judgement_finalized==='no'?' selected':''}>No</option>
     <option value="yes"${data?.judgement_finalized==='yes'?' selected':''}>Yes</option>
   </select>
+  </div>
   <label>Contact phone</label><input id="f-cp" value="${data?.contact_phone||''}" />
   <label>Contact email</label><input id="f-ce" value="${data?.contact_email||''}" />
   <label>Notes</label><textarea id="f-notes">${data?.notes||''}</textarea>
@@ -501,7 +509,7 @@ async function saveCase(id) {
 Object.assign(window, {
   setCaseFilter, toggleCase, quickStatusChange,
   toggleTlForm, addTlEntry, deleteTlEntry,
-  openCaseEdit, onCaseTypeChange, toggleCaseDoc, deleteCaseDoc,
+  openCaseEdit, onCaseTypeChange, onCaseStatusChange, toggleCaseDoc, deleteCaseDoc,
   deleteCaseNote, buildBaptismalEmail, toggleBaptismalForm, saveBaptismalDetails,
   toggleDocForm, addCaseDoc, toggleNoteForm, appendNote,
   saveCase, deleteCase,
