@@ -81,14 +81,20 @@ async function _loadUsers() {
     if (!map[au.id]) map[au.id] = { userId: au.id, email: au.email || null, profile: null, roles: [], sacraments: [], grants: [], teamIds: [] };
   });
 
+  const lastName = name => {
+    if (!name) return '';
+    const parts = name.trim().split(/\s+/);
+    return (parts.length > 1 ? parts[parts.length - 1] : parts[0]).toLowerCase();
+  };
+
   _users = Object.values(map).sort((a, b) => {
     const aName = a.profile?.personnel?.name;
     const bName = b.profile?.personnel?.name;
     // Linked (have personnel name) sort before unlinked
     if (aName && !bName) return -1;
     if (!aName && bName) return 1;
-    const aKey = (aName || a.email || a.userId).toLowerCase();
-    const bKey = (bName || b.email || b.userId).toLowerCase();
+    const aKey = aName ? lastName(aName) : (a.email || a.userId).toLowerCase();
+    const bKey = bName ? lastName(bName) : (b.email || b.userId).toLowerCase();
     return aKey.localeCompare(bKey);
   });
   _renderUsersTab();
@@ -209,7 +215,7 @@ function _userRow(u) {
     ...u.roles.map(r => `<span style="font-size:10.5px;font-weight:600;background:${r === 'super_admin' ? '#1C2B3A' : '#F3F4F6'};color:${r === 'super_admin' ? '#F8F7F4' : '#4B5563'};border-radius:20px;padding:2px 8px;">${r === 'super_admin' ? 'Super Admin' : r}</span>`),
     ...u.sacraments.map(s => `<span style="font-size:10.5px;font-weight:600;background:#FDF3D0;color:#7A5C00;border-radius:20px;padding:2px 8px;">${SACRAMENT_LABELS[s] || s}</span>`),
     isParishStaff ? `<span style="font-size:10.5px;font-weight:600;background:#F3F4F6;color:#6B7280;border-radius:20px;padding:2px 8px;">🔒 Parish Staff</span>` : '',
-    isUnlinked ? `<span style="font-size:10.5px;font-weight:600;background:#F9FAFB;color:#9CA3AF;border-radius:20px;padding:2px 8px;border:.5px solid #E5E7EB;">Unlinked</span>` : '',
+    isUnlinked ? `<span style="font-size:10.5px;font-weight:600;background:#FDEAED;color:#8B1A2F;border-radius:20px;padding:2px 8px;border:.5px solid #F5C2CB;">Unlinked</span>` : '',
   ].filter(Boolean).join(' ');
 
   // We'll inject avatars after innerHTML — use placeholder
@@ -552,15 +558,29 @@ async function _saveCalendar(id) {
 
 // ── Parish Settings tab ────────────────────────────────────────────────────
 
-const US_TIMEZONES = [
-  { value: 'America/New_York',    label: 'Eastern (ET)' },
-  { value: 'America/Chicago',     label: 'Central (CT)' },
-  { value: 'America/Denver',      label: 'Mountain (MT)' },
-  { value: 'America/Phoenix',     label: 'Mountain – Arizona (no DST)' },
-  { value: 'America/Los_Angeles', label: 'Pacific (PT)' },
-  { value: 'America/Anchorage',   label: 'Alaska (AKT)' },
-  { value: 'Pacific/Honolulu',    label: 'Hawaii (HT)' },
-];
+const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+
+// Parse "Street, City, ST ZIP" back into components for display
+function _parseAddress(addr) {
+  if (!addr) return { street: '', city: '', state: '', zip: '' };
+  const m = addr.match(/^(.*?),\s*(.*?),\s*([A-Z]{2})\s*(\d{5})?$/);
+  if (m) return { street: m[1].trim(), city: m[2].trim(), state: m[3].trim(), zip: (m[4] || '').trim() };
+  return { street: addr, city: '', state: '', zip: '' };
+}
+
+async function _detectTimezone(city, state) {
+  const query = `${city}, ${state}, USA`;
+  const geo = await fetch(
+    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`,
+    { headers: { 'User-Agent': 'ParishDesk/1.0' } }
+  ).then(r => r.json());
+  if (!geo?.[0]) return null;
+  const { lat, lon } = geo[0];
+  const tzData = await fetch(
+    `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
+  ).then(r => r.json());
+  return tzData?.timezone?.ianaTimeId || tzData?.timezone?.name || null;
+}
 
 async function _renderSettingsTab() {
   const el = document.getElementById('admin-tab-content');
@@ -570,34 +590,53 @@ async function _renderSettingsTab() {
   const { data, error } = await sb.from('parish_settings').select('*').limit(1).maybeSingle();
   if (error) { el.innerHTML = `<div style="color:#E74C3C;font-size:13px;">Error: ${error.message}</div>`; return; }
 
+  const addr = _parseAddress(data?.address || '');
   const inputStyle = `width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;
     border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;margin-bottom:.75rem;`;
   const labelStyle = `display:block;font-size:11.5px;color:#6B7280;margin-bottom:3px;`;
-
-  const tzOptions = US_TIMEZONES.map(tz =>
-    `<option value="${tz.value}" ${(data?.timezone || '') === tz.value ? 'selected' : ''}>${tz.label}</option>`
-  ).join('');
+  const stateOptions = US_STATES.map(s => `<option ${s === addr.state ? 'selected' : ''}>${s}</option>`).join('');
+  const tzDisplay = data?.timezone
+    ? `Timezone: <strong>${data.timezone}</strong> <span style="color:#9CA3AF;">(auto-detected)</span>`
+    : `<span style="color:#9CA3AF;">Timezone will be auto-detected from city &amp; state on save.</span>`;
 
   el.innerHTML = `
     <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.2rem 1.4rem;max-width:480px;">
       <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:1rem;">Parish Settings</div>
 
       <label style="${labelStyle}">Parish Name</label>
-      <input id="ps-name" value="${data?.parish_name || ''}" style="${inputStyle}" />
+      <input id="ps-name" value="${(data?.parish_name || '').replace(/"/g, '&quot;')}" style="${inputStyle}" />
       <div style="font-size:11.5px;color:#9CA3AF;margin-top:-.5rem;margin-bottom:1rem;line-height:1.5;">
         Appears on the login screen, sidebar, and Directory.
       </div>
 
-      <label style="${labelStyle}">Parish Address</label>
-      <input id="ps-address" value="${(data?.address || '').replace(/"/g, '&quot;')}" placeholder="123 Main St, City, State 00000"
-        style="${inputStyle}" />
+      <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.65rem;">Parish Address</div>
 
-      <label style="${labelStyle}">Timezone</label>
-      <select id="ps-tz" style="${inputStyle}cursor:pointer;">
-        ${tzOptions}
-      </select>
-      <div id="ps-tz-note" style="font-size:11.5px;color:#9CA3AF;margin-top:-.5rem;margin-bottom:1rem;line-height:1.5;">
-        ${data?.timezone ? `Detected from address: <strong>${data.timezone}</strong>` : 'Timezone will be auto-detected from the address when you save.'}
+      <label style="${labelStyle}">Street Address</label>
+      <input id="ps-street" value="${addr.street.replace(/"/g, '&quot;')}" placeholder="123 Main Street" style="${inputStyle}" />
+
+      <div style="display:grid;grid-template-columns:1fr auto auto;gap:.6rem;margin-bottom:.75rem;">
+        <div>
+          <label style="${labelStyle}">City</label>
+          <input id="ps-city" value="${addr.city.replace(/"/g, '&quot;')}" placeholder="Natchez"
+            style="width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;" />
+        </div>
+        <div>
+          <label style="${labelStyle}">State</label>
+          <select id="ps-state"
+            style="padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;cursor:pointer;background:#fff;">
+            <option value=""></option>
+            ${stateOptions}
+          </select>
+        </div>
+        <div>
+          <label style="${labelStyle}">Zip</label>
+          <input id="ps-zip" value="${addr.zip}" placeholder="00000" maxlength="5"
+            style="width:70px;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;" />
+        </div>
+      </div>
+
+      <div id="ps-tz-display" style="font-size:12px;color:#4B5563;margin-bottom:1rem;line-height:1.6;">
+        ${tzDisplay}
       </div>
 
       <div style="display:flex;align-items:center;gap:12px;">
@@ -611,40 +650,34 @@ async function _renderSettingsTab() {
   `;
 
   document.getElementById('ps-save').addEventListener('click', async () => {
-    const statusEl = document.getElementById('ps-status');
+    const statusEl  = document.getElementById('ps-status');
     statusEl.style.color = '#6B7280';
     statusEl.textContent = 'Saving…';
 
-    const name    = document.getElementById('ps-name').value.trim();
-    const address = document.getElementById('ps-address').value.trim();
+    const name   = document.getElementById('ps-name').value.trim();
+    const street = document.getElementById('ps-street').value.trim();
+    const city   = document.getElementById('ps-city').value.trim();
+    const state  = document.getElementById('ps-state').value.trim();
+    const zip    = document.getElementById('ps-zip').value.trim();
     if (!name) { statusEl.textContent = 'Parish name is required.'; return; }
 
-    // Auto-detect timezone from address via Nominatim + BigDataCloud (both free, no key needed)
-    let timezone = document.getElementById('ps-tz').value;
-    if (address) {
+    const addressParts = [street, city, state ? (zip ? `${state} ${zip}` : state) : zip].filter(Boolean);
+    const address = addressParts.length ? `${street}, ${city}, ${state} ${zip}`.replace(/,?\s*$/, '').trim() : '';
+
+    // Auto-detect timezone from city + state
+    let timezone = data?.timezone || null;
+    if (city && state) {
       try {
         statusEl.textContent = 'Detecting timezone…';
-        const geo = await fetch(
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`,
-          { headers: { 'User-Agent': 'ParishDesk/1.0' } }
-        ).then(r => r.json());
-        if (geo?.[0]) {
-          const { lat, lon } = geo[0];
-          const tzData = await fetch(
-            `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
-          ).then(r => r.json());
-          const detected = tzData?.timezone?.ianaTimeId || tzData?.timezone?.name;
-          if (detected) {
-            timezone = detected;
-            // Update dropdown if it matches a known option, otherwise keep detected value
-            const sel = document.getElementById('ps-tz');
-            const opt = [...sel.options].find(o => o.value === detected);
-            if (opt) { sel.value = detected; }
-            else { sel.insertAdjacentHTML('afterbegin', `<option value="${detected}" selected>${detected}</option>`); }
-            document.getElementById('ps-tz-note').innerHTML = `Detected: <strong>${detected}</strong>`;
-          }
+        const detected = await _detectTimezone(city, state);
+        timezone = detected;
+        const tzEl = document.getElementById('ps-tz-display');
+        if (tzEl) {
+          tzEl.innerHTML = detected
+            ? `Timezone: <strong>${detected}</strong> <span style="color:#9CA3AF;">(auto-detected)</span>`
+            : `<span style="color:#9CA3AF;">Timezone: Could not auto-detect.</span>`;
         }
-      } catch { /* leave manually selected timezone */ }
+      } catch { timezone = null; }
     }
 
     statusEl.textContent = 'Saving…';

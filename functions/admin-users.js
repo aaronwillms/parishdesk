@@ -1,11 +1,12 @@
 // Cloudflare Pages Function — returns all Supabase auth users (id + email).
 // Set VITE_SUPA_URL and SUPABASE_SERVICE_KEY in Cloudflare Pages → Settings → Environment Variables.
 export async function onRequestGet(context) {
-  const supaUrl = context.env.VITE_SUPA_URL;
+  // Accept either SUPABASE_URL or VITE_SUPA_URL — both are common in Cloudflare env settings
+  const supaUrl = context.env.SUPABASE_URL || context.env.VITE_SUPA_URL;
   const serviceKey = context.env.SUPABASE_SERVICE_KEY;
 
   if (!serviceKey || !supaUrl) {
-    return new Response(JSON.stringify({ error: 'Server not configured' }), {
+    return new Response(JSON.stringify({ error: 'Server not configured: set SUPABASE_URL and SUPABASE_SERVICE_KEY in Cloudflare Pages environment variables' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },
     });
