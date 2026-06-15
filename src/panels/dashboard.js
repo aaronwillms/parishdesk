@@ -1,6 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST } from '../utils.js';
+import { getUserScope, isVisible } from '../ui/userScope.js';
 
 const CAL_COLOR_MAP = { '2': 'school', '3': 'conf', '5': 'mass', '7': 'personal' };
 
@@ -259,35 +260,78 @@ const FEED_ICONS = {
   task:     '☑',
 };
 
+const SUPER_ADMIN_EMAILS_FEED = ['aaron.willms@icloud.com'];
+
+// Programs whose coordinator_ids include personnelId
+async function _coordinatorPrograms(personnelId) {
+  if (!personnelId) return new Set();
+  const { data } = await sb
+    .from('program_coordinators')
+    .select('program,coordinator_ids');
+  const programs = new Set();
+  (data || []).forEach(row => {
+    if ((row.coordinator_ids || []).includes(personnelId)) programs.add(row.program);
+  });
+  return programs;
+}
+
 async function loadActivityFeed() {
   const limit = 15;
-  const [couplesRes, casesRes, ociaRes, projRes, tasksRes] = await Promise.all([
-    sb.from('couples').select('id,groom_name,bride_name,updated_at').order('updated_at', { ascending: false }).limit(limit),
-    sb.from('annulment_cases').select('id,petitioner,respondent,updated_at').order('updated_at', { ascending: false }).limit(limit),
-    sb.from('sacramental_ocia').select('id,name,updated_at').order('updated_at', { ascending: false }).limit(limit),
+  const { data: { user } } = await sb.auth.getUser();
+  const isSuperAdmin = SUPER_ADMIN_EMAILS_FEED.includes(user?.email);
+
+  const scope = await getUserScope();
+  const { personnelId, teamIds } = scope;
+
+  // Accessible project IDs come from already-scoped store
+  const accessibleProjectIds = new Set((store.allProjects || []).map(p => p.id));
+
+  // Sacramental coordinator programs (marriage covers couples; annulments covers cases; ocia covers ocia)
+  const coordPrograms = isSuperAdmin
+    ? new Set(['marriage', 'annulments', 'ocia', 'baptism', 'firstcomm', 'confirmation'])
+    : await _coordinatorPrograms(personnelId);
+
+  const queries = [
     sb.from('projects').select('id,title,updated_at').order('updated_at', { ascending: false }).limit(limit),
-    sb.from('tasks').select('id,title,updated_at').order('updated_at', { ascending: false }).limit(limit),
-  ]);
+    sb.from('tasks').select('id,title,updated_at,created_by,assigned_to,team_id').order('updated_at', { ascending: false }).limit(limit),
+  ];
+  if (isSuperAdmin || coordPrograms.has('marriage'))   queries.push(sb.from('couples').select('id,groom_name,bride_name,updated_at').order('updated_at', { ascending: false }).limit(limit));
+  if (isSuperAdmin || coordPrograms.has('annulments')) queries.push(sb.from('annulment_cases').select('id,petitioner,respondent,updated_at').order('updated_at', { ascending: false }).limit(limit));
+  if (isSuperAdmin || coordPrograms.has('ocia'))       queries.push(sb.from('sacramental_ocia').select('id,name,updated_at').order('updated_at', { ascending: false }).limit(limit));
+
+  const [projRes, tasksRes, ...sacRes] = await Promise.all(queries);
 
   const items = [];
 
-  (couplesRes.data || []).forEach(r => {
-    const name = [r.groom_name, r.bride_name].filter(Boolean).join(' & ') || 'Unknown couple';
-    items.push({ icon: FEED_ICONS.couple, label: 'Marriage prep updated', name, ts: r.updated_at });
-  });
-  (casesRes.data || []).forEach(r => {
-    const name = [r.petitioner, r.respondent].filter(Boolean).join(' v. ') || 'Unknown case';
-    items.push({ icon: FEED_ICONS.case, label: 'Annulment case updated', name, ts: r.updated_at });
-  });
-  (ociaRes.data || []).forEach(r => {
-    items.push({ icon: FEED_ICONS.ocia, label: 'OCIA record updated', name: r.name || 'Unknown', ts: r.updated_at });
-  });
-  (projRes.data || []).forEach(r => {
+  // Projects — filter to accessible IDs
+  (projRes.data || []).filter(r => isSuperAdmin || accessibleProjectIds.has(r.id)).forEach(r => {
     items.push({ icon: FEED_ICONS.project, label: 'Project updated', name: r.title || 'Unknown', ts: r.updated_at });
   });
-  (tasksRes.data || []).forEach(r => {
+
+  // Tasks — apply same visibility logic
+  (tasksRes.data || []).filter(r => isSuperAdmin || isVisible(r, scope)).forEach(r => {
     items.push({ icon: FEED_ICONS.task, label: 'Task updated', name: r.title || 'Unknown', ts: r.updated_at });
   });
+
+  // Sacramental — only fetched if coordinator, so include all returned rows
+  let sacIdx = 0;
+  if (isSuperAdmin || coordPrograms.has('marriage')) {
+    (sacRes[sacIdx++]?.data || []).forEach(r => {
+      const name = [r.groom_name, r.bride_name].filter(Boolean).join(' & ') || 'Unknown couple';
+      items.push({ icon: FEED_ICONS.couple, label: 'Marriage prep updated', name, ts: r.updated_at });
+    });
+  }
+  if (isSuperAdmin || coordPrograms.has('annulments')) {
+    (sacRes[sacIdx++]?.data || []).forEach(r => {
+      const name = [r.petitioner, r.respondent].filter(Boolean).join(' v. ') || 'Unknown case';
+      items.push({ icon: FEED_ICONS.case, label: 'Annulment case updated', name, ts: r.updated_at });
+    });
+  }
+  if (isSuperAdmin || coordPrograms.has('ocia')) {
+    (sacRes[sacIdx++]?.data || []).forEach(r => {
+      items.push({ icon: FEED_ICONS.ocia, label: 'OCIA record updated', name: r.name || 'Unknown', ts: r.updated_at });
+    });
+  }
 
   items.sort((a, b) => new Date(b.ts) - new Date(a.ts));
 
@@ -317,12 +361,13 @@ export async function loadInit() {
     const { data: { user } } = await sb.auth.getUser();
     currentUserId = user?.id || null;
 
-    const [projRes, caseRes, coupleRes, alertRes, tasksRes] = await Promise.all([
-      sb.from('projects').select('id,title,status_code,due_date,assigned_to,team_id').order('due_date', { nullsFirst: false }),
+    const [projRes, caseRes, coupleRes, alertRes, tasksRes, scope] = await Promise.all([
+      sb.from('projects').select('id,title,status_code,due_date,assigned_to,team_id,created_by').order('due_date', { nullsFirst: false }),
       sb.from('annulment_cases').select('id,status_code,archived,petitioner,respondent,judgement_finalized'),
       sb.from('couples').select('id,status_code,archived'),
       sb.from('alerts').select('*').eq('active', true),
       sb.from('tasks').select('id,title,due_date,completed,assigned_to,team_id,visibility').order('due_date', { nullsFirst: false }),
+      getUserScope(),
     ]);
 
     if (projRes.error)   console.error('projects error:',   projRes.error.message);
@@ -331,7 +376,8 @@ export async function loadInit() {
     if (alertRes.error)  console.error('alerts error:',     alertRes.error.message);
     if (tasksRes.error)  console.error('tasks error:',      tasksRes.error.message);
 
-    store.allProjects = projRes.data || [];
+    store.allProjects = (projRes.data || []).filter(p => isVisible(p, scope));
+    store._projectScopeReady = scope.ready;
     updateProjectStats();
     renderDashProjects();
 

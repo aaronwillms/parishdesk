@@ -60,6 +60,7 @@
       <div class="nav-sec">Administration</div>
       <div class="nav-item" data-panel="tasks"><i class="ti ti-checkbox"></i> Tasks</div>
       <div class="nav-item" data-panel="personnel"><i class="ti ti-users"></i> Directory</div>
+      <div class="nav-item" data-panel="admin" style="display:none;"><i class="ti ti-settings"></i> Admin</div>
     </nav>
     <div id="sidebar-footer">
       <div id="sidebar-profile-widget"></div>
@@ -425,6 +426,10 @@
           <button class="btn-secondary task-filter-btn" data-filter="complete" onclick="setTaskFilter('complete')">Complete</button>
         </div>
         <div id="tasks-list"><span class="pulse"></span></div>
+      </div>
+
+      <div id="panel-admin" class="panel">
+        <div id="admin-root"></div>
       </div>
 
       <div id="panel-personnel" class="panel">

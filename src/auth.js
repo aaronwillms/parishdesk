@@ -1,6 +1,10 @@
 import { sb } from './supabase.js';
 
+let _onSignOut = null;
+export function setSignOutCallback(fn) { _onSignOut = fn; }
+
 function showAuth() {
+  _onSignOut?.();
   document.getElementById('app').style.display = 'none';
   document.getElementById('auth-screen').style.display = 'flex';
 }

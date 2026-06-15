@@ -1,6 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { createContactPicker } from '../ui/contactPicker.js';
+import { isTeamAdmin, isSuperAdmin } from '../roles.js';
 
 let _currentTeamId = null;
 let _team = null;
@@ -64,14 +65,14 @@ function _render(container) {
           <h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-size:26px;font-weight:700;color:#1C2B3A;margin:0;line-height:1.2;">${_team.name}</h1>
           ${_team.description ? `<div style="font-size:13.5px;color:#6B7280;margin-top:4px;">${_team.description}</div>` : ''}
         </div>
-        ${_team.is_protected ? '' : `
+        ${(!_team.is_protected && isTeamAdmin(_team.id)) ? `
         <button onclick="openTeamSettings('${_team.id}')" title="Edit team" style="
           background:none;border:.5px solid #D1C9BE;border-radius:6px;
           padding:.3rem .65rem;font-size:12px;font-family:'Inter',sans-serif;
           color:#6B7280;cursor:pointer;flex-shrink:0;margin-top:4px;
         " onmouseover="this.style.borderColor='#1C2B3A';this.style.color='#1C2B3A';" onmouseout="this.style.borderColor='#D1C9BE';this.style.color='#6B7280';">
           ⚙ Edit
-        </button>`}
+        </button>` : ''}
       </div>
 
       <!-- Tab bar -->

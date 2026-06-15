@@ -1,6 +1,7 @@
 import { PANEL_TITLES } from '../utils.js';
 import { store } from '../store.js';
 import { createAvatar } from './avatar.js';
+import { canAccessPanel, isSuperAdmin } from '../roles.js';
 
 let _loaderMap = {};
 let _currentPanel = null;
@@ -27,7 +28,8 @@ function toggleSidebar() {
 const NAV_PANEL_MAP = {
   teamDashboard:    'teams',
   projectDashboard: 'projects',
-  userProfile:      null, // no nav-item highlight
+  userProfile:      null,
+  admin:            'admin',
 };
 
 function switchPanel(name, opts) {
@@ -123,6 +125,39 @@ export function updateSidebarProfileWidget(profile) {
     const nameText = document.getElementById('sidebar-profile-name');
     if (nameText && displayName) nameText.textContent = displayName;
   }
+}
+
+// ── Nav visibility ─────────────────────────────────────────────────────────
+
+export function resetNavVisibility() {
+  document.querySelectorAll('.nav-item[data-panel], .nav-sec').forEach(el => {
+    el.style.display = '';
+  });
+}
+
+export function applyNavVisibility() {
+  const show = (panel, visible) => {
+    const el = document.querySelector(`.nav-item[data-panel="${panel}"]`);
+    if (el) el.style.display = visible ? '' : 'none';
+  };
+  const showSec = (label, visible) => {
+    document.querySelectorAll('.nav-sec').forEach(el => {
+      if (el.textContent.trim() === label) el.style.display = visible ? '' : 'none';
+    });
+  };
+
+  const SACRAMENTAL_PANELS = ['baptism', 'firstcomm', 'confirmation', 'ocia', 'marriage', 'annulments'];
+
+  SACRAMENTAL_PANELS.forEach(p => show(p, canAccessPanel(p)));
+  const anySacramental = SACRAMENTAL_PANELS.some(p => canAccessPanel(p));
+  showSec('Sacramental', anySacramental);
+
+  show('school', isSuperAdmin());
+  show('teams', canAccessPanel('teams'));
+  const teamsSubNav = document.getElementById('teams-subnav');
+  if (teamsSubNav && !canAccessPanel('teams')) teamsSubNav.style.display = 'none';
+
+  show('admin', isSuperAdmin());
 }
 
 export function initNavigation(loaderMap) {

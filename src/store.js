@@ -8,4 +8,5 @@ export const store = {
   notifications: [],
   parishSettings: null,
   currentUserProfile: null,
+  currentUserRoles: null,
 };

@@ -1,8 +1,10 @@
 import './styles/main.css';
-import { initAuth } from './auth.js';
+import { initAuth, setSignOutCallback } from './auth.js';
 import { initLiturgical } from './liturgical.js';
 import { loadCalendar, loadInit } from './panels/dashboard.js';
-import { initNavigation, renderSidebarProfileWidget, setActiveTeamSubNavItem } from './ui/navigation.js';
+import { initNavigation, renderSidebarProfileWidget, setActiveTeamSubNavItem, applyNavVisibility, resetNavVisibility } from './ui/navigation.js';
+import { loadUserRoles } from './roles.js';
+import { loadAdmin } from './panels/admin.js';
 import { initModal } from './ui/modal.js';
 import { loadUserProfile } from './panels/userProfile.js';
 import { openCoupleAdd, loadCouples } from './panels/marriage.js';
@@ -77,6 +79,7 @@ async function startApp(user) {
     teamDashboard:    () => {},   // handled by showTeamDashboard
     projectDashboard: () => {},   // handled by showProjectDashboard
     userProfile:      loadUserProfile,
+    admin:            loadAdmin,
   });
 
   initModal();
@@ -86,7 +89,9 @@ async function startApp(user) {
   if (user?.id) {
     initNotifications(user.id);
     await loadUserProfile();
+    await loadUserRoles();
     renderSidebarProfileWidget(user);
+    applyNavVisibility();
   }
   syncParishStaff();
 }
@@ -124,6 +129,13 @@ async function syncParishStaff() {
 }
 
 (async () => {
+  setSignOutCallback(() => {
+    resetNavVisibility();
+    store.currentUserProfile = null;
+    store.currentUserRoles = null;
+    store.allProjects = [];
+    store.allTasks = [];
+  });
   const user = await initAuth(startApp);
   if (user) startApp(user);
 })();
