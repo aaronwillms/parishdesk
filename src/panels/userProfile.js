@@ -272,25 +272,36 @@ async function _saveContactInfo() {
     alert('Please link a directory entry first before saving contact information.');
     return;
   }
+  const btn = document.getElementById('up-save-contact');
   const statusEl = document.getElementById('up-contact-status');
+  if (btn) btn.disabled = true;
+  statusEl.style.color = '#6B7280';
   statusEl.textContent = 'Saving…';
 
-  const phone = document.getElementById('up-phone')?.value.trim() || null;
-  const email = document.getElementById('up-contact-email')?.value.trim() || null;
+  try {
+    const phone = document.getElementById('up-phone')?.value.trim() || null;
+    const email = document.getElementById('up-contact-email')?.value.trim() || null;
 
-  const { error } = await sb.from('personnel')
-    .update({ phone, email, updated_at: new Date().toISOString() })
-    .eq('id', personnelId);
+    const { error } = await sb.from('personnel')
+      .update({ phone, email, updated_at: new Date().toISOString() })
+      .eq('id', personnelId);
 
-  if (error) { statusEl.textContent = 'Save failed: ' + error.message; return; }
+    if (error) throw error;
 
-  // Update in-memory personnel store so other panels see the change
-  const p = (store.personnel || []).find(p => p.id === personnelId);
-  if (p) { p.phone = phone; p.email = email; }
-  if (_profile?.personnel) { _profile.personnel.phone = phone; _profile.personnel.email = email; }
+    // Update in-memory personnel store so other panels see the change
+    const p = (store.personnel || []).find(p => p.id === personnelId);
+    if (p) { p.phone = phone; p.email = email; }
+    if (_profile?.personnel) { _profile.personnel.phone = phone; _profile.personnel.email = email; }
 
-  statusEl.textContent = 'Contact information saved.';
-  setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+    statusEl.style.color = '#166534';
+    statusEl.textContent = 'Saved successfully.';
+    setTimeout(() => { if (statusEl) { statusEl.textContent = ''; statusEl.style.color = '#6B7280'; } }, 3000);
+  } catch (err) {
+    statusEl.style.color = '#8B1A2F';
+    statusEl.textContent = 'Save failed: ' + (err.message || 'unknown error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function _changePassword() {

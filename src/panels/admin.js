@@ -178,7 +178,7 @@ function _renderUsersTab() {
       placeholder: 'Search directory…',
       onSelect: async (personnelId) => {
         if (!personnelId) return;
-        const { error } = await sb.from('user_profiles').update({ personnel_id: personnelId }).eq('user_id', userId);
+        const { error } = await sb.from('user_profiles').upsert({ user_id: userId, personnel_id: personnelId }, { onConflict: 'user_id' });
         if (error) { alert('Link failed: ' + error.message); return; }
         await _loadUsers();
       },
@@ -243,7 +243,7 @@ function _userRow(u) {
 
 async function _unlinkUser(userId) {
   if (!confirm('Remove this directory link?')) return;
-  const { error } = await sb.from('user_profiles').update({ personnel_id: null }).eq('user_id', userId);
+  const { error } = await sb.from('user_profiles').upsert({ user_id: userId, personnel_id: null }, { onConflict: 'user_id' });
   if (error) { alert('Remove failed: ' + error.message); return; }
   await _loadUsers();
 }
@@ -260,7 +260,7 @@ function _changeLinkUser(userId, detailEl) {
     placeholder: 'Search directory…',
     onSelect: async (personnelId) => {
       if (!personnelId) return;
-      const { error } = await sb.from('user_profiles').update({ personnel_id: personnelId }).eq('user_id', userId);
+      const { error } = await sb.from('user_profiles').upsert({ user_id: userId, personnel_id: personnelId }, { onConflict: 'user_id' });
       if (error) { alert('Link failed: ' + error.message); return; }
       await _loadUsers();
     },
@@ -273,47 +273,80 @@ function _userDetail(u) {
   const isAdminRole = u.roles.includes('admin');
   const teams = store.teams || [];
 
-  const sacramentChecks = SACRAMENTS.map(s => {
-    const isGranted = u.sacraments.includes(s);
-    return `
-    <div style="display:flex;flex-direction:column;padding:4px 0;">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <input type="checkbox" class="au-sac-cb" data-sacrament="${s}" ${isGranted ? 'checked disabled' : ''}
-          style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${isGranted ? 'not-allowed' : 'pointer'};flex-shrink:0;${isGranted ? 'opacity:0.45;' : ''}" />
-        <span style="font-size:13px;color:#1C2B3A;">${SACRAMENT_LABELS[s]}</span>
+  // For super admins, skip individual permission columns — show collapsed full-access notice instead
+  // For super admins, skip individual permission columns — show collapsed full-access notice instead
+  const permissionsBlock = isSA ? `
+    <div style="background:#F0F4F8;border:.5px solid #C7D7E8;border-radius:7px;padding:.75rem 1rem;margin-bottom:1rem;display:flex;align-items:center;gap:10px;">
+      <span style="font-size:16px;">🔓</span>
+      <div>
+        <div style="font-size:13px;font-weight:600;color:#1C2B3A;">Super Admin — Full Access</div>
+        <div style="font-size:11.5px;color:#6B7280;margin-top:1px;">All sacramental roles, panel grants, and team memberships are granted automatically. Individual permissions cannot be edited.</div>
       </div>
-      ${isGranted ? '<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">Granted via Sacramental Roles</div>' : ''}
-    </div>`;
-  }).join('');
+    </div>` : (() => {
+    // Sacraments: always individually editable (admins don't get these by default)
+    const sacramentChecks = SACRAMENTS.map(s => {
+      const isGranted = u.sacraments.includes(s);
+      return `
+      <div style="display:flex;flex-direction:column;padding:4px 0;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" class="au-sac-cb" data-sacrament="${s}" ${isGranted ? 'checked disabled' : ''}
+            style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${isGranted ? 'not-allowed' : 'pointer'};flex-shrink:0;${isGranted ? 'opacity:0.45;' : ''}" />
+          <span style="font-size:13px;color:#1C2B3A;">${SACRAMENT_LABELS[s]}</span>
+        </div>
+        ${isGranted ? '<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">Granted via Sacramental Roles</div>' : ''}
+      </div>`;
+    }).join('');
 
-  const grantChecks = Object.entries(PANEL_LABELS).map(([p, label]) => {
-    const lockedBySA = isSA;
-    const isChecked = u.grants.includes(p) || lockedBySA;
-    const note = lockedBySA ? 'Granted via Super Admin' : null;
-    return `
-    <div style="display:flex;flex-direction:column;padding:4px 0;">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <input type="checkbox" class="au-grant-cb" data-panel="${p}" ${isChecked ? 'checked' : ''} ${lockedBySA ? 'disabled' : ''}
-          style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${lockedBySA ? 'not-allowed' : 'pointer'};flex-shrink:0;${lockedBySA ? 'opacity:0.45;' : ''}" />
-        <span style="font-size:13px;color:#1C2B3A;">${label}</span>
-      </div>
-      ${note ? `<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">${note}</div>` : ''}
-    </div>`;
-  }).join('');
+    // Panel grants: locked+checked for admin users (they get all non-sacramental panels)
+    const grantChecks = Object.entries(PANEL_LABELS).map(([p, label]) => {
+      const lockedByAdmin = isAdminRole;
+      const isChecked = u.grants.includes(p) || lockedByAdmin;
+      return `
+      <div style="display:flex;flex-direction:column;padding:4px 0;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" class="au-grant-cb" data-panel="${p}"
+            ${isChecked ? 'checked' : ''} ${lockedByAdmin ? 'disabled' : ''}
+            style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${lockedByAdmin ? 'not-allowed' : 'pointer'};flex-shrink:0;${lockedByAdmin ? 'opacity:0.45;' : ''}" />
+          <span style="font-size:13px;color:#1C2B3A;">${label}</span>
+        </div>
+        ${lockedByAdmin ? '<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">Granted via Admin role</div>' : ''}
+      </div>`;
+    }).join('');
 
-  const teamChecks = teams.map(t => {
-    const isMember = (u.teamIds || []).includes(t.id);
+    // Team memberships: for admin users, all teams locked+checked; for basic, only actual memberships locked
+    const teamChecks = teams.map(t => {
+      const isMember = (u.teamIds || []).includes(t.id);
+      const locked = isAdminRole || isMember;
+      const note = isAdminRole ? 'Granted via Admin role' : (isMember ? 'Access via team membership' : null);
+      return `
+      <div style="display:flex;flex-direction:column;padding:4px 0;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" class="au-team-cb" data-team-id="${t.id}" data-personnel-id="${u.profile?.personnel_id || ''}"
+            ${locked ? 'checked disabled' : ''}
+            style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${locked ? 'not-allowed' : 'pointer'};flex-shrink:0;${locked ? 'opacity:0.45;' : ''}" />
+          <span style="font-size:13px;color:#1C2B3A;">${t.name}</span>
+        </div>
+        ${note ? `<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">${note}</div>` : ''}
+      </div>`;
+    }).join('');
+
     return `
-    <div style="display:flex;flex-direction:column;padding:4px 0;">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <input type="checkbox" class="au-team-cb" data-team-id="${t.id}" data-personnel-id="${u.profile?.personnel_id || ''}"
-          ${isMember ? 'checked disabled' : ''}
-          style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${isMember ? 'not-allowed' : 'pointer'};flex-shrink:0;${isMember ? 'opacity:0.45;' : ''}" />
-        <span style="font-size:13px;color:#1C2B3A;">${t.name}</span>
-      </div>
-      ${isMember ? '<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">Access via team membership</div>' : ''}
-    </div>`;
-  }).join('');
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1.25rem;margin-bottom:1rem;">
+        <div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">Sacramental Roles</div>
+          ${sacramentChecks}
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">Panel Grants</div>
+          ${grantChecks}
+        </div>
+        ${teams.length ? `
+        <div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">Team Memberships</div>
+          ${teamChecks}
+        </div>` : ''}
+      </div>`;
+  })();
 
   return `
     <div class="admin-user-detail" data-user-id="${u.userId}" style="border-top:.5px solid #F0EDE8;padding:1rem 1.1rem;background:#FAFAF8;" onclick="event.stopPropagation()">
@@ -341,36 +374,22 @@ function _userDetail(u) {
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1.25rem;margin-bottom:1rem;">
-        <div>
-          <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">System Role</div>
-          <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
-            <input type="checkbox" id="au-sa-${u.userId}" class="au-sa-cb" ${isSA ? 'checked' : ''} ${isSelf ? 'disabled title="Cannot remove own super admin role"' : ''}
-              style="width:14px;height:14px;accent-color:#1C2B3A;margin:0;cursor:${isSelf ? 'not-allowed' : 'pointer'};flex-shrink:0;" />
-            <label for="au-sa-${u.userId}" style="font-size:13px;color:#1C2B3A;cursor:${isSelf ? 'not-allowed' : 'pointer'};margin:0;">Super Admin</label>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
-            <input type="checkbox" id="au-admin-${u.userId}" class="au-admin-cb" ${(isAdminRole || isSA) ? 'checked' : ''} ${isSA ? 'disabled title="Included via Super Admin"' : ''}
-              style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${isSA ? 'not-allowed' : 'pointer'};flex-shrink:0;${isSA ? 'opacity:0.45;' : ''}" />
-            <label for="au-admin-${u.userId}" style="font-size:13px;color:#1C2B3A;cursor:${isSA ? 'not-allowed' : 'pointer'};margin:0;">Admin</label>
-          </div>
-          ${isSA ? '<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">Admin included via Super Admin</div>' : ''}
+      <div style="margin-bottom:1rem;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">System Role</div>
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+          <input type="checkbox" id="au-sa-${u.userId}" class="au-sa-cb" ${isSA ? 'checked' : ''} ${isSelf ? 'disabled title="Cannot remove own super admin role"' : ''}
+            style="width:14px;height:14px;accent-color:#1C2B3A;margin:0;cursor:${isSelf ? 'not-allowed' : 'pointer'};flex-shrink:0;" />
+          <label for="au-sa-${u.userId}" style="font-size:13px;color:#1C2B3A;cursor:${isSelf ? 'not-allowed' : 'pointer'};margin:0;">Super Admin</label>
         </div>
-        <div>
-          <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">Sacramental Roles</div>
-          ${sacramentChecks}
-        </div>
-        <div>
-          <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">Panel Grants</div>
-          ${grantChecks}
-        </div>
+        ${!isSA ? `
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+          <input type="checkbox" id="au-admin-${u.userId}" class="au-admin-cb" ${isAdminRole ? 'checked' : ''}
+            style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:pointer;flex-shrink:0;" />
+          <label for="au-admin-${u.userId}" style="font-size:13px;color:#1C2B3A;cursor:pointer;margin:0;">Admin</label>
+        </div>` : ''}
       </div>
 
-      ${teams.length ? `
-      <div style="margin-bottom:1rem;">
-        <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">Team Memberships</div>
-        <div style="display:flex;flex-wrap:wrap;gap:0 1.5rem;">${teamChecks}</div>
-      </div>` : ''}
+      ${permissionsBlock}
 
       <div style="display:flex;align-items:center;gap:12px;margin-top:.5rem;flex-wrap:wrap;">
         <button class="au-save-btn" data-user-id="${u.userId}" style="

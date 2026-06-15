@@ -10,8 +10,36 @@ export async function loadUserRoles() {
 
   const personnelId = store.currentUserProfile?.personnel_id || null;
 
-  const [rolesRes, sacramentRes, grantsRes, teamsRes] = await Promise.all([
-    sb.from('user_roles').select('role').eq('user_id', user.id),
+  // Always fetch the role row first — it determines what else we need
+  const { data: roleRows } = await sb.from('user_roles').select('role').eq('user_id', user.id);
+  const roles       = roleRows || [];
+  const isSuperAdm  = roles.some(r => r.role === 'super_admin');
+  const isAdm       = roles.some(r => r.role === 'admin' || r.role === 'super_admin');
+
+  // Super admins: access is entirely rule-based — no DB records needed
+  if (isSuperAdm) {
+    store.currentUserRoles = {
+      isSuperAdmin: true, isAdmin: true,
+      sacraments: [], panelGrants: [], teamIds: [], teamPersonnelIds: [],
+    };
+    return;
+  }
+
+  // Admins: sacramental access is still individually assigned; teams/panels are rule-based
+  if (isAdm) {
+    const { data: sacRows } = await sb.from('sacramental_roles').select('sacrament').eq('user_id', user.id);
+    store.currentUserRoles = {
+      isSuperAdmin: false, isAdmin: true,
+      sacraments:   (sacRows || []).map(r => r.sacrament),
+      panelGrants:  [],   // not used — panel access is rule-based for admins
+      teamIds:      [],   // not used — team access is rule-based for admins
+      teamPersonnelIds: [], // admins see all personnel, no filtering needed
+    };
+    return;
+  }
+
+  // Basic users: fetch all grants and team memberships for scoped access
+  const [sacramentRes, grantsRes, teamsRes] = await Promise.all([
     sb.from('sacramental_roles').select('sacrament').eq('user_id', user.id),
     sb.from('panel_grants').select('panel').eq('user_id', user.id),
     personnelId
@@ -19,10 +47,9 @@ export async function loadUserRoles() {
       : Promise.resolve({ data: [] }),
   ]);
 
-  const roles   = rolesRes.data || [];
   const teamIds = (teamsRes.data || []).map(r => r.team_id);
 
-  // Personnel IDs of everyone sharing a team with this user — used for directory filtering
+  // Personnel IDs of teammates — used to scope the directory for basic users
   let teamPersonnelIds = [];
   if (personnelId && teamIds.length) {
     const { data: tpData } = await sb
@@ -33,8 +60,7 @@ export async function loadUserRoles() {
   }
 
   store.currentUserRoles = {
-    isSuperAdmin:     roles.some(r => r.role === 'super_admin'),
-    isAdmin:          roles.some(r => r.role === 'admin' || r.role === 'super_admin'),
+    isSuperAdmin: false, isAdmin: false,
     sacraments:       (sacramentRes.data || []).map(r => r.sacrament),
     panelGrants:      (grantsRes.data || []).map(r => r.panel),
     teamIds,
