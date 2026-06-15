@@ -213,7 +213,7 @@ function renderOciaCard(person) {
           <div>Prior marriage ${i+1}: <strong>${m.ex_name||'—'}</strong></div>
           <div style="font-size:11px;margin-top:2px;color:${annFlag?'#854F0B':'#2D6A4F'};">${annFlag?'⚠ Annulment needed':'✅ Annulment granted'}</div>
           ${linkedCase
-            ? `<div style="font-size:11px;color:#1B4F72;margin-top:4px;display:flex;align-items:center;gap:6px;">🔗 <strong>${linkedCase.petitioner}${linkedCase.respondent?' v. '+linkedCase.respondent:''}</strong> <button onclick="unlinkOciaPriorCase('${person.id}',${i})" style="background:none;border:none;cursor:pointer;color:#AAA;font-size:11px;padding:0;margin-left:4px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#AAA'">✕ unlink</button></div>`
+            ? `<div style="font-size:11px;color:#1B4F72;margin-top:4px;display:flex;align-items:center;gap:6px;">🔗 <span onclick="window.expandCase('${linkedCase.id}')" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px;"><strong>${linkedCase.petitioner}${linkedCase.respondent?' v. '+linkedCase.respondent:''}</strong></span> <button onclick="unlinkOciaPriorCase('${person.id}',${i})" style="background:none;border:none;cursor:pointer;color:#AAA;font-size:11px;padding:0;margin-left:4px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#AAA'">✕ unlink</button></div>`
             : `<div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                 <select id="ocia-pm-case-${person.id}-${i}" style="font-size:12px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.3rem .6rem;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;flex:1;min-width:0;">
                   <option value="">— Link to annulment case —</option>
@@ -226,16 +226,6 @@ function renderOciaCard(person) {
       });
     }
 
-    if(person.linked_annulment_id) {
-      const linked = store.allCases.find(c => c.id===person.linked_annulment_id);
-      if(linked) {
-        const lsm = CASE_STATUS[linked.status_code]||CASE_STATUS.prep;
-        h += `<div onclick="console.log('[OCIA] linked case clicked, id=${linked.id}', 'switchPanel='+typeof window.switchPanel, 'expandCase='+typeof window.expandCase); window.expandCase && window.expandCase('${linked.id}');" style="margin-top:6px;padding:6px 10px;background:#D6EAF8;border-left:3px solid #1B4F72;border-radius:3px;font-size:13px;cursor:pointer;" onmouseover="this.style.background='#C5D9EE'" onmouseout="this.style.background='#D6EAF8'">
-          <div style="color:#1B4F72;font-weight:600;font-size:11px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:2px;">Linked annulment case · <span style="font-weight:400;text-transform:none;letter-spacing:0;">tap to open →</span></div>
-          <div>${linked.petitioner} v. ${linked.respondent||'—'} · <span style="color:${lsm.color};">${lsm.label}</span></div>
-        </div>`;
-      }
-    }
 
     if(ociaIsMinor(person)&&person.parental_consent) {
       h += `<div style="margin-top:8px;padding:6px 10px;background:#D8F3DC;border-left:3px solid #2D6A4F;border-radius:3px;font-size:13px;color:#2D6A4F;">✅ Parental consent received${person.consent_parent_name?' — '+person.consent_parent_name:''}${person.consent_date?' on '+fmtDate(person.consent_date):''}</div>`;
