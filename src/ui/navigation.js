@@ -101,7 +101,11 @@ export function renderSidebarProfileWidget(user) {
 
   const nameEl = document.createElement('div');
   nameEl.style.cssText = 'flex:1;min-width:0;';
-  nameEl.innerHTML = `<div style="font-size:12.5px;color:rgba(248,247,244,.8);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${displayName}</div>`;
+  const nameText = document.createElement('div');
+  nameText.id = 'sidebar-profile-name';
+  nameText.style.cssText = 'font-size:12.5px;color:#F8F7F4;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+  nameText.textContent = displayName;
+  nameEl.appendChild(nameText);
 
   wrap.appendChild(avatarWrap);
   wrap.appendChild(nameEl);
@@ -116,8 +120,8 @@ export function updateSidebarProfileWidget(profile) {
     });
     // Update display name text
     const wrap = document.getElementById('sidebar-profile-widget');
-    const nameEl = wrap?.querySelector('div > div');
-    if (nameEl && displayName) nameEl.textContent = displayName;
+    const nameText = document.getElementById('sidebar-profile-name');
+    if (nameText && displayName) nameText.textContent = displayName;
   }
 }
 

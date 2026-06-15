@@ -234,9 +234,10 @@ async function _handleUpload(e) {
   });
   if (upErr) { statusEl.textContent = 'Upload failed: ' + upErr.message; return; }
 
-  const { data: { publicUrl } } = sb.storage.from('avatars').getPublicUrl(path);
-  // Bust cache
-  const avatarUrl = publicUrl + '?t=' + Date.now();
+  const { data: urlData } = sb.storage.from('avatars').getPublicUrl(path);
+  if (!urlData?.publicUrl) { statusEl.textContent = 'Upload succeeded but could not get public URL.'; return; }
+  // Bust cache so the browser fetches the new image
+  const avatarUrl = urlData.publicUrl + '?t=' + Date.now();
 
   const { error } = await _upsertProfile({ avatar_url: avatarUrl });
   if (error) { statusEl.textContent = 'Save failed: ' + error.message; return; }
