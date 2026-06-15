@@ -15,11 +15,25 @@ function showApp() {
   document.getElementById('app').style.display = 'flex';
 }
 
-export function initAuth(onLogin) {
-  // Hide both containers immediately so nothing is visible before the session check resolves.
+export async function initAuth(onLogin) {
+  // Both elements start hidden (also set in HTML). Nothing is visible until
+  // we know the session state — eliminates the flash of both elements.
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app').style.display = 'none';
 
+  // Explicit initial check — onAuthStateChange INITIAL_SESSION is not guaranteed
+  // to fire synchronously in all Supabase/browser environments.
+  const { data: { session: initialSession } } = await sb.auth.getSession();
+  if (initialSession?.user) {
+    showApp();
+    _appStarted = true;
+    onLogin(initialSession.user);
+  } else {
+    showAuth();
+  }
+
+  // Handle subsequent transitions (login, logout, token refresh).
+  // INITIAL_SESSION is already handled above, so only act on SIGNED_IN / SIGNED_OUT.
   sb.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_OUT') {
       _appStarted = false;
@@ -28,12 +42,10 @@ export function initAuth(onLogin) {
       return;
     }
 
-    if (session?.user) {
+    if (event === 'SIGNED_IN' && session?.user && !_appStarted) {
+      _appStarted = true;
       showApp();
-      if (!_appStarted) {
-        _appStarted = true;
-        onLogin(session.user);
-      }
+      onLogin(session.user);
     }
   });
 
