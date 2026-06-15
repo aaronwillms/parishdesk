@@ -12,6 +12,8 @@ export async function getUserScope() {
 
   const profile = store.currentUserProfile;
   const personnelId = profile?.personnel_id || null;
+  // user_id is the Supabase auth UUID — this is what projects.created_by stores
+  const userId = profile?.user_id || null;
 
   let teamIds = [];
   if (personnelId) {
@@ -22,7 +24,8 @@ export async function getUserScope() {
     teamIds = (data || []).map(r => r.team_id);
   }
 
-  _cached = { personnelId, teamIds, ready: !!personnelId };
+  // ready = true means full scope (team + assignee matching); partial = auth-only
+  _cached = { personnelId, userId, teamIds, ready: !!personnelId };
   return _cached;
 }
 
@@ -33,19 +36,17 @@ export function clearUserScope() {
 
 // Returns true if a project/task row is visible to the current user.
 // assigned_to may be a uuid[] array or a single uuid string.
-export function isVisible(row, { personnelId, teamIds }) {
-  if (!personnelId) {
-    // No linked entry: only show rows with no team and no assignee
-    return !row.team_id && !row.assigned_to?.length && !row.assigned_to;
-  }
+export function isVisible(row, { personnelId, userId, teamIds }) {
+  // created_by stores auth.uid() — check against userId, not personnelId
+  if (userId && row.created_by === userId) return true;
 
-  // Created by this user
-  if (row.created_by && row.created_by === personnelId) return true;
+  // No personnel link yet — only own rows are visible (caught above); nothing else
+  if (!personnelId) return false;
 
   // Belongs to a team the user is in
   if (row.team_id && teamIds.includes(row.team_id)) return true;
 
-  // Assigned to this user
+  // Assigned to this user (uuid[] or legacy single uuid)
   const assignees = Array.isArray(row.assigned_to)
     ? row.assigned_to
     : row.assigned_to ? [row.assigned_to] : [];
