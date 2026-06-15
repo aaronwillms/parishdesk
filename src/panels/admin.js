@@ -2,6 +2,7 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { createAvatar } from '../ui/avatar.js';
 import { applyParishName } from '../ui/navigation.js';
+import { createContactPicker } from '../ui/contactPicker.js';
 
 const SACRAMENTS = ['baptism', 'first_communion', 'confirmation', 'ocia', 'marriage', 'annulments'];
 const SACRAMENT_LABELS = { baptism: 'Baptism', first_communion: 'First Communion', confirmation: 'Confirmation', ocia: 'OCIA', marriage: 'Marriage', annulments: 'Annulments' };
@@ -136,9 +137,32 @@ function _renderUsersTab() {
 
   // Hydrate avatar placeholders — can't call createAvatar() inside innerHTML strings
   el.querySelectorAll('.admin-avatar-slot').forEach(slot => {
-    const { uid, name, url } = slot.dataset;
+    const { uid, name } = slot.dataset;
     slot.innerHTML = '';
     createAvatar({ container: slot, userId: uid, name: name || uid, size: 36 });
+  });
+
+  // Hydrate directory link pickers for unlinked users
+  el.querySelectorAll('[id^="au-link-picker-"]').forEach(slot => {
+    const userId = slot.id.replace('au-link-picker-', '');
+    createContactPicker({
+      container: slot,
+      placeholder: 'Search directory…',
+      onSelect: async (personnelId) => {
+        if (!personnelId) return;
+        const { error } = await sb.from('user_profiles').update({ personnel_id: personnelId }).eq('user_id', userId);
+        if (error) { alert('Link failed: ' + error.message); return; }
+        await _loadUsers();
+      },
+    });
+  });
+
+  // Change / Remove link buttons for already-linked users
+  el.querySelectorAll('.au-link-change').forEach(btn => {
+    btn.addEventListener('click', e => { e.stopPropagation(); _changeLinkUser(btn.dataset.userId, btn.closest('.admin-user-detail')); });
+  });
+  el.querySelectorAll('.au-link-remove').forEach(btn => {
+    btn.addEventListener('click', e => { e.stopPropagation(); _unlinkUser(btn.dataset.userId); });
   });
 
   document.querySelectorAll('.admin-user-row').forEach(row => {
@@ -185,6 +209,32 @@ function _userRow(u) {
   `;
 }
 
+async function _unlinkUser(userId) {
+  if (!confirm('Remove this directory link?')) return;
+  const { error } = await sb.from('user_profiles').update({ personnel_id: null }).eq('user_id', userId);
+  if (error) { alert('Remove failed: ' + error.message); return; }
+  await _loadUsers();
+}
+
+function _changeLinkUser(userId, detailEl) {
+  if (!detailEl) return;
+  const currentBlock = detailEl.querySelector('[data-link-block]');
+  if (!currentBlock) return;
+  currentBlock.innerHTML = '<div id="au-change-picker-' + userId + '"></div>';
+  const slot = document.getElementById('au-change-picker-' + userId);
+  if (!slot) return;
+  createContactPicker({
+    container: slot,
+    placeholder: 'Search directory…',
+    onSelect: async (personnelId) => {
+      if (!personnelId) return;
+      const { error } = await sb.from('user_profiles').update({ personnel_id: personnelId }).eq('user_id', userId);
+      if (error) { alert('Link failed: ' + error.message); return; }
+      await _loadUsers();
+    },
+  });
+}
+
 function _userDetail(u) {
   const isSelf = u.userId === _currentAuthUserId;
   const isSA = u.roles.includes('super_admin');
@@ -216,12 +266,29 @@ function _userDetail(u) {
 
   return `
     <div class="admin-user-detail" data-user-id="${u.userId}" style="border-top:.5px solid #F0EDE8;padding:1rem 1.1rem;background:#FAFAF8;" onclick="event.stopPropagation()">
-      ${u.profile?.personnel ? `
-        <div style="margin-bottom:1rem;">
-          <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.4rem;">Directory Entry</div>
-          <div style="font-size:13.5px;font-weight:500;color:#1C2B3A;">${u.profile.personnel.name}</div>
-          ${u.profile.personnel.title ? `<div style="font-size:12px;color:#6B7280;">${u.profile.personnel.title}</div>` : ''}
-        </div>` : ''}
+      <div style="margin-bottom:1rem;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">Directory Entry</div>
+        <div data-link-block>
+          ${u.profile?.personnel ? `
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <div>
+                <div style="font-size:13.5px;font-weight:500;color:#1C2B3A;">${u.profile.personnel.name}</div>
+                ${u.profile.personnel.title ? `<div style="font-size:12px;color:#6B7280;">${u.profile.personnel.title}</div>` : ''}
+              </div>
+              <div style="display:flex;gap:6px;margin-left:auto;">
+                <button class="au-link-change" data-user-id="${u.userId}" style="
+                  padding:.3rem .75rem;background:none;border:.5px solid #D1C9BE;border-radius:5px;
+                  font-size:12px;font-family:'Inter',sans-serif;cursor:pointer;color:#1C2B3A;
+                ">Change</button>
+                <button class="au-link-remove" data-user-id="${u.userId}" style="
+                  padding:.3rem .75rem;background:none;border:.5px solid #FDEAED;border-radius:5px;
+                  font-size:12px;font-family:'Inter',sans-serif;cursor:pointer;color:#8B1A2F;
+                ">Remove link</button>
+              </div>
+            </div>` : `
+            <div id="au-link-picker-${u.userId}"></div>`}
+        </div>
+      </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1.25rem;margin-bottom:1rem;">
         <div>

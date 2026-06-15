@@ -103,8 +103,8 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 .modal{background:#FFFFFF;border-radius:var(--radius);padding:1.5rem;width:500px;max-width:94vw;max-height:88vh;overflow-y:auto;position:relative;}
 .modal-title{font-family:'Cormorant Garamond',serif;font-size:19px;font-weight:500;color:var(--navy);margin-bottom:1.25rem;}
 .modal label{font-size:12px;color:#6B7280;letter-spacing:.03em;display:block;margin-bottom:3px;margin-top:.75rem;}
-.modal input,.modal select,.modal textarea{width:100%;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.45rem .75rem;font-size:13.5px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;}
-.modal input:focus,.modal select:focus,.modal textarea:focus{border-color:var(--cardinal);}
+.modal input:not([type="radio"]):not([type="checkbox"]),.modal select,.modal textarea{width:100%;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.45rem .75rem;font-size:13.5px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;}
+.modal input:not([type="radio"]):not([type="checkbox"]):focus,.modal select:focus,.modal textarea:focus{border-color:var(--cardinal);}
 .modal textarea{min-height:80px;resize:vertical;}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:1.25rem;}
 .modal-close{position:absolute;top:1rem;right:1rem;background:none;border:none;font-size:20px;cursor:pointer;color:#6B7280;line-height:1;}
