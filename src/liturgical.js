@@ -123,6 +123,7 @@ export function initLiturgical() {
   const isLight = lit.vestColor==='#F0EDE6'||lit.vestColor==='#FFFFFF';
   dot.style.borderColor = isLight?'rgba(248,247,244,0.55)':'rgba(248,247,244,0.28)';
   document.getElementById('season-bar').style.background = lit.barColor;
-  document.getElementById('topbar-season').textContent = lit.season;
+  const topbarSeason = document.getElementById('topbar-season');
+  if(topbarSeason) topbarSeason.textContent = lit.season;
   return lit;
 }
