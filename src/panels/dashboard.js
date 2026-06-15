@@ -358,8 +358,8 @@ async function loadActivityFeed() {
 export async function loadInit() {
   const topbar = document.getElementById('topbar-season');
   try {
-    const { data: { user } } = await sb.auth.getUser();
-    currentUserId = user?.id || null;
+    const { data: authData } = await sb.auth.getUser();
+    currentUserId = authData?.user?.id || null;
 
     const [projRes, caseRes, coupleRes, alertRes, tasksRes, scope] = await Promise.all([
       sb.from('projects').select('id,title,status_code,due_date,assigned_to,team_id,created_by').order('due_date', { nullsFirst: false }),

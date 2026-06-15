@@ -86,11 +86,20 @@ async function startApp(user) {
   initModal();
   initLiturgical();
   loadCalendar();
-  await Promise.all([loadInit(), loadPersonnel(), loadTeamsStore(), loadParishSettings()]);
+
+  try {
+    await Promise.all([loadInit(), loadPersonnel(), loadTeamsStore(), loadParishSettings()]);
+  } catch (e) {
+    console.error('[startApp] init data load failed:', e);
+  }
+
+  console.log('[startApp] switching to dashboard');
+  window.switchPanel('dashboard');
+
   if (user?.id) {
     initNotifications(user.id);
-    await loadUserProfile();
-    await loadUserRoles();
+    try { await loadUserProfile(); } catch (e) { console.error('[startApp] loadUserProfile failed:', e); }
+    try { await loadUserRoles(); } catch (e) { console.error('[startApp] loadUserRoles failed — defaulting to basic access:', e); }
     renderSidebarProfileWidget(user);
     applyNavVisibility();
   }

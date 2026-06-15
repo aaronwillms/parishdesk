@@ -4,8 +4,9 @@ import { store } from './store.js';
 // ── Load ───────────────────────────────────────────────────────────────────
 
 export async function loadUserRoles() {
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return;
+  const { data, error } = await sb.auth.getUser();
+  const user = data?.user;
+  if (!user || error) return;
 
   const personnelId = store.currentUserProfile?.personnel_id || null;
 
