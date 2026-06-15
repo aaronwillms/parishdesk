@@ -6,4 +6,5 @@ export const store = {
   personnel: [],
   teams: [],
   notifications: [],
+  parishSettings: null,
 };

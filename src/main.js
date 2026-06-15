@@ -19,6 +19,16 @@ import { loadTasks } from './panels/tasks.js';
 import { initNotifications } from './notifications.js';
 import { setActiveTeamSubNavItem } from './ui/navigation.js';
 import { sb } from './supabase.js';
+import { store } from './store.js';
+
+async function loadParishSettings() {
+  const { data, error } = await sb.from('parish_settings').select('*').limit(1).single();
+  if (error || !data) {
+    console.warn('[parishSettings] no parish_settings row found');
+    return;
+  }
+  store.parishSettings = data;
+}
 
 async function startApp(user) {
   window.openModal = (type, defaultStatus) => {
@@ -71,12 +81,18 @@ async function startApp(user) {
   initModal();
   initLiturgical();
   loadCalendar();
-  await Promise.all([loadInit(), loadPersonnel(), loadTeamsStore()]);
+  await Promise.all([loadInit(), loadPersonnel(), loadTeamsStore(), loadParishSettings()]);
   if (user?.id) initNotifications(user.id);
   syncParishStaff();
 }
 
 async function syncParishStaff() {
+  const primaryInstitution = store.parishSettings?.primary_institution;
+  if (!primaryInstitution) {
+    console.warn('[syncParishStaff] no parish_settings found, skipping sync');
+    return;
+  }
+
   const { data: team } = await sb
     .from('teams')
     .select('id')
@@ -86,7 +102,9 @@ async function syncParishStaff() {
   if (!team) return;
 
   const [{ data: staff }, { data: existing }] = await Promise.all([
-    sb.from('personnel').select('id').in('employment', ['full-time', 'part-time']).eq('institution', 'Parish'),
+    sb.from('personnel').select('id')
+      .in('employment', ['full-time', 'part-time'])
+      .eq('institution', primaryInstitution),
     sb.from('team_members').select('personnel_id').eq('team_id', team.id),
   ]);
   if (!staff?.length) return;
