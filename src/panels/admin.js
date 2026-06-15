@@ -201,7 +201,8 @@ function _renderUsersTab() {
   });
 
   document.querySelectorAll('.admin-user-row').forEach(row => {
-    row.addEventListener('click', () => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.admin-user-detail')) return;
       const uid = row.dataset.userId;
       _expandedUserId = _expandedUserId === uid ? null : uid;
       _renderUsersTab();
@@ -404,7 +405,7 @@ function _userDetail(u) {
   })();
 
   return `
-    <div class="admin-user-detail" data-user-id="${u.userId}" style="border-top:.5px solid #F0EDE8;padding:1rem 1.1rem;background:#FAFAF8;" onclick="event.stopPropagation()">
+    <div class="admin-user-detail" data-user-id="${u.userId}" style="border-top:.5px solid #F0EDE8;padding:1rem 1.1rem;background:#FAFAF8;">
       <div style="margin-bottom:1rem;">
         <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">Directory Entry</div>
         <div data-link-block>
