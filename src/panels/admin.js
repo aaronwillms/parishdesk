@@ -39,7 +39,7 @@ async function _loadUsers() {
     sb.from('sacramental_roles').select('user_id, sacrament'),
     sb.from('panel_grants').select('user_id, panel'),
     sb.from('team_members').select('team_id, personnel_id'),
-    fetch('/functions/admin-users').then(r => r.ok ? r.json() : { users: [] }).catch(() => ({ users: [] })),
+    fetch('/admin-users').then(r => r.ok ? r.json() : { users: [] }).catch(() => ({ users: [] })),
   ]);
 
   const profiles   = profilesRes.data  || [];
