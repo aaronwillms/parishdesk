@@ -38,27 +38,29 @@ export async function initAuth(onLogin) {
 
   showAuth();
 
-  const form = document.getElementById('login-form');
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
+  const loginBtn = document.querySelector('#login-form .auth-submit');
+  const errEl = document.getElementById('login-error');
+
+  async function doLogin() {
     const email = document.getElementById('login-email').value.trim();
     const password = document.getElementById('login-password').value;
-    const errEl = document.getElementById('login-error');
     errEl.textContent = '';
-    const btn = form.querySelector('.auth-submit');
-    btn.disabled = true;
-    btn.textContent = 'Signing in…';
+    if (!email || !password) { errEl.textContent = 'Email and password are required.'; return; }
+    loginBtn.disabled = true;
+    loginBtn.textContent = 'Signing in…';
 
     const { data, error } = await sb.auth.signInWithPassword({ email, password });
-    btn.disabled = false;
-    btn.textContent = 'Sign in';
+    loginBtn.disabled = false;
+    loginBtn.textContent = 'Sign in';
 
-    if (error) {
-      errEl.textContent = error.message;
-      return;
-    }
+    if (error) { errEl.textContent = error.message; return; }
     showApp(data.user);
     onLogin(data.user);
+  }
+
+  loginBtn.addEventListener('click', doLogin);
+  document.getElementById('login-password').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
   });
 
   return null;

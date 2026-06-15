@@ -2,7 +2,7 @@ import './styles/main.css';
 import { initAuth, setSignOutCallback } from './auth.js';
 import { initLiturgical } from './liturgical.js';
 import { loadCalendar, loadInit } from './panels/dashboard.js';
-import { initNavigation, renderSidebarProfileWidget, setActiveTeamSubNavItem, applyNavVisibility, resetNavVisibility } from './ui/navigation.js';
+import { initNavigation, renderSidebarProfileWidget, setActiveTeamSubNavItem, applyNavVisibility, resetNavVisibility, applyParishName } from './ui/navigation.js';
 import { loadUserRoles } from './roles.js';
 import { loadAdmin } from './panels/admin.js';
 import { initModal } from './ui/modal.js';
@@ -30,6 +30,7 @@ async function loadParishSettings() {
     return;
   }
   store.parishSettings = data;
+  applyParishName(data.parish_name);
 }
 
 async function startApp(user) {

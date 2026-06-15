@@ -160,6 +160,14 @@ export function applyNavVisibility() {
   show('admin', isSuperAdmin());
 }
 
+export function applyParishName(name) {
+  if (!name) return;
+  const sub = document.querySelector('.app-sub');
+  if (sub) sub.textContent = name;
+  const authSub = document.querySelector('.auth-sub');
+  if (authSub) authSub.textContent = name + ' · Natchez';
+}
+
 export function initNavigation(loaderMap) {
   _loaderMap = loaderMap;
 

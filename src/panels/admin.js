@@ -1,10 +1,17 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { createAvatar } from '../ui/avatar.js';
+import { applyParishName } from '../ui/navigation.js';
 
 const SACRAMENTS = ['baptism', 'first_communion', 'confirmation', 'ocia', 'marriage', 'annulments'];
 const SACRAMENT_LABELS = { baptism: 'Baptism', first_communion: 'First Communion', confirmation: 'Confirmation', ocia: 'OCIA', marriage: 'Marriage', annulments: 'Annulments' };
-const ALL_PANELS = ['teams', 'baptism', 'firstcomm', 'confirmation', 'ocia', 'marriage', 'annulments', 'school', 'personnel'];
+
+// Only non-sacramental, non-auto panels that can be manually granted
+const PANEL_LABELS = {
+  projects: 'My Projects',
+  tasks:    'Tasks',
+  school:   'Cathedral School',
+};
 
 let _activeTab = 'users';
 let _users = [];
@@ -55,7 +62,15 @@ async function _loadUsers() {
     if (map[r.user_id]) map[r.user_id].grants.push(r.panel);
   });
 
-  _users = Object.values(map);
+  _users = Object.values(map).sort((a, b) => {
+    const aName = a.profile?.personnel?.name;
+    const bName = b.profile?.personnel?.name;
+    if (aName && !bName) return -1;
+    if (!aName && bName) return 1;
+    const aKey = (aName || a.userId).toLowerCase();
+    const bKey = (bName || b.userId).toLowerCase();
+    return aKey.localeCompare(bKey);
+  });
   _renderUsersTab();
 }
 
@@ -175,11 +190,11 @@ function _userDetail(u) {
       <span style="font-size:13px;color:#1C2B3A;">${SACRAMENT_LABELS[s]}</span>
     </div>`).join('');
 
-  const grantChecks = ALL_PANELS.map(p => `
+  const grantChecks = Object.entries(PANEL_LABELS).map(([p, label]) => `
     <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
       <input type="checkbox" class="au-grant-cb" data-panel="${p}" ${u.grants.includes(p) ? 'checked' : ''}
         style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:pointer;flex-shrink:0;" />
-      <span style="font-size:13px;color:#1C2B3A;">${p}</span>
+      <span style="font-size:13px;color:#1C2B3A;">${label}</span>
     </div>`).join('');
 
   const teamChecks = teams.map(t => {
@@ -307,13 +322,11 @@ async function _renderSettingsTab() {
       <label style="display:block;font-size:11.5px;color:#6B7280;margin-bottom:3px;">Parish Name</label>
       <input id="ps-name" value="${data?.parish_name || ''}" style="
         width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;
-        border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;margin-bottom:.85rem;
+        border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;margin-bottom:.5rem;
       " />
-      <label style="display:block;font-size:11.5px;color:#6B7280;margin-bottom:3px;">Primary Institution</label>
-      <input id="ps-inst" value="${data?.primary_institution || ''}" style="
-        width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;
-        border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;margin-bottom:1rem;
-      " />
+      <div style="font-size:11.5px;color:#9CA3AF;margin-bottom:1rem;line-height:1.5;">
+        This name appears on the login screen, top of the navigation sidebar, and identifies your parish institution in the Directory.
+      </div>
       <div style="display:flex;align-items:center;gap:12px;">
         <button id="ps-save" style="
           padding:.4rem 1.1rem;background:#1C2B3A;color:#fff;border:none;
@@ -327,15 +340,15 @@ async function _renderSettingsTab() {
   document.getElementById('ps-save').addEventListener('click', async () => {
     const statusEl = document.getElementById('ps-status');
     statusEl.textContent = 'Saving…';
-    const payload = {
-      parish_name:         document.getElementById('ps-name').value.trim(),
-      primary_institution: document.getElementById('ps-inst').value.trim(),
-    };
+    const name = document.getElementById('ps-name').value.trim();
+    if (!name) { statusEl.textContent = 'Parish name is required.'; return; }
+    const payload = { parish_name: name, primary_institution: name };
     const { error } = data
       ? await sb.from('parish_settings').update(payload).eq('id', data.id)
       : await sb.from('parish_settings').insert(payload);
     if (error) { statusEl.textContent = 'Error: ' + error.message; return; }
     store.parishSettings = { ...data, ...payload };
+    applyParishName(name);
     statusEl.textContent = 'Saved.';
     setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
   });
