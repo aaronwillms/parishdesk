@@ -447,12 +447,12 @@ function _userDetail(u) {
       ${permissionsBlock}
 
       <div style="display:flex;align-items:center;gap:12px;margin-top:.5rem;flex-wrap:wrap;">
-        <button class="au-save-btn" data-user-id="${u.userId}" style="
+        <button id="admin-user-save-btn-${u.userId}" class="au-save-btn" data-user-id="${u.userId}" style="
           padding:.4rem 1.1rem;background:#1C2B3A;color:#fff;border:none;
           border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;
           cursor:pointer;font-weight:500;
         ">Save</button>
-        ${u.email ? `<button class="au-pw-reset-btn" data-user-id="${u.userId}" data-email="${u.email}" style="
+        ${u.email ? `<button id="admin-user-pw-btn-${u.userId}" class="au-pw-reset-btn" data-user-id="${u.userId}" data-email="${u.email}" style="
           padding:.4rem 1.1rem;background:#C9A84C;color:#fff;border:none;
           border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;
           cursor:pointer;font-weight:500;
@@ -829,7 +829,7 @@ function _renderInviteTab() {
 
 document.addEventListener('click', e => {
   const saveBtn = e.target.closest('.au-save-btn');
-  if (saveBtn) { _saveUser(saveBtn.dataset.userId); return; }
+  if (saveBtn) { console.log('admin save clicked', saveBtn.dataset.userId); _saveUser(saveBtn.dataset.userId); return; }
 
   const resetBtn = e.target.closest('.au-pw-reset-btn');
   if (resetBtn) _resetPassword(resetBtn.dataset.email, resetBtn.closest('.admin-user-detail'));
