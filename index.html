@@ -80,6 +80,7 @@
 
       <!-- DASHBOARD -->
       <div id="panel-dashboard" class="panel active">
+        <!-- 1. Liturgical block -->
         <div class="lit-block">
           <div id="lit-color-dot"></div>
           <div style="flex:1;min-width:0;">
@@ -89,11 +90,24 @@
           </div>
         </div>
         <div id="alert-strip-container"></div>
+
+        <!-- 2. Announcements -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i class="ti ti-speakerphone"></i> Announcements</div>
+            <button class="card-action" onclick="openAnnouncementModal(null)">+ Add</button>
+          </div>
+          <div id="dash-announcements"><span class="pulse"></span></div>
+        </div>
+
+        <!-- 3. Stat row -->
         <div class="stat-row">
           <div class="stat-card"><div class="stat-num" id="stat-inprogress"><span class="pulse" style="width:30px"></span></div><div class="stat-label">In Progress</div></div>
           <div class="stat-card"><div class="stat-num" id="stat-blocked"><span class="pulse" style="width:30px"></span></div><div class="stat-label">Blocked</div></div>
           <div class="stat-card"><div class="stat-num" id="stat-complete"><span class="pulse" style="width:30px"></span></div><div class="stat-label">Complete</div></div>
         </div>
+
+        <!-- 4. Two column: schedule + active projects -->
         <div class="two-col">
           <div class="card">
             <div class="card-header">
@@ -104,27 +118,19 @@
           </div>
           <div class="card" style="overflow:hidden;">
             <div class="card-header">
-              <div class="card-title"><i class="ti ti-clipboard-list"></i> Projects</div>
-              <button class="card-action" onclick="switchPanel('projects')">Full log →</button>
+              <div class="card-title"><i class="ti ti-clipboard-list"></i> Active Projects</div>
+              <button class="card-action" onclick="switchPanel('projects')">My Projects →</button>
             </div>
             <div id="dash-projects"><span class="pulse"></span></div>
           </div>
         </div>
-        <div class="two-col">
-          <div class="card" style="overflow:hidden;">
-            <div class="card-header">
-              <div class="card-title"><i class="ti ti-checkbox"></i> Tasks today</div>
-              <button class="card-action" onclick="switchPanel('tasks')">All tasks →</button>
-            </div>
-            <div id="dash-tasks"><span class="pulse"></span></div>
+
+        <!-- 5. Activity feed -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i class="ti ti-activity"></i> Recent Activity</div>
           </div>
-          <div class="card">
-            <div class="card-header">
-              <div class="card-title"><i class="ti ti-pray"></i> Collect</div>
-              <button class="card-action" style="display:none"></button>
-            </div>
-            <div id="collect-container"><span class="pulse"></span></div>
-          </div>
+          <div id="dash-activity"><span class="pulse"></span></div>
         </div>
       </div>
 
