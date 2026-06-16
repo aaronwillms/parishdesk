@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, todayCST } from '../utils.js';
+import { fmtDate, todayCST, logActivity } from '../utils.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { getUserScope, isVisible, scopeNotice } from '../ui/userScope.js';
 
@@ -165,6 +165,7 @@ async function toggleTask(id, checked) {
   if (error) { console.error('[tasks] toggle failed:', error); return; }
   const t = (store.allTasks || []).find(x => x.id === id);
   if (t) Object.assign(t, payload);
+  if (checked) logActivity({ action: 'completed task', entityType: 'task', entityName: t?.title || 'Unknown', contextType: 'task', contextId: id });
   renderTasks();
 }
 
@@ -268,6 +269,7 @@ async function saveTask(id) {
     if (error) { alert('Save failed: ' + error.message); return; }
     const t = (store.allTasks || []).find(x => x.id === id);
     if (t) Object.assign(t, payload);
+    logActivity({ action: 'updated task', entityType: 'task', entityName: payload.title, contextType: 'task', contextId: id });
     closeModal();
     renderTasks();
   } else {
@@ -277,6 +279,7 @@ async function saveTask(id) {
     if (error) { alert('Save failed: ' + error.message); return; }
     if (!store.allTasks) store.allTasks = [];
     store.allTasks.push(newTask);
+    logActivity({ action: 'created task', entityType: 'task', entityName: newTask.title, contextType: 'task', contextId: newTask.id });
     closeModal();
     renderTasks();
   }
@@ -287,6 +290,7 @@ async function deleteTask(id) {
   if (!confirm(`Delete "${t?.title}"?`)) return;
   const { error } = await sb.from('tasks').delete().eq('id', id);
   if (error) { alert('Delete failed: ' + error.message); return; }
+  logActivity({ action: 'deleted task', entityType: 'task', entityName: t?.title || 'Unknown' });
   store.allTasks = (store.allTasks || []).filter(x => x.id !== id);
   closeModal();
   renderTasks();

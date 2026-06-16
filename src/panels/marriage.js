@@ -1,5 +1,5 @@
 import { sb } from '../supabase.js';
-import { fmtDate, fmtDateYear, daysUntil, todayCST } from '../utils.js';
+import { fmtDate, fmtDateYear, daysUntil, todayCST, logActivity } from '../utils.js';
 import { store } from '../store.js';
 import { expandCase } from './annulments.js';
 
@@ -492,6 +492,8 @@ async function saveCouple(id) {
   if(id){const r=await sb.from('couples').update(payload).eq('id',id);err=r.error;}
   else{const r=await sb.from('couples').insert(payload);err=r.error;}
   if(err){alert('Save failed: '+err.message);return;}
+  const coupleName = [payload.groom, payload.bride].filter(Boolean).join(' & ');
+  logActivity({ action: id ? 'updated marriage prep record' : 'created marriage prep record', entityType: 'marriage', entityName: coupleName, contextType: 'couple', contextId: id || null });
   closeModal(); loadCouples();
 }
 

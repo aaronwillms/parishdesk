@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate } from '../utils.js';
+import { fmtDate, logActivity } from '../utils.js';
 import { updateProjectStats, renderDashProjects } from './dashboard.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { getUserScope, isVisible, scopeNotice } from '../ui/userScope.js';
@@ -328,6 +328,7 @@ async function saveNewProject() {
   renderProjects();
   updateProjectStats();
   renderDashProjects();
+  logActivity({ action: 'created project', entityType: 'project', entityName: newProj.title, contextType: 'project', contextId: newProj.id });
 }
 
 // ── Legacy modal support (used by openModal('project') in main.js) ─────────
@@ -388,6 +389,7 @@ async function saveProject(id) {
     const r = await sb.from('projects').insert(payload); err = r.error;
   }
   if (err) { alert('Save failed: ' + err.message); return; }
+  logActivity({ action: id ? 'updated project' : 'created project', entityType: 'project', entityName: payload.title, contextType: 'project', contextId: id || null });
   closeModal();
   await invalidateProjects();
   loadProjects();
@@ -398,6 +400,7 @@ async function deleteProject(id) {
   if (!confirm(`Delete "${p?.title}"? This cannot be undone.`)) return;
   const { error } = await sb.from('projects').delete().eq('id', id);
   if (error) { alert('Delete failed: ' + error.message); return; }
+  logActivity({ action: 'deleted project', entityType: 'project', entityName: p?.title || 'Unknown' });
   closeModal();
   await invalidateProjects();
   loadProjects();

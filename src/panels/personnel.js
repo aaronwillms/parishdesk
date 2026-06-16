@@ -1,6 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin, isSuperAdmin } from '../roles.js';
+import { logActivity } from '../utils.js';
 
 // Clergy/religious types appear first, in this fixed order
 const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
@@ -405,8 +406,10 @@ async function savePersonnel(id) {
   if (!payload.name) { alert('Name is required.'); return; }
   if (id) {
     await sb.from('personnel').update(payload).eq('id', id);
+    logActivity({ action: 'updated person in directory', entityType: 'personnel', entityName: payload.name, contextType: 'personnel' });
   } else {
     await sb.from('personnel').insert(payload);
+    logActivity({ action: 'added person to directory', entityType: 'personnel', entityName: payload.name, contextType: 'personnel' });
   }
   closeModal();
   await loadPersonnel();

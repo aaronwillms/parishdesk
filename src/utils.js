@@ -1,3 +1,21 @@
+import { sb } from './supabase.js';
+
+export async function logActivity({ action, entityType, entityName, contextType = 'general', contextId = null }) {
+  try {
+    const { data: { user } } = await sb.auth.getUser();
+    await sb.from('activity_log').insert({
+      triggered_by: user?.id || null,
+      action,
+      entity_type:  entityType,
+      entity_name:  entityName,
+      context_type: contextType,
+      context_id:   contextId || null,
+    });
+  } catch (e) {
+    console.warn('[logActivity] failed:', e);
+  }
+}
+
 export function todayCST() {
   const n = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }));
   return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0') + '-' + String(n.getDate()).padStart(2, '0');

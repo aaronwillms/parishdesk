@@ -1,6 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { createContactPicker } from '../ui/contactPicker.js';
+import { logActivity } from '../utils.js';
 import { isTeamAdmin, isSuperAdmin } from '../roles.js';
 import { createAvatar } from '../ui/avatar.js';
 import { renderDiscussionThread } from '../ui/discussionThread.js';
@@ -367,6 +368,7 @@ function _openMemberModal(memberId) {
       if (!confirm(`Remove ${p.name || 'this member'} from the team?`)) return;
       const { error } = await sb.from('team_members').delete().eq('id', memberId);
       if (error) { alert('Failed to remove: ' + error.message); return; }
+      logActivity({ action: 'removed member from team', entityType: 'team', entityName: _team?.name || 'Unknown', contextType: 'team', contextId: _currentTeamId });
       closeModal();
       await _loadData();
       _renderTabContent();
@@ -387,6 +389,7 @@ async function _confirmAddMember() {
     role,
   });
   if (error) { alert('Failed to add member: ' + error.message); return; }
+  logActivity({ action: 'added member to team', entityType: 'team', entityName: _team?.name || 'Unknown', contextType: 'team', contextId: _currentTeamId });
   _memberPicker = null;
   await _loadData();
   _renderTabContent();

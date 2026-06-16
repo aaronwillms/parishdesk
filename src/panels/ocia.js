@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, fmtDateYear, todayCST } from '../utils.js';
+import { fmtDate, fmtDateYear, todayCST, logActivity } from '../utils.js';
 import { CASE_STATUS, expandCase } from './annulments.js';
 import { createNotification } from '../notifications.js';
 
@@ -719,17 +719,7 @@ async function saveOcia(id) {
     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
   }
   if(err){alert('Save failed: '+err.message);return;}
-  // Log to activity_log (fire-and-forget — ignore errors if table doesn't exist yet)
-  sb.auth.getUser().then(({ data }) => {
-    const uid = data?.user?.id || null;
-    sb.from('activity_log').insert({
-      triggered_by:  uid,
-      action:        id ? 'OCIA record updated' : 'OCIA record created',
-      entity_type:   'ocia',
-      entity_name:   name,
-      context_type:  'ocia',
-    }).then(() => {});
-  });
+  logActivity({ action: id ? 'updated OCIA record' : 'added OCIA candidate', entityType: 'ocia', entityName: name, contextType: 'ocia' });
   closeModal();
   loadOcia();
 }

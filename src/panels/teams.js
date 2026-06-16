@@ -1,6 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin } from '../roles.js';
+import { logActivity } from '../utils.js';
 
 let allTeams = [];
 
@@ -199,6 +200,7 @@ async function saveTeam(id) {
     const r = await sb.from('teams').insert(payload); err = r.error;
   }
   if (err) { alert('Save failed: ' + err.message); return; }
+  logActivity({ action: id ? 'updated team' : 'created team', entityType: 'team', entityName: payload.name, contextType: 'team', contextId: id || null });
   closeModal();
   await loadTeams();
 }
@@ -208,6 +210,7 @@ async function deleteTeam(id) {
   if (!confirm(`Delete "${t?.name}"? This will also remove all members. This cannot be undone.`)) return;
   const { error } = await sb.from('teams').delete().eq('id', id);
   if (error) { alert('Delete failed: ' + error.message); return; }
+  logActivity({ action: 'deleted team', entityType: 'team', entityName: t?.name || 'Unknown' });
   closeModal();
   await loadTeams();
 }

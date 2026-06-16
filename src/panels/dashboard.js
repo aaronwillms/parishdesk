@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, todayCST } from '../utils.js';
+import { fmtDate, todayCST, logActivity } from '../utils.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
 import { isSuperAdmin } from '../roles.js';
 import { parseICS } from '../utils/icsParser.js';
@@ -428,6 +428,7 @@ async function saveAnnouncement(id) {
     const r = await sb.from('announcements').insert({ ...payload, created_by: currentUserId }); err = r.error;
   }
   if (err) { alert('Save failed: ' + err.message); return; }
+  logActivity({ action: id ? 'updated announcement' : 'posted announcement', entityType: 'announcement', entityName: payload.message.slice(0, 60) || 'Announcement', contextType: 'announcement' });
   closeModal();
   loadAnnouncements();
 }

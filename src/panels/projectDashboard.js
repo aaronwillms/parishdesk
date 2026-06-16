@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, todayCST } from '../utils.js';
+import { fmtDate, todayCST, logActivity } from '../utils.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
 import { renderDiscussionThread } from '../ui/discussionThread.js';
@@ -264,6 +264,7 @@ function _bindTaskEvents() {
       if (!confirm(`Delete "${t?.title || 'this task'}"?`)) return;
       const { error } = await sb.from('tasks').delete().eq('id', taskId);
       if (error) { alert('Delete failed: ' + error.message); return; }
+      logActivity({ action: 'deleted task', entityType: 'task', entityName: t?.title || 'Unknown' });
       _tasks = _tasks.filter(x => x.id !== taskId);
       const el = document.getElementById('pd-content');
       if (el) _renderTasks(el);
@@ -333,6 +334,7 @@ function _openEditTaskModal(taskId) {
     const { error } = await sb.from('tasks').update(payload).eq('id', taskId);
     if (error) { alert('Save failed: ' + error.message); return; }
     Object.assign(t, payload);
+    logActivity({ action: 'updated task', entityType: 'task', entityName: payload.title, contextType: 'task', contextId: taskId });
     closeModal();
     const el = document.getElementById('pd-content');
     if (el) _renderTasks(el);
@@ -427,6 +429,7 @@ function _appendAddTaskArea(el) {
       visibility:         'team',
     }).select().single();
     if (error) { alert('Failed to add task: ' + error.message); return; }
+    logActivity({ action: 'created task', entityType: 'task', entityName: data.title, contextType: 'task', contextId: data.id });
     _tasks.push(data);
     _taskPicker = null;
     const el = document.getElementById('pd-content');
@@ -606,6 +609,7 @@ async function _saveProjectDetails() {
   const { error } = await sb.from('projects').update(payload).eq('id', _projectId);
   if (error) { alert('Save failed: ' + error.message); return; }
   Object.assign(_project, payload);
+  logActivity({ action: 'updated project', entityType: 'project', entityName: payload.title, contextType: 'project', contextId: _projectId });
   const container = document.getElementById('project-dashboard-root');
   if (container) _render(container);
   document.getElementById('topbar-title').textContent = title;
@@ -615,5 +619,6 @@ async function _deleteProject() {
   if (!confirm(`Delete "${_project.title}"? This cannot be undone.`)) return;
   const { error } = await sb.from('projects').delete().eq('id', _projectId);
   if (error) { alert('Delete failed: ' + error.message); return; }
+  logActivity({ action: 'deleted project', entityType: 'project', entityName: _project.title });
   window.switchPanel('projects');
 }
