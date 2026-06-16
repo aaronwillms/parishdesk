@@ -1,3 +1,4 @@
+// Cloudflare Pages Function — proxies ical/public calendar URLs.
 export async function onRequestGet({ request }) {
   const { searchParams } = new URL(request.url);
   const url = searchParams.get('url');

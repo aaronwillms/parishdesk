@@ -1,3 +1,5 @@
+// Cloudflare Pages Function — sends a Supabase invite email to a new user.
+// Set VITE_SUPA_URL and SUPABASE_SERVICE_KEY in Cloudflare Pages env.
 export async function onRequestPost(context) {
   const { env, request } = context;
   const { email } = await request.json();

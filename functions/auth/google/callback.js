@@ -1,3 +1,5 @@
+// Cloudflare Pages Function — handles Google OAuth callback and stores tokens in Supabase.
+// Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, VITE_SUPA_URL, SUPABASE_SERVICE_KEY in Cloudflare Pages env.
 export async function onRequestGet({ request, env }) {
   try {
     const url = new URL(request.url);

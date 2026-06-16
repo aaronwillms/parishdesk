@@ -1,3 +1,5 @@
+// Cloudflare Pages Function — proxies Google Calendar API calls using stored OAuth tokens.
+// Set VITE_SUPA_URL and SUPABASE_SERVICE_KEY in Cloudflare Pages env.
 async function _refreshToken(tokenData, env) {
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
