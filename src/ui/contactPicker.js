@@ -259,6 +259,7 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
       <input id="cp-new-name"  placeholder="Full name *"  value="${prefillName}" />
       <input id="cp-new-title" placeholder="Title / role (optional)" />
       <input id="cp-new-email" type="email" placeholder="Email (optional)" value="${prefillEmail}" />
+      <div id="cp-new-error" style="font-size:11px;color:#8B1A2F;min-height:14px;margin-top:2px;"></div>
       <div class="cp-new-form-actions">
         <button type="button" class="cp-btn-save"   id="cp-new-save">Add &amp; select</button>
         <button type="button" class="cp-btn-cancel" id="cp-new-cancel">Cancel</button>
@@ -274,10 +275,11 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
       const name  = form.querySelector('#cp-new-name').value.trim();
       const title = form.querySelector('#cp-new-title').value.trim() || null;
       const email = form.querySelector('#cp-new-email').value.trim() || null;
-      if (!name) { form.querySelector('#cp-new-name').focus(); return; }
+      const errEl = form.querySelector('#cp-new-error');
+      if (!name) { form.querySelector('#cp-new-name').focus(); errEl.textContent = 'Name is required.'; return; }
 
-      const { data, error } = await sb.from('personnel').insert({ name, title, email, active: true }).select().single();
-      if (error) { alert('Failed to add contact: ' + error.message); return; }
+      const { data, error } = await sb.from('personnel').insert({ name, title, email, type: 'staff', active: true }).select().single();
+      if (error) { console.error('[contactPicker] insert failed:', error); errEl.textContent = 'Failed to add: ' + error.message; return; }
 
       // Update in-memory store so the new person appears in future pickers/renders
       if (store.personnel) store.personnel.push(data);

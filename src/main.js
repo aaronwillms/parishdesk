@@ -114,6 +114,12 @@ async function startApp(user) {
   if (user?.id) {
     initNotifications(user.id);
     initChatBubble(user.id);
+    // Hard-delete conversations soft-deleted more than 14 days ago
+    sb.from('conversations')
+      .delete()
+      .lt('deleted_at', new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
+      .not('deleted_at', 'is', null)
+      .then(() => {});
     try { await loadUserProfile(); } catch (e) { console.error('[startApp] loadUserProfile failed:', e); }
     clearUserScope(); // ensure scope re-fetches with now-loaded profile
     try { await loadUserRoles(); } catch (e) { console.error('[startApp] loadUserRoles failed:', e); }
