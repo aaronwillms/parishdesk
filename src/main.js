@@ -22,6 +22,7 @@ import { renderTeamDashboard } from './panels/teamDashboard.js';
 import { renderInstitutionDashboard } from './panels/institutionDashboard.js';
 import { loadTasks } from './panels/tasks.js';
 import { initNotifications } from './notifications.js';
+import { loadMessaging, initChatBubble } from './panels/messaging.js';
 import { sb } from './supabase.js';
 import { store } from './store.js';
 
@@ -95,6 +96,7 @@ async function startApp(user) {
     institutionDashboard:  () => {},   // handled by showInstitutionDashboard
     userProfile:      loadUserProfile,
     admin:            loadAdmin,
+    messaging:        loadMessaging,
   });
 
   initModal();
@@ -111,6 +113,7 @@ async function startApp(user) {
   // Phase 2 — user context (sequential, order matters)
   if (user?.id) {
     initNotifications(user.id);
+    initChatBubble(user.id);
     try { await loadUserProfile(); } catch (e) { console.error('[startApp] loadUserProfile failed:', e); }
     clearUserScope(); // ensure scope re-fetches with now-loaded profile
     try { await loadUserRoles(); } catch (e) { console.error('[startApp] loadUserRoles failed:', e); }

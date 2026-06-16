@@ -3,6 +3,7 @@ import { store } from '../store.js';
 import { fmtDate, todayCST } from '../utils.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
+import { renderDiscussionThread } from '../ui/discussionThread.js';
 
 // ── Status config ──────────────────────────────────────────────────────────
 
@@ -144,10 +145,11 @@ function _render(container) {
 function _renderTab() {
   const el = document.getElementById('pd-content');
   if (!el) return;
-  if      (_activeTab === 'tasks')   _renderTasks(el);
-  else if (_activeTab === 'project') _renderProjectDetails(el);
-  else if (_activeTab === 'members') _renderMembers(el);
-  else                               _renderStub(el, _activeTab);
+  if      (_activeTab === 'tasks')       _renderTasks(el);
+  else if (_activeTab === 'project')     _renderProjectDetails(el);
+  else if (_activeTab === 'members')     _renderMembers(el);
+  else if (_activeTab === 'discussions') renderDiscussionThread({ container: el, contextType: 'project', contextId: _projectId });
+  else                                   _renderStub(el, _activeTab);
 }
 
 // ── Discussions stub ───────────────────────────────────────────────────────

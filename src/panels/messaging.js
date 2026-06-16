@@ -1,0 +1,620 @@
+import { sb } from '../supabase.js';
+import { store } from '../store.js';
+import { createAvatar } from '../ui/avatar.js';
+import { createContactPicker } from '../ui/contactPicker.js';
+
+// ── State ──────────────────────────────────────────────────────────────────
+
+let _currentUserId = null;
+let _conversations  = [];
+let _activeConvId   = null;
+let _messages       = [];
+let _msgChannel     = null;
+let _globalChannel  = null;
+let _userProfileMap = {}; // user_id → { name, personnelId }
+
+// ── Public entry points ────────────────────────────────────────────────────
+
+export async function loadMessaging() {
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return;
+  _currentUserId = user.id;
+  _activeConvId  = null;
+  _messages      = [];
+
+  const el = document.getElementById('messaging-root');
+  if (!el) return;
+  el.innerHTML = `<div style="font-size:13px;color:#9CA3AF;padding:2rem;text-align:center;">Loading messages…</div>`;
+
+  await _loadConversations();
+  _render(el);
+  _subscribeGlobal();
+}
+
+export function initChatBubble(userId) {
+  _currentUserId = userId;
+  const bubble = document.getElementById('chat-bubble');
+  if (!bubble) return;
+  bubble.addEventListener('click', e => {
+    e.stopPropagation();
+    window.switchPanel('messaging', { title: 'Messages' });
+  });
+  _loadInitialUnread();
+}
+
+// ── Data ───────────────────────────────────────────────────────────────────
+
+async function _loadConversations() {
+  if (!_currentUserId) return;
+
+  const { data: myParts } = await sb.from('conversation_participants')
+    .select('conversation_id, last_read_at')
+    .eq('user_id', _currentUserId);
+
+  if (!myParts?.length) { _conversations = []; return; }
+
+  const convIds = myParts.map(p => p.conversation_id);
+
+  const [allPartsRes, msgsRes] = await Promise.all([
+    sb.from('conversation_participants')
+      .select('conversation_id, user_id')
+      .in('conversation_id', convIds),
+    sb.from('messages')
+      .select('*')
+      .in('conversation_id', convIds)
+      .order('created_at', { ascending: false }),
+  ]);
+
+  const allParts = allPartsRes.data || [];
+  const allMsgs  = msgsRes.data  || [];
+
+  const otherUserIds = [...new Set(
+    allParts.filter(p => p.user_id !== _currentUserId).map(p => p.user_id),
+  )];
+
+  if (otherUserIds.length) {
+    const { data: profiles } = await sb.from('user_profiles')
+      .select('user_id, personnel_id, personnel(id,name)')
+      .in('user_id', otherUserIds);
+    (profiles || []).forEach(p => {
+      _userProfileMap[p.user_id] = { name: p.personnel?.name || 'User', personnelId: p.personnel_id };
+    });
+  }
+
+  const lastReadMap = {};
+  myParts.forEach(p => { lastReadMap[p.conversation_id] = p.last_read_at; });
+
+  const msgsByConv = {};
+  allMsgs.forEach(m => {
+    if (!msgsByConv[m.conversation_id]) msgsByConv[m.conversation_id] = [];
+    msgsByConv[m.conversation_id].push(m);
+  });
+
+  _conversations = convIds.map(cid => {
+    const otherPart    = allParts.find(p => p.conversation_id === cid && p.user_id !== _currentUserId);
+    const otherUserId  = otherPart?.user_id;
+    const otherProfile = otherUserId ? _userProfileMap[otherUserId] : null;
+    const msgs         = msgsByConv[cid] || [];
+    const lastMsg      = msgs[0] || null;
+    const lr           = lastReadMap[cid];
+    const unreadCount  = msgs.filter(m =>
+      m.sender_id !== _currentUserId && (!lr || new Date(m.created_at) > new Date(lr)),
+    ).length;
+    return {
+      id: cid,
+      otherUserId,
+      otherName:       otherProfile?.name || 'Unknown',
+      otherPersonnelId: otherProfile?.personnelId || null,
+      lastMsg,
+      unreadCount,
+      updatedAt: lastMsg?.created_at || '',
+    };
+  }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+async function _loadInitialUnread() {
+  if (!_currentUserId) return;
+  const { data: myParts } = await sb.from('conversation_participants')
+    .select('conversation_id, last_read_at').eq('user_id', _currentUserId);
+  if (!myParts?.length) { _setBadge(0); return; }
+  const convIds = myParts.map(p => p.conversation_id);
+  const { data: msgs } = await sb.from('messages')
+    .select('conversation_id, sender_id, created_at')
+    .in('conversation_id', convIds)
+    .neq('sender_id', _currentUserId);
+  const lrMap = {};
+  myParts.forEach(p => { lrMap[p.conversation_id] = p.last_read_at; });
+  let unread = 0;
+  (msgs || []).forEach(m => {
+    const lr = lrMap[m.conversation_id];
+    if (!lr || new Date(m.created_at) > new Date(lr)) unread++;
+  });
+  _setBadge(unread);
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+
+function _render(el) {
+  const mobile = window.innerWidth < 640;
+  el.style.cssText = 'height:calc(100vh - 60px);display:flex;overflow:hidden;';
+
+  if (mobile) {
+    el.innerHTML = `<div id="msg-mobile-pane" style="flex:1;display:flex;flex-direction:column;overflow:hidden;"></div>`;
+    const pane = document.getElementById('msg-mobile-pane');
+    if (_activeConvId) {
+      pane.innerHTML = _threadHtml(true);
+      _hydrateThread();
+    } else {
+      pane.innerHTML = _convListHtml();
+      _hydrateConvList();
+    }
+  } else {
+    el.innerHTML = `
+      <div id="msg-list-col" style="width:280px;flex-shrink:0;border-right:.5px solid #E2DDD6;display:flex;flex-direction:column;overflow:hidden;background:#fff;">
+        ${_convListHtml()}
+      </div>
+      <div id="msg-thread-col" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+        ${_activeConvId ? _threadHtml(false) : _emptyThreadHtml()}
+      </div>`;
+    _hydrateConvList();
+    if (_activeConvId) _hydrateThread();
+  }
+}
+
+function _convListHtml() {
+  const newBtn = `
+    <div style="padding:.75rem 1rem;border-bottom:.5px solid #E2DDD6;flex-shrink:0;">
+      <button id="msg-new-btn" style="
+        width:100%;padding:.45rem .9rem;background:#C9A84C;color:#fff;border:none;
+        border-radius:6px;font-size:13px;font-family:'Inter',sans-serif;
+        cursor:pointer;font-weight:500;display:flex;align-items:center;justify-content:center;gap:6px;
+      "><i class="fa-solid fa-pen-to-square" style="font-size:12px;"></i> New Message</button>
+    </div>`;
+
+  if (!_conversations.length) {
+    return newBtn + `<div style="padding:2rem 1rem;text-align:center;font-size:13px;color:#9CA3AF;font-style:italic;">No conversations yet.</div>`;
+  }
+
+  const rows = _conversations.map(c => {
+    const isActive  = c.id === _activeConvId;
+    const preview   = c.lastMsg ? _truncate(c.lastMsg.body, 38) : 'No messages yet';
+    const ts        = c.lastMsg ? _relTime(c.lastMsg.created_at) : '';
+    const hasBold   = c.unreadCount > 0;
+    return `
+      <div class="msg-conv-row" data-conv-id="${c.id}" style="
+        display:flex;align-items:center;gap:10px;padding:.75rem 1rem;cursor:pointer;
+        background:${isActive ? '#F8F7F4' : '#fff'};border-bottom:.5px solid #F0EDE8;
+      ">
+        <div class="msg-avatar-slot" data-uid="${c.otherUserId || ''}" data-name="${_esc(c.otherName)}" style="flex-shrink:0;width:36px;height:36px;border-radius:50%;background:#E2DDD6;"></div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:2px;">
+            <div style="font-size:13.5px;font-weight:${hasBold ? '600' : '500'};color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(c.otherName)}</div>
+            <div style="font-size:11px;color:#9CA3AF;flex-shrink:0;">${_esc(ts)}</div>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
+            <div style="font-size:12.5px;color:#6B7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${_esc(preview)}</div>
+            ${c.unreadCount ? `<div style="flex-shrink:0;width:18px;height:18px;background:#1C2B3A;border-radius:50%;display:flex;align-items:center;justify-content:center;"><span style="font-size:9px;color:#fff;font-weight:700;">${c.unreadCount > 9 ? '9+' : c.unreadCount}</span></div>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  return newBtn + `<div id="msg-conv-items" style="overflow-y:auto;flex:1;">${rows}</div>`;
+}
+
+function _emptyThreadHtml() {
+  return `
+    <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:2rem;text-align:center;">
+      <div>
+        <div style="font-size:40px;margin-bottom:1rem;">💬</div>
+        <div style="font-family:'Cormorant Garamond',Georgia,serif;font-size:22px;font-weight:600;color:#C9A84C;margin-bottom:.5rem;">Messages</div>
+        <div style="font-size:13px;color:#9CA3AF;">Select a conversation or start a new one.</div>
+      </div>
+    </div>`;
+}
+
+function _threadHtml(mobile) {
+  const conv = _conversations.find(c => c.id === _activeConvId);
+  const name  = conv?.otherName || 'Conversation';
+  const uid   = conv?.otherUserId || '';
+  const pid   = conv?.otherPersonnelId || '';
+  return `
+    <div style="display:flex;flex-direction:column;height:100%;">
+      <div style="padding:.75rem 1rem;border-bottom:.5px solid #E2DDD6;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0;">
+        ${mobile ? `<button id="msg-back-btn" style="background:none;border:none;cursor:pointer;color:#8B1A2F;font-size:22px;padding:0;line-height:1;margin-right:2px;">‹</button>` : ''}
+        <div id="msg-thread-avatar-slot" data-uid="${uid}" data-name="${_esc(name)}" data-pid="${pid}" style="width:32px;height:32px;border-radius:50%;background:#E2DDD6;flex-shrink:0;"></div>
+        <div style="font-size:14px;font-weight:600;color:#1C2B3A;">${_esc(name)}</div>
+      </div>
+      <div id="msg-messages" style="flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;background:#FAFAF8;"></div>
+      <div style="padding:.75rem 1rem;border-top:.5px solid #E2DDD6;background:#fff;flex-shrink:0;display:flex;gap:8px;align-items:flex-end;">
+        <textarea id="msg-input" placeholder="Type a message…" rows="1" style="
+          flex:1;resize:none;border:.5px solid #D1C9BE;border-radius:18px;
+          padding:8px 14px;font-size:13px;font-family:'Inter',sans-serif;
+          outline:none;background:#fff;max-height:120px;overflow-y:auto;line-height:1.4;
+        "></textarea>
+        <button id="msg-send-btn" style="
+          flex-shrink:0;width:36px;height:36px;background:#8B1A2F;color:#fff;border:none;
+          border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;
+        "><i class="fa-solid fa-paper-plane"></i></button>
+      </div>
+    </div>`;
+}
+
+function _renderMessages() {
+  const el = document.getElementById('msg-messages');
+  if (!el) return;
+
+  if (!_messages.length) {
+    el.innerHTML = `<div style="text-align:center;font-size:13px;color:#9CA3AF;font-style:italic;padding:2rem 0;margin:auto;">No messages yet. Say hello!</div>`;
+    return;
+  }
+
+  const items = _groupMessages(_messages);
+  el.innerHTML = items.map(item => {
+    if (item.type === 'date') {
+      return `<div style="text-align:center;font-size:11px;color:#9CA3AF;margin:10px 0 6px;font-weight:500;">${_esc(item.date)}</div>`;
+    }
+    const { msg, isFirst, isLast, isMine } = item;
+    const uid    = msg.sender_id || '';
+    const prof   = uid === _currentUserId ? null : (_userProfileMap[uid] || { name: 'User', personnelId: null });
+    const name   = prof?.name || '';
+    const pid    = prof?.personnelId || '';
+    const avatarSlot = !isMine
+      ? `<div class="${isFirst ? 'msg-inline-avatar' : ''}" data-uid="${uid}" data-name="${_esc(name)}" data-pid="${pid}" style="width:24px;height:24px;border-radius:50%;${isFirst ? 'background:#E2DDD6;' : ''}flex-shrink:0;align-self:flex-end;"></div>`
+      : '';
+    return `
+      <div style="display:flex;align-items:flex-end;gap:6px;justify-content:${isMine ? 'flex-end' : 'flex-start'};margin-top:${isFirst ? '8px' : '2px'};">
+        ${!isMine ? avatarSlot : ''}
+        <div style="max-width:70%;display:flex;flex-direction:column;${isMine ? 'align-items:flex-end;' : 'align-items:flex-start;'}">
+          ${!isMine && isFirst ? `<div style="font-size:11px;color:#9CA3AF;margin-bottom:2px;margin-left:4px;">${_esc(name)}</div>` : ''}
+          <div style="
+            background:${isMine ? '#1C2B3A' : '#F0F0F0'};
+            color:${isMine ? '#fff' : '#1C2B3A'};
+            border-radius:18px;
+            ${isMine ? 'border-bottom-right-radius:5px;' : 'border-bottom-left-radius:5px;'}
+            padding:10px 14px;font-size:13px;line-height:1.4;word-break:break-word;white-space:pre-wrap;
+          ">${_esc(msg.body)}</div>
+          ${isLast ? `<div style="font-size:10.5px;color:#9CA3AF;margin-top:3px;${isMine ? 'margin-right:3px;' : 'margin-left:3px;'}">${_relTime(msg.created_at)}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  el.querySelectorAll('.msg-inline-avatar').forEach(slot => {
+    const { uid, name, pid } = slot.dataset;
+    slot.style.background = '#E2DDD6';
+    createAvatar({ container: slot, userId: pid || uid, name: name || uid, size: 24 });
+  });
+
+  el.scrollTop = el.scrollHeight;
+}
+
+function _groupMessages(msgs) {
+  const out = [];
+  let lastDate = null;
+  let lastSender = null;
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    const d = _dateLabel(m.created_at);
+    if (d !== lastDate) {
+      out.push({ type: 'date', date: d });
+      lastDate = d;
+      lastSender = null;
+    }
+    const isFirst = m.sender_id !== lastSender;
+    const isLast  = i === msgs.length - 1 || msgs[i + 1].sender_id !== m.sender_id || _dateLabel(msgs[i + 1].created_at) !== d;
+    out.push({ type: 'msg', msg: m, isFirst, isLast, isMine: m.sender_id === _currentUserId });
+    lastSender = isLast ? null : m.sender_id;
+  }
+  return out;
+}
+
+function _hydrateConvList() {
+  document.querySelectorAll('.msg-avatar-slot').forEach(slot => {
+    const { uid, name } = slot.dataset;
+    createAvatar({ container: slot, userId: uid, name: name || uid, size: 36 });
+  });
+  document.querySelectorAll('.msg-conv-row').forEach(row => {
+    row.addEventListener('mouseenter', () => { if (row.dataset.convId !== _activeConvId) row.style.background = '#F8F7F4'; });
+    row.addEventListener('mouseleave', () => { if (row.dataset.convId !== _activeConvId) row.style.background = '#fff'; });
+    row.addEventListener('click', () => _openConversation(row.dataset.convId));
+  });
+  document.getElementById('msg-new-btn')?.addEventListener('click', _openNewMessageModal);
+}
+
+function _hydrateThread() {
+  const headerSlot = document.getElementById('msg-thread-avatar-slot');
+  if (headerSlot) {
+    const { uid, name, pid } = headerSlot.dataset;
+    createAvatar({ container: headerSlot, userId: pid || uid, name: name || uid, size: 32 });
+  }
+
+  _fetchAndRenderMessages();
+
+  document.getElementById('msg-send-btn')?.addEventListener('click', _sendMessage);
+  document.getElementById('msg-back-btn')?.addEventListener('click', () => {
+    _activeConvId = null;
+    _messages = [];
+    if (_msgChannel) { sb.removeChannel(_msgChannel); _msgChannel = null; }
+    const el = document.getElementById('messaging-root');
+    if (el) _render(el);
+  });
+
+  const input = document.getElementById('msg-input');
+  if (input) {
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); _sendMessage(); }
+    });
+    input.addEventListener('input', () => {
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    });
+    input.focus();
+  }
+}
+
+// ── Open conversation ──────────────────────────────────────────────────────
+
+async function _openConversation(convId) {
+  if (_msgChannel) { sb.removeChannel(_msgChannel); _msgChannel = null; }
+  _activeConvId = convId;
+  _messages = [];
+
+  await sb.from('conversation_participants')
+    .update({ last_read_at: new Date().toISOString() })
+    .eq('conversation_id', convId)
+    .eq('user_id', _currentUserId);
+
+  const conv = _conversations.find(c => c.id === convId);
+  if (conv) conv.unreadCount = 0;
+  _updateBadge();
+
+  const el = document.getElementById('messaging-root');
+  if (el) _render(el);
+}
+
+async function _fetchAndRenderMessages() {
+  if (!_activeConvId) return;
+
+  const { data } = await sb.from('messages')
+    .select('*')
+    .eq('conversation_id', _activeConvId)
+    .order('created_at', { ascending: true });
+  _messages = data || [];
+
+  // Fill in any missing sender profiles
+  const unknown = [...new Set(_messages.map(m => m.sender_id).filter(id => id && id !== _currentUserId && !_userProfileMap[id]))];
+  if (unknown.length) {
+    const { data: profiles } = await sb.from('user_profiles')
+      .select('user_id, personnel_id, personnel(name)')
+      .in('user_id', unknown);
+    (profiles || []).forEach(p => {
+      _userProfileMap[p.user_id] = { name: p.personnel?.name || 'User', personnelId: p.personnel_id };
+    });
+  }
+
+  _renderMessages();
+  _subscribeToThread(_activeConvId);
+}
+
+function _subscribeToThread(convId) {
+  if (_msgChannel) { sb.removeChannel(_msgChannel); _msgChannel = null; }
+  _msgChannel = sb.channel('thread-' + convId)
+    .on('postgres_changes', {
+      event: 'INSERT', schema: 'public', table: 'messages',
+      filter: `conversation_id=eq.${convId}`,
+    }, payload => {
+      const msg = payload.new;
+      if (_messages.find(m => m.id === msg.id)) return;
+      _messages.push(msg);
+      _renderMessages();
+      if (msg.sender_id !== _currentUserId) {
+        sb.from('conversation_participants')
+          .update({ last_read_at: new Date().toISOString() })
+          .eq('conversation_id', convId).eq('user_id', _currentUserId).then(() => {});
+      }
+    })
+    .subscribe();
+}
+
+function _subscribeGlobal() {
+  if (_globalChannel) { sb.removeChannel(_globalChannel); _globalChannel = null; }
+  _globalChannel = sb.channel('global-dms-' + _currentUserId)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+      const msg = payload.new;
+      if (msg.sender_id === _currentUserId) return;
+      const conv = _conversations.find(c => c.id === msg.conversation_id);
+      if (!conv) return;
+      if (conv.id === _activeConvId) return;
+      conv.unreadCount = (conv.unreadCount || 0) + 1;
+      conv.lastMsg = msg;
+      conv.updatedAt = msg.created_at;
+      _conversations.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      _updateBadge();
+      // Re-render conv list column if visible
+      const listCol = document.getElementById('msg-list-col');
+      if (listCol) {
+        listCol.innerHTML = _convListHtml();
+        _hydrateConvList();
+      }
+    })
+    .subscribe();
+}
+
+// ── Send ───────────────────────────────────────────────────────────────────
+
+async function _sendMessage() {
+  const input = document.getElementById('msg-input');
+  if (!input) return;
+  const body = input.value.trim();
+  if (!body || !_activeConvId) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+
+  const { data: msg, error } = await sb.from('messages').insert({
+    conversation_id: _activeConvId,
+    sender_id: _currentUserId,
+    body,
+  }).select().single();
+
+  if (error) { console.error('[messaging] send failed:', error); return; }
+
+  if (!_messages.find(m => m.id === msg.id)) {
+    _messages.push(msg);
+    _renderMessages();
+  }
+
+  const conv = _conversations.find(c => c.id === _activeConvId);
+  if (conv) {
+    conv.lastMsg = msg;
+    conv.updatedAt = msg.created_at;
+    _conversations.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  // Notify recipient
+  const recipient = conv?.otherUserId;
+  if (recipient) {
+    const myName = _userProfileMap[_currentUserId]?.name || 'Someone';
+    sb.from('notifications').insert({
+      user_id: recipient,
+      message: `${myName}: ${body.length > 60 ? body.substring(0, 60) + '…' : body}`,
+      type: 'info',
+      module: 'messaging',
+      record_id: _activeConvId,
+    }).then(() => {});
+  }
+}
+
+// ── New message modal ──────────────────────────────────────────────────────
+
+function _openNewMessageModal() {
+  let _pickedPerson = null;
+
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-title">New Message</div>
+    <div style="margin-bottom:1rem;">
+      <div style="font-size:11.5px;color:#6B7280;margin-bottom:6px;">Send to:</div>
+      <div id="msg-new-picker-wrap"></div>
+    </div>
+    <div id="msg-new-status" style="font-size:12px;color:#8B1A2F;min-height:16px;margin-bottom:.5rem;"></div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      <button id="msg-new-start" class="btn-primary" disabled>Start Conversation</button>
+    </div>`;
+  document.getElementById('modal-overlay').classList.add('open');
+
+  createContactPicker({
+    container: document.getElementById('msg-new-picker-wrap'),
+    placeholder: 'Search directory…',
+    onSelect: person => {
+      _pickedPerson = person?.id ? person : null;
+      const btn = document.getElementById('msg-new-start');
+      if (btn) btn.disabled = !_pickedPerson;
+    },
+  });
+
+  document.getElementById('msg-new-start')?.addEventListener('click', async () => {
+    if (!_pickedPerson?.id) return;
+    const statusEl = document.getElementById('msg-new-status');
+    statusEl.textContent = 'Looking up account…';
+
+    const { data: profile } = await sb.from('user_profiles')
+      .select('user_id')
+      .eq('personnel_id', _pickedPerson.id)
+      .maybeSingle();
+
+    if (!profile?.user_id) {
+      statusEl.textContent = 'This person does not have a ParishDesk account yet.';
+      return;
+    }
+    if (profile.user_id === _currentUserId) {
+      statusEl.textContent = 'You cannot message yourself.';
+      return;
+    }
+
+    statusEl.textContent = 'Opening conversation…';
+
+    // Check for existing conversation between these two users
+    const { data: myParts }    = await sb.from('conversation_participants').select('conversation_id').eq('user_id', _currentUserId);
+    const { data: theirParts } = await sb.from('conversation_participants').select('conversation_id').eq('user_id', profile.user_id);
+    const mySet    = new Set((myParts || []).map(p => p.conversation_id));
+    const existing = (theirParts || []).find(p => mySet.has(p.conversation_id));
+
+    let convId;
+    if (existing) {
+      convId = existing.conversation_id;
+    } else {
+      const { data: conv, error } = await sb.from('conversations').insert({}).select().single();
+      if (error) { statusEl.textContent = 'Failed: ' + error.message; return; }
+      convId = conv.id;
+      await sb.from('conversation_participants').insert([
+        { conversation_id: convId, user_id: _currentUserId },
+        { conversation_id: convId, user_id: profile.user_id },
+      ]);
+      _userProfileMap[profile.user_id] = { name: _pickedPerson.name, personnelId: _pickedPerson.id };
+      _conversations.unshift({
+        id: convId,
+        otherUserId: profile.user_id,
+        otherName: _pickedPerson.name,
+        otherPersonnelId: _pickedPerson.id,
+        lastMsg: null,
+        unreadCount: 0,
+        updatedAt: '',
+      });
+    }
+
+    closeModal();
+    _openConversation(convId);
+  });
+}
+
+// ── Badge ──────────────────────────────────────────────────────────────────
+
+function _updateBadge() {
+  const total = _conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+  _setBadge(total);
+}
+
+function _setBadge(n) {
+  const badge = document.getElementById('chat-badge');
+  if (!badge) return;
+  if (n > 0) {
+    badge.textContent = n > 99 ? '99+' : String(n);
+    badge.style.display = 'inline-block';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function _esc(str) {
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function _truncate(str, len) {
+  if (!str) return '';
+  return str.length > len ? str.substring(0, len) + '…' : str;
+}
+
+function _relTime(ts) {
+  if (!ts) return '';
+  const d    = new Date(ts);
+  const diff = Date.now() - d;
+  const min  = Math.floor(diff / 60000);
+  if (min < 1) return 'now';
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(diff / 3600000);
+  if (hr < 24) return `${hr}h`;
+  const day = Math.floor(diff / 86400000);
+  if (day < 7) return `${day}d`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function _dateLabel(ts) {
+  const d   = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return 'Today';
+  if (d.toDateString() === new Date(Date.now() - 86400000).toDateString()) return 'Yesterday';
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}

@@ -818,8 +818,14 @@ function _renderInviteTab() {
     const statusEl = document.getElementById('inv-status');
     if (!email) { statusEl.textContent = 'Email is required.'; return; }
     statusEl.textContent = 'Sending…';
-    const { error } = await sb.auth.admin.inviteUserByEmail(email);
-    if (error) { statusEl.textContent = 'Error: ' + error.message; return; }
+    statusEl.style.color = '#6B7280';
+    const res = await fetch('/invite-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json();
+    if (!res.ok) { statusEl.style.color = '#8B1A2F'; statusEl.textContent = data.error || 'Invite failed.'; return; }
     statusEl.style.color = '#2E7D32';
     statusEl.textContent = `Invite sent to ${email}`;
     document.getElementById('inv-email').value = '';

@@ -30,6 +30,7 @@ const NAV_PANEL_MAP = {
   projectDashboard: 'projects',
   userProfile:      null,
   admin:            'admin',
+  messaging:        null,
 };
 
 function switchPanel(name, opts) {

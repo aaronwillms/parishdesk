@@ -3,6 +3,7 @@ import { store } from '../store.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { isTeamAdmin, isSuperAdmin } from '../roles.js';
 import { createAvatar } from '../ui/avatar.js';
+import { renderDiscussionThread } from '../ui/discussionThread.js';
 
 let _currentTeamId = null;
 let _team = null;
@@ -34,17 +35,22 @@ async function _loadData() {
   if (teamRes.error) console.error('[teamDashboard] team load:', teamRes.error);
   if (membersRes.error) console.error('[teamDashboard] members load:', membersRes.error);
   _team = teamRes.data || null;
-  _members = membersRes.data || [];
+  _members = (membersRes.data || []).sort((a, b) => {
+    const aName = a.personnel?.name || '';
+    const bName = b.personnel?.name || '';
+    return aName.localeCompare(bName);
+  });
 }
 
 // ── Render ─────────────────────────────────────────────────────────────────
 
 const TABS_BASE = [
-  { key: 'projects',    label: 'Projects' },
-  { key: 'tasks',       label: 'Tasks' },
-  { key: 'schedule',    label: 'Schedule' },
-  { key: 'documents',   label: 'Documents' },
-  { key: 'members',     label: 'Members' },
+  { key: 'projects',     label: 'Projects' },
+  { key: 'tasks',        label: 'Tasks' },
+  { key: 'discussions',  label: 'Discussions' },
+  { key: 'schedule',     label: 'Schedule' },
+  { key: 'documents',    label: 'Documents' },
+  { key: 'members',      label: 'Members' },
 ];
 const TAB_SETTINGS = { key: 'settings', label: 'Settings' };
 function _tabs() {
@@ -195,6 +201,8 @@ function _renderTabContent() {
     _renderMembers(el);
   } else if (_activeTab === 'settings') {
     _renderSettings(el);
+  } else if (_activeTab === 'discussions') {
+    renderDiscussionThread({ container: el, contextType: 'team', contextId: _currentTeamId });
   } else {
     _renderStub(el, _activeTab);
   }
