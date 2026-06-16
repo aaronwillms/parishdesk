@@ -70,7 +70,7 @@ export async function loadCalendar() {
       if (cal.type === 'google') {
         try {
           console.log('[dashboard] fetching google calendar events for userId:', currentUserId);
-          const proxyRes = await fetch('/functions/google-calendar-proxy', {
+          const proxyRes = await fetch('/google-calendar-proxy',{
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ user_id: currentUserId, action: 'list' }),
@@ -940,7 +940,7 @@ async function _saveNewEvent() {
   }
 
   try {
-    const res = await fetch('/functions/google-calendar-proxy', {
+    const res = await fetch('/google-calendar-proxy',{
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_id: currentUserId, action: 'create', event: gcalEvent }),
