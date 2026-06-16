@@ -188,8 +188,8 @@ export async function renderDiscussionThread({ container, contextType, contextId
 
   function _hydrateList() {
     container.querySelectorAll('.disc-creator-slot').forEach(slot => {
-      const { uid, name, pid } = slot.dataset;
-      createAvatar({ container: slot, userId: pid || uid, name: name || uid, size: 34 });
+      const { uid, name } = slot.dataset;
+      createAvatar({ container: slot, userId: uid, name: name || uid, size: 34 });
     });
 
     container.querySelectorAll('.disc-thread-row').forEach(row => {
@@ -359,8 +359,8 @@ function _renderMsgs(discId, msgs, currentUserId, profileMap) {
     const prof   = profileMap[m.sender_id] || { name: 'User', personnelId: null };
     return `
       <div style="display:flex;align-items:flex-end;gap:8px;margin-bottom:.6rem;justify-content:${isMine ? 'flex-end' : 'flex-start'};">
-        ${!isMine ? `<div class="disc-msg-avatar" data-uid="${m.sender_id || ''}" data-name="${_esc(prof.name)}" data-pid="${prof.personnelId || ''}"
-          style="width:26px;height:26px;border-radius:50%;background:#E2DDD6;flex-shrink:0;margin-bottom:2px;"></div>` : ''}
+        ${!isMine ? `<div class="disc-msg-avatar" data-uid="${m.sender_id || ''}" data-name="${_esc(prof.name)}"
+          style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;margin-bottom:2px;"></div>` : ''}
         <div style="max-width:72%;display:flex;flex-direction:column;${isMine ? 'align-items:flex-end;' : 'align-items:flex-start;'}">
           <div style="font-size:11px;color:#9CA3AF;margin-bottom:2px;">
             ${isMine ? '' : `${_esc(prof.name)} · `}${_relTime(m.created_at)}
@@ -377,8 +377,8 @@ function _renderMsgs(discId, msgs, currentUserId, profileMap) {
   }).join('');
 
   el.querySelectorAll('.disc-msg-avatar').forEach(slot => {
-    const { uid, name, pid } = slot.dataset;
-    createAvatar({ container: slot, userId: pid || uid, name: name || uid, size: 26 });
+    const { uid, name } = slot.dataset;
+    createAvatar({ container: slot, userId: uid, name: name || uid, size: 28 });
   });
 
   el.scrollTop = el.scrollHeight;

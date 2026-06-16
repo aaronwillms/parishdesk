@@ -298,7 +298,7 @@ async function _loadInitialUnread() {
 // ── Render ─────────────────────────────────────────────────────────────────
 
 function _render(el) {
-  const mobile = window.innerWidth < 640;
+  const mobile = window.innerWidth < 768;
   el.style.cssText = 'height:calc(100vh - 60px);display:flex;overflow:hidden;';
 
   if (mobile) {
@@ -502,7 +502,7 @@ function _renderMessages() {
     const name = prof?.name || '';
     const pid  = prof?.personnelId || '';
     const avatarSlot = !isMine
-      ? `<div class="${isFirst ? 'msg-inline-avatar' : ''}" data-uid="${uid}" data-name="${_esc(name)}" data-pid="${pid}" style="width:24px;height:24px;border-radius:50%;${isFirst ? 'background:#E2DDD6;' : ''}flex-shrink:0;align-self:flex-end;"></div>`
+      ? `<div class="${isFirst ? 'msg-inline-avatar' : ''}" data-uid="${uid}" data-name="${_esc(name)}" style="width:28px;height:28px;border-radius:50%;${isFirst ? 'background:#E2DDD6;' : ''}flex-shrink:0;align-self:flex-end;"></div>`
       : '';
     return `
       <div style="display:flex;align-items:flex-end;gap:6px;justify-content:${isMine ? 'flex-end' : 'flex-start'};margin-top:${isFirst ? '8px' : '2px'};">
@@ -522,9 +522,9 @@ function _renderMessages() {
   }).join('');
 
   el.querySelectorAll('.msg-inline-avatar').forEach(slot => {
-    const { uid, name, pid } = slot.dataset;
+    const { uid, name } = slot.dataset;
     slot.style.background = '#E2DDD6';
-    createAvatar({ container: slot, userId: pid || uid, name: name || uid, size: 24 });
+    createAvatar({ container: slot, userId: uid, name: name || uid, size: 28 });
   });
 
   el.scrollTop = el.scrollHeight;
@@ -634,7 +634,7 @@ function _hydrateThread() {
   const headerSlot = document.getElementById('msg-thread-avatar-slot');
   if (headerSlot) {
     const { uid, name, pid } = headerSlot.dataset;
-    createAvatar({ container: headerSlot, userId: pid || uid, name: name || uid, size: 32 });
+    createAvatar({ container: headerSlot, userId: uid, name: name || uid, size: 32 });
   }
 
   _fetchAndRenderMessages();

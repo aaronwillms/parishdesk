@@ -270,21 +270,52 @@ export function createContactPicker({ container, placeholder = 'Search by name�
 
     form.querySelector('#cp-new-name').focus();
 
-    form.querySelector('#cp-new-save').addEventListener('mousedown', async e => {
-      e.preventDefault();
-      const name  = form.querySelector('#cp-new-name').value.trim();
-      const title = form.querySelector('#cp-new-title').value.trim() || null;
-      const email = form.querySelector('#cp-new-email').value.trim() || null;
-      const errEl = form.querySelector('#cp-new-error');
-      if (!name) { form.querySelector('#cp-new-name').focus(); errEl.textContent = 'Name is required.'; return; }
+    const saveBtn = form.querySelector('#cp-new-save');
+    const errEl   = form.querySelector('#cp-new-error');
 
-      const { data, error } = await sb.from('personnel').insert({ name, title, email, type: 'staff', active: true }).select().single();
-      if (error) { console.error('[contactPicker] insert failed:', error); errEl.textContent = 'Failed to add: ' + error.message; return; }
+    saveBtn.addEventListener('click', async () => {
+      const nameVal  = form.querySelector('#cp-new-name').value.trim();
+      const titleVal = form.querySelector('#cp-new-title').value.trim() || null;
+      const emailVal = form.querySelector('#cp-new-email').value.trim() || null;
 
-      // Update in-memory store so the new person appears in future pickers/renders
-      if (store.personnel) store.personnel.push(data);
+      if (!nameVal) {
+        errEl.textContent = 'Name is required.';
+        form.querySelector('#cp-new-name').focus();
+        return;
+      }
 
-      select(data);
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+      errEl.textContent = '';
+
+      try {
+        const { data, error } = await sb.from('personnel').insert({
+          name:        nameVal,
+          title:       titleVal,
+          email:       emailVal,
+          type:        'staff',
+          active:      true,
+          institution: 'The Basilica of Saint Mary',
+        }).select().single();
+
+        if (error) {
+          console.error('[contactPicker] insert error:', error);
+          errEl.textContent = 'Failed: ' + error.message;
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Add & select';
+          return;
+        }
+
+        console.log('[contactPicker] created:', data);
+        if (store.personnel) store.personnel.push(data);
+        select(data);
+
+      } catch (err) {
+        console.error('[contactPicker] unexpected error:', err);
+        errEl.textContent = 'Unexpected error — see console';
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Add & select';
+      }
     });
 
     form.querySelector('#cp-new-cancel').addEventListener('mousedown', e => {
