@@ -37,7 +37,8 @@
       "Bash(npm install *)",
       "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/utils/icsParser.js)",
       "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/projects.js)",
-      "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/projectDashboard.js)"
+      "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/projectDashboard.js)",
+      "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/userProfile.js)"
     ]
   }
 }

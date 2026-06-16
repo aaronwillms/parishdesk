@@ -122,6 +122,10 @@ async function startApp(user) {
     sb.from('project_log').delete()
       .lt('deleted_at', _cutoff).not('deleted_at', 'is', null).then(() => {});
     try { await loadUserProfile(); } catch (e) { console.error('[startApp] loadUserProfile failed:', e); }
+    // Apply dark mode on load — mobile only
+    if (store.currentUserProfile?.dark_mode && window.innerWidth < 768) {
+      document.body.classList.add('dark-mode');
+    }
     clearUserScope(); // ensure scope re-fetches with now-loaded profile
     try { await loadUserRoles(); } catch (e) { console.error('[startApp] loadUserRoles failed:', e); }
     renderSidebarProfileWidget(user);

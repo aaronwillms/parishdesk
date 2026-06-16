@@ -171,6 +171,23 @@ function _render() {
         <div id="up-gcal-status" style="font-size:12px;color:#6B7280;margin-top:6px;min-height:16px;"></div>
       </div>
 
+      <!-- Mobile Settings (mobile only) -->
+      <div id="up-mobile-settings" style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.1rem 1.2rem;margin-bottom:1rem;display:none;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.75rem;">Mobile Settings</div>
+        <label style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;">
+          <div>
+            <div style="font-size:13px;font-weight:500;color:#1C2B3A;">Dark Mode</div>
+            <div style="font-size:12px;color:#9CA3AF;margin-top:2px;">Easier reading in low light</div>
+          </div>
+          <input type="checkbox" id="up-dark-mode-toggle" ${_profile?.dark_mode ? 'checked' : ''} style="
+            width:36px;height:20px;appearance:none;-webkit-appearance:none;
+            background:${_profile?.dark_mode ? '#1C2B3A' : '#D1C9BE'};
+            border-radius:10px;position:relative;cursor:pointer;transition:background .2s;flex-shrink:0;
+          " />
+        </label>
+        <div id="up-dark-mode-status" style="font-size:12px;color:#6B7280;margin-top:6px;min-height:14px;"></div>
+      </div>
+
       <!-- Calendar Color -->
       <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.1rem 1.2rem;margin-bottom:1.5rem;">
         <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.75rem;">Calendar Color</div>
@@ -227,6 +244,26 @@ function _bindEvents() {
   // Google Calendar
   document.getElementById('up-gcal-connect')?.addEventListener('click', _connectGoogle);
   document.getElementById('up-gcal-disconnect')?.addEventListener('click', _disconnectGoogle);
+
+  // Mobile Settings: show only on narrow viewports
+  const mobileSection = document.getElementById('up-mobile-settings');
+  if (mobileSection && window.innerWidth < 768) mobileSection.style.display = 'block';
+
+  // Dark mode toggle
+  document.getElementById('up-dark-mode-toggle')?.addEventListener('change', async (e) => {
+    const enabled = e.target.checked;
+    e.target.style.background = enabled ? '#1C2B3A' : '#D1C9BE';
+    if (window.innerWidth < 768) {
+      document.body.classList.toggle('dark-mode', enabled);
+    }
+    const statusEl = document.getElementById('up-dark-mode-status');
+    const { error } = await _upsertProfile({ dark_mode: enabled });
+    if (error) { statusEl.textContent = 'Failed to save.'; return; }
+    _profile = { ..._profile, dark_mode: enabled };
+    store.currentUserProfile = _profile;
+    statusEl.textContent = 'Saved.';
+    setTimeout(() => { statusEl.textContent = ''; }, 1500);
+  });
 
   // Calendar color
   document.getElementById('up-cal-color-save')?.addEventListener('click', async () => {

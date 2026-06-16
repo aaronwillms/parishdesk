@@ -54,6 +54,20 @@ function _renderCalendarEvents() {
     const end     = ev.end ? new Date(ev.end) : new Date(start.getTime() + 60 * 60 * 1000);
     const isNow   = !ev.allDay && now >= start && now <= end;
 
+    if (ev.allDay) {
+      // All-day: tinted background, bold title, no dot
+      const hex = ev._calColor || '#1C2B3A';
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      return `<div class="sched-item" style="background:rgba(${r},${g},${b},0.12);">
+        <div style="flex:1;min-width:0;">
+          <div class="sched-desc" style="font-weight:600;">${ev.title}</div>
+          <div style="font-size:11.5px;color:#9CA3AF;margin-top:1px;">${_fmtEventDate(ev.start)} · All Day</div>
+        </div>
+      </div>`;
+    }
+
     const itemStyle = isNow
       ? 'background:#F3F4F6;border-left:3px solid #2E7D32;padding-left:8px;margin-left:-8px;border-radius:0 4px 4px 0;'
       : '';
@@ -67,7 +81,7 @@ function _renderCalendarEvents() {
       <div style="flex:1;min-width:0;">
         <div class="sched-desc">${ev.title}</div>
         <div style="font-size:11.5px;color:#9CA3AF;margin-top:1px;">
-          ${_fmtEventDate(ev.start)}${ev.allDay ? '' : ' · ' + _fmtEventTime(ev.start, false)}
+          ${_fmtEventDate(ev.start)} · ${_fmtEventTime(ev.start, false)}
         </div>
       </div>
     </div>`;
