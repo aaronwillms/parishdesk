@@ -76,8 +76,22 @@ function parseExdates(value, param) {
   return dates;
 }
 
-// Format a Date as the compact UTC string rrule expects: YYYYMMDDTHHmmssZ
-function toRRuleDtstart(date) {
+// Format a Date as a floating (no-Z) DTSTART string using wall-clock time in tzid.
+// rrule with a floating DTSTART generates occurrences whose getUTC*() values equal
+// the wall-clock time, sidestepping the DST-bake-in problem with UTC DTSTART.
+function toRRuleWallDtstart(date, tzid) {
+  const pad = n => String(n).padStart(2, '0');
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tzid, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
+  const p = Object.fromEntries(fmt.formatToParts(date).map(x => [x.type, x.value]));
+  const h = p.hour === '24' ? '00' : p.hour;
+  return `${p.year}${p.month}${p.day}T${h}${p.minute}${p.second}`;
+}
+
+// Format a Date as the compact UTC string rrule expects: YYYYMMDDTHHmmssZ (UTC fallback).
+function toRRuleUTCDtstart(date) {
   const pad = n => String(n).padStart(2, '0');
   return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}` +
          `T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`;
@@ -85,17 +99,49 @@ function toRRuleDtstart(date) {
 
 // Expand a recurring event for a specific target date window [windowStart, windowEnd).
 // Returns an array of UTC Date objects representing occurrences within that window.
-function expandRRule(dtstart, rruleStr, windowStart, windowEnd, exdates) {
+// When tzid is provided, uses a floating DTSTART so rrule generates wall-clock occurrences,
+// then converts each one individually via parseTzidDate — this correctly handles DST across
+// the year even when DTSTART was created in a different DST period.
+function expandRRule(dtstart, rruleStr, windowStart, windowEnd, exdates, tzid) {
   try {
-    // rrule operates in UTC — dtstart must already be a proper UTC Date
-    const ruleText = `DTSTART:${toRRuleDtstart(dtstart)}\n${rruleStr}`;
+    let ruleText, floating;
+    if (tzid) {
+      // Floating DTSTART: wall-clock time in tzid, no Z suffix.
+      // rrule treats this as "naive UTC" internally, so getUTC*() on occurrences = wall-clock.
+      ruleText = `DTSTART:${toRRuleWallDtstart(dtstart, tzid)}\n${rruleStr}`;
+      floating = true;
+    } else {
+      ruleText = `DTSTART:${toRRuleUTCDtstart(dtstart)}\n${rruleStr}`;
+      floating = false;
+    }
+
     const rule = RRule.fromString(ruleText);
-    const occurrences = rule.between(windowStart, windowEnd, true /* inclusive */);
-    return occurrences.filter(d => {
-      const dateKey  = d.toISOString().slice(0, 10);
-      const msKey    = String(d.getTime());
-      return !exdates.has(dateKey) && !exdates.has(msKey);
-    });
+    // Expand with a ±1-day buffer beyond the already-buffered window to ensure we catch
+    // wall-clock times that may sit outside the UTC window due to timezone offset.
+    const rawOccurrences = rule.between(
+      new Date(windowStart.getTime() - 24 * 60 * 60 * 1000),
+      new Date(windowEnd.getTime()   + 24 * 60 * 60 * 1000),
+      true,
+    );
+
+    return rawOccurrences.map(occ => {
+      let utcDate;
+      if (floating) {
+        // occ.getUTC*() is the wall-clock time — re-parse with proper DST offset for that date
+        const pad = n => String(n).padStart(2, '0');
+        const wallStr = `${occ.getUTCFullYear()}${pad(occ.getUTCMonth() + 1)}${pad(occ.getUTCDate())}` +
+                        `T${pad(occ.getUTCHours())}${pad(occ.getUTCMinutes())}${pad(occ.getUTCSeconds())}`;
+        utcDate = parseTzidDate(wallStr, tzid);
+      } else {
+        utcDate = occ;
+      }
+      if (!utcDate) return null;
+      if (utcDate < windowStart || utcDate > windowEnd) return null;
+      const dateKey = utcDate.toISOString().slice(0, 10);
+      const msKey   = String(utcDate.getTime());
+      if (exdates.has(dateKey) || exdates.has(msKey)) return null;
+      return utcDate;
+    }).filter(Boolean);
   } catch (e) {
     console.warn('[icsParser] RRULE expansion failed:', rruleStr, e);
     return [];
@@ -180,7 +226,7 @@ export function parseICS(raw, { targetDate, timezone } = {}) {
         continue;
       }
 
-      const occurrences = expandRRule(startParsed.date, rruleStr, windowStart, windowEnd, exdates);
+      const occurrences = expandRRule(startParsed.date, rruleStr, windowStart, windowEnd, exdates, startParsed.tzid);
       for (const occ of occurrences) {
         // Verify the occurrence actually falls on todayStr in parish timezone
         const occDateStr = occ.toLocaleDateString('en-CA', { timeZone: parishTz || 'America/Chicago' });

@@ -229,9 +229,10 @@ export function updateProjectStats() {
 // ── Projects & Tasks ───────────────────────────────────────────────────────
 
 const _PROJ_STATUS = {
-  in_progress: { label: 'In Progress', color: '#7A5C00', bg: '#FDF3D0', border: '#1565C0' },
-  blocked:     { label: 'Blocked',     color: '#7A1020', bg: '#FDEAED', border: '#8B1A2F' },
-  not_started: { label: 'Not Started', color: '#4B5563', bg: '#F3F4F6', border: '#999999' },
+  in_progress: { label: 'In Progress', color: '#1565C0', bg: '#EFF6FF', border: '#1565C0' },
+  blocked:     { label: 'Blocked',     color: '#8B1A2F', bg: '#FEF2F2', border: '#8B1A2F' },
+  not_started: { label: 'Not Started', color: '#6A1B9A', bg: '#F5F3FF', border: '#6A1B9A' },
+  complete:    { label: 'Complete',    color: '#2E7D32', bg: '#F0FDF4', border: '#2E7D32' },
 };
 const _TASK_BORDER = '#C9A84C';
 
@@ -300,7 +301,7 @@ export function renderDashProjects() {
           <div style="display:flex;align-items:center;gap:8px;min-width:0;">
             <i class="fa-solid ${item.icon}" style="font-size:12px;color:#8B1A2F;flex-shrink:0;"></i>
             <span style="font-size:13px;font-weight:500;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
-            <span style="font-size:9.5px;font-weight:700;background:${st.bg};color:${st.color};border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">${st.label}</span>
+            <span style="font-size:9.5px;font-weight:700;background:${st.bg};color:${st.color};border:1px solid ${st.border};border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">${st.label}</span>
           </div>
           ${item.dueDate ? `<div style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};padding-left:20px;">${fmtDate(item.dueDate)}</div>` : ''}
         </div>`;
@@ -315,7 +316,7 @@ export function renderDashProjects() {
             <input type="checkbox" class="dash-task-cb" data-task-id="${item.id}"
               style="flex-shrink:0;width:14px;height:14px;accent-color:#1C2B3A;cursor:pointer;" />
             <span style="font-size:13px;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
-            <span style="font-size:9.5px;font-weight:700;background:#FDF3D0;color:#7A5C00;border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">Task</span>
+            <span style="font-size:9.5px;font-weight:700;background:#FFFBEB;color:#B45309;border:1px solid #C9A84C;border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">Task</span>
           </div>
           ${item.dueDate ? `<div style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};padding-left:22px;">${fmtDate(item.dueDate)}</div>` : ''}
         </div>`;

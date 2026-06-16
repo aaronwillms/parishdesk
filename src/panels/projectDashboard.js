@@ -9,10 +9,11 @@ import { renderProjectLog } from '../ui/projectLog.js';
 // ── Status config ──────────────────────────────────────────────────────────
 
 const STATUS = {
-  in_progress:  { label: 'In Progress',  color: '#7A5C00', bg: '#FDF3D0' },
-  blocked:      { label: 'Blocked',      color: '#7A1020', bg: '#FDEAED' },
-  not_started:  { label: 'Not Started',  color: '#4B5563', bg: '#F3F4F6' },
-  complete:     { label: 'Complete',     color: '#F5F1EB', bg: '#1C2B3A' },
+  in_progress:  { label: 'In Progress',  color: '#1565C0', bg: '#EFF6FF', border: '#1565C0' },
+  blocked:      { label: 'Blocked',      color: '#8B1A2F', bg: '#FEF2F2', border: '#8B1A2F' },
+  not_started:  { label: 'Not Started',  color: '#6A1B9A', bg: '#F5F3FF', border: '#6A1B9A' },
+  complete:     { label: 'Complete',     color: '#2E7D32', bg: '#F0FDF4', border: '#2E7D32' },
+  inactive:     { label: 'Inactive',     color: '#6B7280', bg: '#F3F4F6', border: '#9CA3AF' },
 };
 
 const TABS = [
@@ -75,7 +76,7 @@ async function _load() {
 
 function _statusBadge(code) {
   const st = STATUS[code] || STATUS.not_started;
-  return `<span style="font-size:11px;font-weight:700;background:${st.bg};color:${st.color};border-radius:20px;padding:2px 10px;">${st.label}</span>`;
+  return `<span style="font-size:11px;font-weight:700;background:${st.bg};color:${st.color};border:1px solid ${st.border};border-radius:20px;padding:2px 10px;">${st.label}</span>`;
 }
 
 function _personnelName(id) {

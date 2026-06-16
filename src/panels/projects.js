@@ -10,10 +10,11 @@ import { isAdmin } from '../roles.js';
 // ── Status config ──────────────────────────────────────────────────────────
 
 export const STATUS = {
-  in_progress:  { label: 'In Progress',  color: '#7A5C00', bg: '#FDF3D0', dot: '#C9A84C' },
-  blocked:      { label: 'Blocked',      color: '#7A1020', bg: '#FDEAED', dot: '#8B1A2F' },
-  not_started:  { label: 'Not Started',  color: '#4B5563', bg: '#F3F4F6', dot: '#9CA3AF' },
-  complete:     { label: 'Complete',     color: '#F5F1EB', bg: '#1C2B3A', dot: '#1C2B3A' },
+  in_progress:  { label: 'In Progress',  color: '#1565C0', bg: '#EFF6FF', border: '#1565C0', dot: '#1565C0' },
+  blocked:      { label: 'Blocked',      color: '#8B1A2F', bg: '#FEF2F2', border: '#8B1A2F', dot: '#8B1A2F' },
+  not_started:  { label: 'Not Started',  color: '#6A1B9A', bg: '#F5F3FF', border: '#6A1B9A', dot: '#9CA3AF' },
+  complete:     { label: 'Complete',     color: '#2E7D32', bg: '#F0FDF4', border: '#2E7D32', dot: '#2E7D32' },
+  inactive:     { label: 'Inactive',     color: '#6B7280', bg: '#F3F4F6', border: '#9CA3AF', dot: '#9CA3AF' },
 };
 
 export const GROUP_ORDER = ['in_progress', 'blocked', 'not_started', 'complete'];
@@ -304,7 +305,7 @@ function assigneeLabel(ids) {
 
 function statusBadge(code) {
   const st = STATUS[code] || STATUS.not_started;
-  return `<span style="font-size:10.5px;font-weight:700;background:${st.bg};color:${st.color};border-radius:20px;padding:2px 9px;white-space:nowrap;letter-spacing:.02em;">${st.label}</span>`;
+  return `<span style="font-size:10.5px;font-weight:700;background:${st.bg};color:${st.color};border:1px solid ${st.border};border-radius:20px;padding:2px 9px;white-space:nowrap;letter-spacing:.02em;">${st.label}</span>`;
 }
 
 export function projectCard(p) {
