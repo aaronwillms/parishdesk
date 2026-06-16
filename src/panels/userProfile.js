@@ -291,8 +291,17 @@ async function _connectGoogle() {
   statusEl.textContent = 'Loading…';
   try {
     const res = await fetch('/functions/config');
-    const { googleClientId } = await res.json();
-    if (!googleClientId) { statusEl.textContent = 'Google Calendar is not configured.'; return; }
+    if (!res.ok) {
+      throw new Error(`/functions/config returned ${res.status} ${res.statusText} — is it deployed?`);
+    }
+    let cfg;
+    try {
+      cfg = await res.json();
+    } catch (jsonErr) {
+      throw new Error(`/functions/config response is not valid JSON (status ${res.status}) — body may be an HTML error page`);
+    }
+    const { googleClientId } = cfg;
+    if (!googleClientId) { statusEl.textContent = 'Google Calendar is not configured — set GOOGLE_CLIENT_ID in Cloudflare env vars.'; return; }
 
     const params = new URLSearchParams({
       client_id:     googleClientId,
@@ -303,8 +312,11 @@ async function _connectGoogle() {
       prompt:        'consent',
       state:         _user.id,
     });
-    window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+    const oauthUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+    console.log('[connectGoogle] redirecting to:', oauthUrl);
+    window.location.href = oauthUrl;
   } catch (e) {
+    console.error('[connectGoogle] failed:', e);
     statusEl.textContent = 'Error: ' + e.message;
   }
 }
