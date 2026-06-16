@@ -445,7 +445,7 @@ function renderAnnouncements() {
   };
   c.innerHTML = [
     ...visible.map(a => `
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:.5rem 0;border-bottom:.5px solid var(--stone);" class="annc-item">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:.5rem 0;border-bottom:.5px solid var(--stone);" class="annc-item" data-ann-id="${a.id}">
       <div style="flex:1;min-width:0;">
         ${a.pinned ? `<span style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#922B21;text-transform:uppercase;margin-right:6px;">📌 Pinned</span>` : ''}
         <span style="font-size:14px;color:var(--navy);line-height:1.5;">${a.message}</span>
@@ -468,11 +468,30 @@ function renderAnnouncements() {
 }
 
 async function dismissAnnouncement(id) {
+  // Birthday announcements are in-memory only — dismiss locally without persisting
+  if (id.startsWith('__bday__')) {
+    dismissedIds.add(id);
+    renderAnnouncements();
+    return;
+  }
+  if (!currentUserId) return;
+
+  // Persist first — only update UI on success to avoid phantom dismissals on reload
+  const { error } = await sb.from('announcement_dismissals')
+    .insert({ announcement_id: id, user_id: currentUserId });
+  if (error && error.code !== '23505') {
+    // 23505 = already dismissed (unique constraint) — treat as success
+    console.error('[announcements] dismiss failed:', error);
+    const c = document.getElementById('dash-announcements');
+    const item = c?.querySelector(`[data-ann-id="${id}"]`);
+    if (item) {
+      item.style.outline = '1.5px solid #8B1A2F';
+      setTimeout(() => { if (item) item.style.outline = ''; }, 2000);
+    }
+    return;
+  }
   dismissedIds.add(id);
   renderAnnouncements();
-  if (!currentUserId || id.startsWith('__bday__')) return;
-  const { error } = await sb.from('announcement_dismissals').insert({ announcement_id: id, user_id: currentUserId });
-  if (error && error.code !== '23505') console.error('[announcements] dismiss error:', error);
 }
 
 function openAnnouncementModal(data) {

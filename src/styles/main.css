@@ -175,20 +175,31 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 /* DARK MODE — mobile only */
 @media(max-width:767px){
   body.dark-mode{background:#0F1923;color:#F8F7F4;}
+  /* Blanket text override — catches inline color styles on divs/spans */
+  body.dark-mode p,body.dark-mode span,body.dark-mode div,body.dark-mode li,
+  body.dark-mode td,body.dark-mode th,body.dark-mode label{color:#F8F7F4;}
+  /* Muted/secondary text: stay grey but readable */
+  body.dark-mode [style*="color:#6B7280"],body.dark-mode [style*="color: #6B7280"],
+  body.dark-mode [style*="color:#9CA3AF"],body.dark-mode [style*="color: #9CA3AF"],
+  body.dark-mode .text-muted,body.dark-mode .text-secondary{color:#9CA3AF !important;}
   body.dark-mode #sidebar{background:#0D1520;}
   body.dark-mode #main{background:#0F1923;}
   body.dark-mode #topbar{background:#1A2634;border-bottom-color:#2D3F50;}
   body.dark-mode #content{background:#0F1923;}
-  body.dark-mode .page-title,body.dark-mode .card-title{color:#F8F7F4;}
+  body.dark-mode .page-title,body.dark-mode .card-title{color:#F8F7F4 !important;}
   body.dark-mode .card,body.dark-mode .stat-card{background:#1A2634;border-color:#2D3F50;}
-  body.dark-mode .stat-label{color:#9CA3AF;}
-  body.dark-mode .stat-num{color:#F8F7F4;}
+  body.dark-mode .stat-label{color:#9CA3AF !important;}
+  body.dark-mode .stat-num{color:#F8F7F4 !important;}
   body.dark-mode .modal{background:#1A2634;border-color:#2D3F50;}
   body.dark-mode .modal-header{border-bottom-color:#2D3F50;}
-  body.dark-mode input,body.dark-mode select,body.dark-mode textarea{background:#1A2634;border-color:#2D3F50;color:#F8F7F4;}
+  body.dark-mode input,body.dark-mode select,body.dark-mode textarea{background:#1A2634 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
   body.dark-mode .nav-item.active{background:rgba(201,168,76,.15);}
-  body.dark-mode #user-profile-root .card,body.dark-mode #user-profile-root > div > div{background:#1A2634;border-color:#2D3F50;}
-  body.dark-mode #user-profile-root div[style*="background:#fff"]{background:#1A2634 !important;border-color:#2D3F50 !important;}
+  /* Inline white card backgrounds (user profile, panels) */
+  body.dark-mode [style*="background:#fff"],body.dark-mode [style*="background: #fff"],
+  body.dark-mode [style*="background:#FFFFFF"],body.dark-mode [style*="background: #FFFFFF"],
+  body.dark-mode [style*="background:#FAFAF8"],body.dark-mode [style*="background:#F8F7F4"]{background:#1A2634 !important;}
+  /* Inline navy text overrides */
+  body.dark-mode [style*="color:#1C2B3A"],body.dark-mode [style*="color: #1C2B3A"]{color:#F8F7F4 !important;}
   body.dark-mode .sched-item{border-bottom-color:#2D3F50;}
   body.dark-mode .notif-panel{background:#1A2634;border-color:#2D3F50;}
   body.dark-mode .notif-item{border-bottom-color:#2D3F50;}
