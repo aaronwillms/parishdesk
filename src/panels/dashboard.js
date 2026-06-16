@@ -1,7 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity } from '../utils.js';
-import { getUserScope, isVisible } from '../ui/userScope.js';
+import { getUserScope } from '../ui/userScope.js';
 import { isSuperAdmin, isAdmin } from '../roles.js';
 import { parseICS } from '../utils/icsParser.js';
 import { createAvatar } from '../ui/avatar.js';
@@ -57,14 +57,33 @@ export async function loadCalendar() {
 
     await Promise.allSettled(cals.map(async (cal) => {
       if (cal.type === 'google') {
-        // Google Calendar stub
-        allEvents.push({
-          _calName:  cal.name,
-          _calColor: cal.color,
-          _stub:     true,
-          start:     new Date(0),
-          title:     `${cal.name} — Google Calendar coming soon`,
-        });
+        try {
+          const proxyRes = await fetch('/functions/google-calendar-proxy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: currentUserId, action: 'list' }),
+          });
+          if (!proxyRes.ok) throw new Error(await proxyRes.text());
+          const gcalData = await proxyRes.json();
+          for (const item of (gcalData.items || [])) {
+            const startRaw = item.start?.dateTime || item.start?.date;
+            if (!startRaw) continue;
+            const start = new Date(startRaw);
+            const allDay = !item.start?.dateTime;
+            if (start >= now && start <= cutoff) {
+              allEvents.push({
+                title:     item.summary || '(No title)',
+                start,
+                allDay,
+                _calName:  cal.name,
+                _calColor: cal.color || '#1565C0',
+                _gcalId:   item.id,
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('[calendar] Google Calendar fetch failed:', e);
+        }
         return;
       }
 
@@ -512,23 +531,15 @@ async function loadActivityFeed() {
     ? new Set(['marriage', 'annulments', 'ocia', 'baptism', 'firstcomm', 'confirmation'])
     : await _coordinatorPrograms(personnelId);
 
-  const queries = [
-    sb.from('projects').select('id,title,updated_at').order('updated_at', { ascending: false }).limit(limit),
-    sb.from('tasks').select('id,title,updated_at,created_by,assigned_to,team_id').order('updated_at', { ascending: false }).limit(limit),
-    sb.from('activity_log')
-      .select('id,action,entity_name,created_at,triggered_by,context_type,context_id')
-      .order('created_at', { ascending: false })
-      .limit(20),
-  ];
-  if (superAdmin || coordPrograms.has('marriage'))   queries.push(sb.from('couples').select('id,groom_name,bride_name,updated_at').order('updated_at', { ascending: false }).limit(limit));
-  if (superAdmin || coordPrograms.has('annulments')) queries.push(sb.from('annulment_cases').select('id,petitioner,respondent,updated_at').order('updated_at', { ascending: false }).limit(limit));
-  if (superAdmin || coordPrograms.has('ocia'))       queries.push(sb.from('sacramental_ocia').select('id,name,updated_at').order('updated_at', { ascending: false }).limit(limit));
-
-  const [projRes, tasksRes, actRes, ...sacRes] = await Promise.all(queries);
+  const { data: actRaw, error: actErr } = await sb
+    .from('activity_log')
+    .select('id,action,entity_name,created_at,triggered_by,context_type,context_id')
+    .order('created_at', { ascending: false })
+    .limit(20);
+  if (actErr) console.error('[activity_log] fetch error:', actErr);
 
   // Build profile map for activity_log entries
-  if (actRes.error) console.error('[activity_log] fetch error:', actRes.error);
-  const actData = actRes.data || [];
+  const actData = actRaw || [];
   const triggeredByIds = [...new Set(actData.map(r => r.triggered_by).filter(Boolean))];
   const userMap = {};
   if (triggeredByIds.length) {
@@ -606,36 +617,6 @@ async function loadActivityFeed() {
     });
   });
 
-  // Projects
-  (projRes.data || []).filter(r => superAdmin || accessibleProjectIds.has(r.id)).forEach(r => {
-    items.push({ icon: FEED_ICONS.project, label: 'Project updated', name: r.title || 'Unknown', ts: r.updated_at, isFa: true });
-  });
-
-  // Tasks
-  (tasksRes.data || []).filter(r => superAdmin || isVisible(r, scope)).forEach(r => {
-    items.push({ icon: FEED_ICONS.task, label: 'Task updated', name: r.title || 'Unknown', ts: r.updated_at, isFa: true });
-  });
-
-  // Sacramental
-  let sacIdx = 0;
-  if (superAdmin || coordPrograms.has('marriage')) {
-    (sacRes[sacIdx++]?.data || []).forEach(r => {
-      const name = [r.groom_name, r.bride_name].filter(Boolean).join(' & ') || 'Unknown couple';
-      items.push({ icon: FEED_ICONS.couple, label: 'Marriage prep updated', name, ts: r.updated_at, isFa: true });
-    });
-  }
-  if (superAdmin || coordPrograms.has('annulments')) {
-    (sacRes[sacIdx++]?.data || []).forEach(r => {
-      const name = [r.petitioner, r.respondent].filter(Boolean).join(' v. ') || 'Unknown case';
-      items.push({ icon: FEED_ICONS.case, label: 'Annulment case updated', name, ts: r.updated_at, isFa: true });
-    });
-  }
-  if (superAdmin || coordPrograms.has('ocia')) {
-    (sacRes[sacIdx++]?.data || []).forEach(r => {
-      items.push({ icon: FEED_ICONS.ocia, label: 'OCIA record updated', name: r.name || 'Unknown', ts: r.updated_at, isFa: true });
-    });
-  }
-
   items.sort((a, b) => new Date(b.ts) - new Date(a.ts));
 
   const c = document.getElementById('dash-activity');
@@ -704,6 +685,7 @@ export async function loadInit() {
 
     const scope = await getUserScope();
     _dashPersonnelId = scope.personnelId || null;
+    _checkGcalButton();
 
     // Skip project/task fetches if already loaded (e.g. called a second time)
     const projectsAlreadyLoaded = store.allProjects?.length > 0 && store._projectScopeReady !== undefined;
@@ -771,10 +753,144 @@ export async function loadInit() {
   }
 }
 
+// ── New Event Modal ────────────────────────────────────────────────────────
+
+let _googleCalConnected = false;
+
+async function _openNewEventModal() {
+  // Check if Google Calendar is connected for this user
+  _googleCalConnected = false;
+  if (currentUserId) {
+    const { data } = await sb.from('calendars')
+      .select('id')
+      .eq('user_id', currentUserId)
+      .eq('type', 'google')
+      .eq('scope', 'personal')
+      .maybeSingle();
+    _googleCalConnected = !!data;
+  }
+
+  // Populate calendar selector
+  const sel = document.getElementById('ne-calendar');
+  if (sel) {
+    sel.innerHTML = '';
+    // Fetch active ICS calendars for options (read-only, disabled)
+    const { data: cals } = await sb.from('calendars')
+      .select('id, name, type, scope')
+      .eq('active', true)
+      .neq('type', 'google');
+
+    for (const cal of (cals || [])) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = cal.name + ' (read-only)';
+      opt.disabled = true;
+      sel.appendChild(opt);
+    }
+
+    if (_googleCalConnected) {
+      const opt = document.createElement('option');
+      opt.value = 'google';
+      opt.textContent = 'My Google Calendar';
+      opt.selected = true;
+      sel.appendChild(opt);
+    } else {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'No writable calendar — connect Google Calendar in your profile';
+      opt.disabled = true;
+      opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+
+  // Pre-fill date with today
+  const dateEl = document.getElementById('ne-date');
+  if (dateEl && !dateEl.value) dateEl.value = todayCST();
+
+  const overlay = document.getElementById('new-event-overlay');
+  if (overlay) overlay.style.display = 'flex';
+  document.getElementById('ne-title')?.focus();
+}
+
+function _closeNewEventModal() {
+  const overlay = document.getElementById('new-event-overlay');
+  if (overlay) overlay.style.display = 'none';
+  const statusEl = document.getElementById('ne-status');
+  if (statusEl) statusEl.textContent = '';
+}
+
+async function _saveNewEvent() {
+  const title = document.getElementById('ne-title')?.value.trim();
+  const date  = document.getElementById('ne-date')?.value;
+  const time  = document.getElementById('ne-time')?.value;
+  const cal   = document.getElementById('ne-calendar')?.value;
+  const statusEl = document.getElementById('ne-status');
+
+  if (!title) { statusEl.textContent = 'Title is required.'; return; }
+  if (!date)  { statusEl.textContent = 'Date is required.'; return; }
+  if (cal !== 'google') { statusEl.textContent = 'No writable calendar selected.'; return; }
+
+  statusEl.style.color = '#6B7280';
+  statusEl.textContent = 'Saving…';
+
+  let gcalEvent;
+  if (time) {
+    const startDT = new Date(`${date}T${time}:00`);
+    const endDT   = new Date(startDT.getTime() + 60 * 60 * 1000);
+    gcalEvent = {
+      summary: title,
+      start:   { dateTime: startDT.toISOString(), timeZone: 'America/Chicago' },
+      end:     { dateTime: endDT.toISOString(),   timeZone: 'America/Chicago' },
+    };
+  } else {
+    gcalEvent = {
+      summary: title,
+      start:   { date },
+      end:     { date },
+    };
+  }
+
+  try {
+    const res = await fetch('/functions/google-calendar-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: currentUserId, action: 'create', event: gcalEvent }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+
+    statusEl.style.color = '#166534';
+    statusEl.textContent = 'Event saved!';
+    setTimeout(() => {
+      _closeNewEventModal();
+      loadCalendar();
+    }, 1200);
+  } catch (e) {
+    statusEl.style.color = '#8B1A2F';
+    statusEl.textContent = 'Failed: ' + e.message;
+  }
+}
+
+// Show "+ New Event" button only when Google Calendar is connected
+async function _checkGcalButton() {
+  if (!currentUserId) return;
+  const { data } = await sb.from('calendars')
+    .select('id')
+    .eq('user_id', currentUserId)
+    .eq('type', 'google')
+    .eq('scope', 'personal')
+    .maybeSingle();
+  const btn = document.getElementById('btn-new-event');
+  if (btn) btn.style.display = data ? '' : 'none';
+}
+
 Object.assign(window, {
   loadCalendar,
   dismissAnnouncement,
   openAnnouncementModal,
   saveAnnouncement,
   deleteAnnouncement,
+  _openNewEventModal,
+  _closeNewEventModal,
+  _saveNewEvent,
 });

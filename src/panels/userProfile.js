@@ -3,6 +3,7 @@ import { store } from '../store.js';
 
 let _user = null;
 let _profile = null;
+let _googleCal = null; // calendars row for type='google'
 
 // ── Public entry point ─────────────────────────────────────────────────────
 
@@ -17,6 +18,23 @@ export async function loadUserProfile() {
     .maybeSingle();
   _profile = data || null;
   store.currentUserProfile = _profile;
+
+  const { data: gcal } = await sb.from('calendars')
+    .select('id')
+    .eq('user_id', user.id)
+    .eq('type', 'google')
+    .eq('scope', 'personal')
+    .maybeSingle();
+  _googleCal = gcal || null;
+
+  // Handle redirect back from Google OAuth
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('gcal') === 'connected') {
+    _googleCal = { id: 'pending' };
+    history.replaceState(null, '', window.location.pathname);
+  } else if (params.get('gcal') === 'error') {
+    history.replaceState(null, '', window.location.pathname);
+  }
 
   _render();
 }
@@ -114,7 +132,7 @@ function _render() {
       </div>
 
       <!-- Account -->
-      <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.1rem 1.2rem;margin-bottom:1.5rem;">
+      <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.1rem 1.2rem;margin-bottom:1rem;">
         <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.75rem;">Account</div>
         <div style="font-size:13px;color:#6B7280;margin-bottom:.75rem;">${email}</div>
         <button id="up-change-pw" style="
@@ -122,6 +140,29 @@ function _render() {
           border-radius:5px;padding:.35rem .85rem;cursor:pointer;font-family:'Inter',sans-serif;
         ">Change Password</button>
         <div id="up-pw-status" style="font-size:12px;color:#6B7280;margin-top:6px;min-height:16px;"></div>
+      </div>
+
+      <!-- Google Calendar -->
+      <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.1rem 1.2rem;margin-bottom:1.5rem;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.75rem;">Google Calendar</div>
+        ${_googleCal
+          ? `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <span style="font-size:13px;color:#166534;font-weight:500;">
+                <i class="fa-solid fa-circle-check" style="margin-right:5px;"></i>Connected
+              </span>
+              <button id="up-gcal-disconnect" style="
+                font-size:12.5px;color:#9CA3AF;background:none;border:.5px solid #E2DDD6;
+                border-radius:5px;padding:.3rem .75rem;cursor:pointer;font-family:'Inter',sans-serif;
+              ">Disconnect</button>
+            </div>`
+          : `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <span style="font-size:13px;color:#6B7280;">Not connected</span>
+              <button id="up-gcal-connect" style="
+                font-size:12.5px;color:#fff;background:#1C2B3A;border:none;
+                border-radius:5px;padding:.35rem .85rem;cursor:pointer;font-family:'Inter',sans-serif;font-weight:500;
+              ">Connect Google Calendar</button>
+            </div>`}
+        <div id="up-gcal-status" style="font-size:12px;color:#6B7280;margin-top:6px;min-height:16px;"></div>
       </div>
 
     </div>
@@ -148,6 +189,10 @@ function _bindEvents() {
 
   // Change password
   document.getElementById('up-change-pw')?.addEventListener('click', _changePassword);
+
+  // Google Calendar
+  document.getElementById('up-gcal-connect')?.addEventListener('click', _connectGoogle);
+  document.getElementById('up-gcal-disconnect')?.addEventListener('click', _disconnectGoogle);
 }
 
 async function _handleUpload(e) {
@@ -239,6 +284,45 @@ async function _changePassword() {
   const { error } = await sb.auth.resetPasswordForEmail(_user.email);
   if (error) { statusEl.textContent = 'Error: ' + error.message; return; }
   statusEl.textContent = 'Password reset email sent — check your inbox.';
+}
+
+async function _connectGoogle() {
+  const statusEl = document.getElementById('up-gcal-status');
+  statusEl.textContent = 'Loading…';
+  try {
+    const res = await fetch('/functions/config');
+    const { googleClientId } = await res.json();
+    if (!googleClientId) { statusEl.textContent = 'Google Calendar is not configured.'; return; }
+
+    const params = new URLSearchParams({
+      client_id:     googleClientId,
+      redirect_uri:  'https://parishdesk.pages.dev/auth/google/callback',
+      response_type: 'code',
+      scope:         'https://www.googleapis.com/auth/calendar',
+      access_type:   'offline',
+      prompt:        'consent',
+      state:         _user.id,
+    });
+    window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+  } catch (e) {
+    statusEl.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function _disconnectGoogle() {
+  if (!confirm('Disconnect Google Calendar? You can reconnect at any time.')) return;
+  const statusEl = document.getElementById('up-gcal-status');
+  statusEl.textContent = 'Disconnecting…';
+
+  const { error } = await sb.from('calendars')
+    .delete()
+    .eq('user_id', _user.id)
+    .eq('type', 'google')
+    .eq('scope', 'personal');
+
+  if (error) { statusEl.textContent = 'Error: ' + error.message; return; }
+  _googleCal = null;
+  _render();
 }
 
 async function _upsertProfile(fields) {
