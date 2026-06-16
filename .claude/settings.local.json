@@ -31,7 +31,8 @@
       "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/ocia.js)",
       "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/marriage.js)",
       "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/dashboard.js)",
-      "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/main.js)"
+      "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/main.js)",
+      "Bash(git -C /Volumes/RemovableDrive/parishdesk log --oneline --all)"
     ]
   }
 }
