@@ -1,7 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity } from '../utils.js';
-import { getUserScope } from '../ui/userScope.js';
+import { getUserScope, isVisible } from '../ui/userScope.js';
 import { isSuperAdmin, isAdmin } from '../roles.js';
 import { parseICS } from '../utils/icsParser.js';
 import { createAvatar } from '../ui/avatar.js';
