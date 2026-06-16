@@ -204,6 +204,38 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
   body.dark-mode .notif-panel{background:#1A2634;border-color:#2D3F50;}
   body.dark-mode .notif-item{border-bottom-color:#2D3F50;}
   body.dark-mode .notif-unread{background:#243447;}
+  /* Cards — catch all remaining light card backgrounds */
+  body.dark-mode .card{background:#1A2634 !important;border-color:#2D3F50 !important;}
+  body.dark-mode .card *{color:#F8F7F4 !important;}
+  body.dark-mode .card-header,body.dark-mode .card-title{color:#F8F7F4 !important;}
+  /* Announcements */
+  body.dark-mode .annc-item,body.dark-mode .annc-item span,body.dark-mode .annc-item div{color:#F8F7F4 !important;}
+  /* Activity feed */
+  body.dark-mode .activity-entry,body.dark-mode .activity-entry span,body.dark-mode .activity-entry div,
+  body.dark-mode [class*="activity"] span,body.dark-mode [class*="activity"] div{color:#F8F7F4 !important;}
+  /* Message / chat dropdown */
+  body.dark-mode .message-dropdown,body.dark-mode .chat-dropdown,
+  body.dark-mode [id*="message-dropdown"],body.dark-mode [class*="message-drop"]{background:#1A2634 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+  body.dark-mode .message-dropdown *,body.dark-mode .chat-dropdown *{color:#F8F7F4 !important;}
+  /* Notification dropdown */
+  body.dark-mode .notification-dropdown,body.dark-mode [id*="notif-dropdown"],body.dark-mode [class*="notif-drop"]{background:#1A2634 !important;border-color:#2D3F50 !important;}
+  body.dark-mode .notification-dropdown *{color:#F8F7F4 !important;}
+  /* Sacramental / record cards */
+  body.dark-mode .sacramental-card,body.dark-mode .record-card,
+  body.dark-mode [class*="sacrament"] .card,body.dark-mode [class*="record"]{background:#1A2634 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+  body.dark-mode .sacramental-card *,body.dark-mode .record-card *{color:#F8F7F4 !important;}
+  /* Incoming message bubbles */
+  body.dark-mode .message-bubble-incoming,body.dark-mode .msg-bubble.incoming,
+  body.dark-mode [class*="bubble"]:not([class*="outgoing"]):not([class*="sent"]){background:#243447 !important;color:#F8F7F4 !important;}
+  /* Outgoing message bubbles */
+  body.dark-mode .message-bubble-outgoing,body.dark-mode .msg-bubble.outgoing,
+  body.dark-mode [class*="bubble"][class*="outgoing"],body.dark-mode [class*="bubble"][class*="sent"]{background:#1C2B3A !important;color:#F8F7F4 !important;}
+  /* Message input area */
+  body.dark-mode .message-input-area,body.dark-mode [class*="msg-input"],body.dark-mode [class*="message-input"]{background:#1A2634 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+  /* Message timestamps */
+  body.dark-mode .message-timestamp,body.dark-mode [class*="msg-time"],body.dark-mode [class*="message-time"]{color:#9CA3AF !important;}
+  /* Hamburger menu icon */
+  body.dark-mode #hamburger,body.dark-mode .hamburger,body.dark-mode [id*="hamburger"]{color:#F8F7F4 !important;}
 }
 
 /* AUTH SCREEN */
