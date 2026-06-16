@@ -223,7 +223,7 @@ export function taskRow(t) {
   const chips = [
     person ? `<span style="font-size:11px;color:#6B7280;">👤 ${person}</span>` : '',
     team   ? `<span style="font-size:11px;color:#6B7280;">🏛 ${team}</span>` : '',
-    t.due_date && !t.completed ? `<span style="font-size:11px;color:#6B7280;">📅 ${fmtDate(t.due_date)}</span>` : '',
+    t.due_date && !t.completed ? `<span style="font-size:11px;color:#6B7280;">${fmtDate(t.due_date)}</span>` : '',
     t.recurring ? `<span style="font-size:11px;color:#6B7280;">🔁 ${RECURRENCE_LABELS[t.recurrence_pattern] || 'Recurring'}</span>` : '',
     t.completed && t.completed_at ? `<span style="font-size:11px;color:#1E8449;">✓ ${fmtDate(t.completed_at.slice(0,10))}</span>` : '',
   ].filter(Boolean).join('');

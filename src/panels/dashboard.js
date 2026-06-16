@@ -20,7 +20,8 @@ function dotClass(colorId) {
 
 function _fmtEventTime(date, allDay) {
   if (allDay) return 'All day';
-  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const tz = store.parishSettings?.timezone || 'America/Chicago';
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz });
 }
 
 function _fmtEventDate(date) {
@@ -229,8 +230,8 @@ export function updateProjectStats() {
 // ── Projects & Tasks ───────────────────────────────────────────────────────
 
 const _PROJ_STATUS = {
-  in_progress: { label: 'In Progress', color: '#7A5C00', bg: '#FDF3D0', border: '#1565C0' },
-  blocked:     { label: 'Blocked',     color: '#7A1020', bg: '#FDEAED', border: '#8B1A2F' },
+  in_progress: { label: 'Projects in Progress', color: '#7A5C00', bg: '#FDF3D0', border: '#1565C0' },
+  blocked:     { label: 'Blocked Projects',     color: '#7A1020', bg: '#FDEAED', border: '#8B1A2F' },
   not_started: { label: 'Not Started', color: '#4B5563', bg: '#F3F4F6', border: '#999999' },
 };
 const _TASK_BORDER = '#C9A84C';
@@ -294,41 +295,27 @@ export function renderDashProjects() {
       const overdue = item.dueDate && item.dueDate < today;
       return `
         <div onclick="window.showProjectDashboard('${item.id}')" style="
-          display:flex;align-items:flex-start;gap:8px;padding:.5rem .5rem .5rem .6rem;
-          border-bottom:.5px solid #F0EDE8;border-left:3px solid ${st.border};
-          cursor:pointer;margin-left:0;
+          display:flex;align-items:center;gap:8px;padding:.5rem .5rem;
+          border-bottom:.5px solid #F0EDE8;cursor:pointer;
         " onmouseover="this.style.background='#FAFAF8'" onmouseout="this.style.background=''">
-          <span style="font-size:9.5px;font-weight:700;background:${st.bg};color:${st.color};border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;margin-top:3px;">${st.label}</span>
-          <div style="flex:1;min-width:0;">
-            <div style="display:flex;align-items:center;gap:6px;overflow:hidden;">
-              <i class="fa-solid ${item.icon}" style="font-size:12px;color:#8B1A2F;flex-shrink:0;"></i>
-              <span style="font-size:13px;font-weight:500;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
-            </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:1px;">
-              ${item.dueDate ? `<span style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};">📅 ${fmtDate(item.dueDate)}</span>` : ''}
-              ${item.assigneeCount > 0 ? `<span style="font-size:11px;color:#9CA3AF;">👤 ${item.assigneeCount}</span>` : ''}
-            </div>
-          </div>
+          <span style="font-size:9.5px;font-weight:700;background:${st.bg};color:${st.color};border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">${st.label}</span>
+          <i class="fa-solid ${item.icon}" style="font-size:12px;color:#8B1A2F;flex-shrink:0;"></i>
+          <span style="font-size:13px;font-weight:500;color:#1C2B3A;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
+          ${item.dueDate ? `<span style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};flex-shrink:0;">${fmtDate(item.dueDate)}</span>` : ''}
         </div>`;
     } else {
       const overdue = item.dueDate && item.dueDate < today;
-      const sublabel = item.isPersonal ? 'Personal' : (item.assigneeName || '');
       return `
         <div style="
-          display:flex;align-items:flex-start;gap:8px;padding:.5rem .5rem .5rem .6rem;
-          border-bottom:.5px solid #F0EDE8;border-left:3px solid ${_TASK_BORDER};
+          display:flex;align-items:center;gap:8px;padding:.5rem .5rem;
+          border-bottom:.5px solid #F0EDE8;
         ">
+          <span style="font-size:9.5px;font-weight:700;background:#FDF3D0;color:#7A5C00;border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">Task</span>
           <input type="checkbox" class="dash-task-cb" data-task-id="${item.id}"
-            style="flex-shrink:0;margin-top:2px;width:14px;height:14px;accent-color:#1C2B3A;cursor:pointer;" />
-          <div style="flex:1;min-width:0;">
-            <div style="font-size:13px;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:1px;">
-              ${item.dueDate ? `<span style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};">📅 ${fmtDate(item.dueDate)}</span>` : ''}
-              ${sublabel ? `<span style="font-size:11px;color:#9CA3AF;">${sublabel}</span>` : ''}
-            </div>
-          </div>
+            style="flex-shrink:0;width:14px;height:14px;accent-color:#1C2B3A;cursor:pointer;" />
+          <span style="font-size:13px;color:#1C2B3A;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
+          ${item.dueDate ? `<span style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};flex-shrink:0;">${fmtDate(item.dueDate)}</span>` : ''}
         </div>`;
-    }
   }).join('');
 
   // Wire task checkboxes

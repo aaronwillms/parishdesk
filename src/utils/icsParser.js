@@ -4,23 +4,38 @@ function unfold(raw) {
   return raw.replace(/\r\n[ \t]/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
-// Convert a wall-clock datetime in a named timezone (TZID) to a UTC Date.
-// Uses the Intl offset trick: probe the nominal UTC instant, measure the difference,
-// then shift to find the true UTC instant. Handles DST correctly for ~99% of cases.
+// Returns the UTC offset of tzid at the given UTC instant, in milliseconds.
+// Negative for zones west of UTC (e.g. CDT = UTC-5 → -18_000_000).
+function _tzOffsetMs(utcMs, tzid) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzid,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  });
+  const p = Object.fromEntries(fmt.formatToParts(new Date(utcMs)).map(x => [x.type, x.value]));
+  const localMs = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second);
+  return localMs - utcMs;  // negative west of UTC
+}
+
+// Convert a wall-clock datetime in a named IANA timezone to a UTC Date.
+// Two-iteration approach: the first iteration gives an approximation; the second
+// resolves the correct UTC offset at the actual (post-correction) instant, which
+// handles DST transitions correctly in all cases.
 function tzidToDate(yr, mo, dy, hr, mn, sc, tzid) {
   try {
-    const probe = new Date(Date.UTC(+yr, +mo - 1, +dy, +hr, +mn, +sc));
-    const fmt = new Intl.DateTimeFormat('en-US', {
-      timeZone: tzid,
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-      hour12: false,
-    });
-    const parts = Object.fromEntries(fmt.formatToParts(probe).map(p => [p.type, p.value]));
-    const probeLocalMs = Date.UTC(+parts.year, +parts.month - 1, +parts.day,
-                                  +parts.hour % 24, +parts.minute, +parts.second);
-    return new Date(probe.getTime() - (probeLocalMs - probe.getTime()));
+    // Treat the wall-clock time as if it were UTC to get a starting probe.
+    const wallAsUTC = Date.UTC(+yr, +mo - 1, +dy, +hr, +mn, +sc);
+
+    // First approximation: apply the offset measured at the probe instant.
+    const offset1  = _tzOffsetMs(wallAsUTC, tzid);
+    const approx   = wallAsUTC - offset1;  // UTC = wallClock - offset (offset is negative west of UTC)
+
+    // Second pass: re-measure the offset at the corrected instant (resolves DST boundaries).
+    const offset2  = _tzOffsetMs(approx, tzid);
+    return new Date(wallAsUTC - offset2);
   } catch {
+    // Unknown TZID — fall back to treating the time as browser local time.
     return new Date(+yr, +mo - 1, +dy, +hr, +mn, +sc);
   }
 }

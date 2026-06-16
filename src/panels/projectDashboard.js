@@ -215,7 +215,7 @@ function _taskRow(t) {
         <div style="font-size:13.5px;color:${t.completed ? '#9CA3AF' : '#1C2B3A'};${t.completed ? 'text-decoration:line-through;' : ''}white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.title}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:2px;">
           ${person   ? `<span style="font-size:11px;color:#8FA8BF;">👤 ${person}</span>` : ''}
-          ${t.due_date ? `<span style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};">📅 ${fmtDate(t.due_date)}</span>` : ''}
+          ${t.due_date ? `<span style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};">${fmtDate(t.due_date)}</span>` : ''}
           ${t.recurring ? `<span style="font-size:11px;color:#9CA3AF;">🔁 ${RECUR_LABELS[t.recurrence_pattern] || 'Recurring'}</span>` : ''}
         </div>
       </div>
