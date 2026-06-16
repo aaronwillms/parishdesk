@@ -51,6 +51,9 @@ function parseDateTime(value, param) {
     date = new Date(Date.UTC(+yr, +mo - 1, +dy, +hr, +mn, +sc));
   } else if (tzid) {
     date = parseTzidDate(value, tzid);
+    console.log('[ics] raw DTSTART:', value, 'TZID:', tzid);
+    console.log('[ics] parsed as UTC:', date?.toISOString());
+    console.log('[ics] displayed as parish time:', date?.toLocaleString('en-US', { timeZone: tzid }));
   } else {
     date = new Date(+yr, +mo - 1, +dy, +hr, +mn, +sc);
   }

@@ -229,8 +229,8 @@ export function updateProjectStats() {
 // ── Projects & Tasks ───────────────────────────────────────────────────────
 
 const _PROJ_STATUS = {
-  in_progress: { label: 'Projects in Progress', color: '#7A5C00', bg: '#FDF3D0', border: '#1565C0' },
-  blocked:     { label: 'Blocked Projects',     color: '#7A1020', bg: '#FDEAED', border: '#8B1A2F' },
+  in_progress: { label: 'In Progress', color: '#7A5C00', bg: '#FDF3D0', border: '#1565C0' },
+  blocked:     { label: 'Blocked',     color: '#7A1020', bg: '#FDEAED', border: '#8B1A2F' },
   not_started: { label: 'Not Started', color: '#4B5563', bg: '#F3F4F6', border: '#999999' },
 };
 const _TASK_BORDER = '#C9A84C';
