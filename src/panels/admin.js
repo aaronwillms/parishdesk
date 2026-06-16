@@ -219,10 +219,15 @@ function _userRow(u) {
   const parishStaffTeam = (store.teams || []).find(t => t.name === 'Parish Staff');
   const isParishStaff = parishStaffTeam && (u.teamIds || []).includes(parishStaffTeam.id);
 
+  const roleLabel = u.roles.includes('super_admin') ? 'Super Admin'
+                  : u.roles.includes('admin')       ? 'Admin'
+                  : 'Basic';
+  const roleBg    = u.roles.includes('super_admin') ? '#1C2B3A'
+                  : u.roles.includes('admin')       ? '#F3F4F6'
+                  : '#F3F4F6';
+  const roleColor = u.roles.includes('super_admin') ? '#F8F7F4' : '#4B5563';
   const roleBadges = [
-    ...u.roles.map(r => `<span style="font-size:10.5px;font-weight:600;background:${r === 'super_admin' ? '#1C2B3A' : '#F3F4F6'};color:${r === 'super_admin' ? '#F8F7F4' : '#4B5563'};border-radius:20px;padding:2px 8px;">${r === 'super_admin' ? 'Super Admin' : r}</span>`),
-    ...u.sacraments.map(s => `<span style="font-size:10.5px;font-weight:600;background:#FDF3D0;color:#7A5C00;border-radius:20px;padding:2px 8px;">${SACRAMENT_LABELS[s] || s}</span>`),
-    isParishStaff ? `<span style="font-size:10.5px;font-weight:600;background:#F3F4F6;color:#6B7280;border-radius:20px;padding:2px 8px;">🔒 Parish Staff</span>` : '',
+    `<span style="font-size:10.5px;font-weight:600;background:${roleBg};color:${roleColor};border-radius:20px;padding:2px 8px;">${roleLabel}</span>`,
     isUnlinked ? `<span style="font-size:10.5px;font-weight:600;background:#FDEAED;color:#8B1A2F;border-radius:20px;padding:2px 8px;border:.5px solid #F5C2CB;">Unlinked</span>` : '',
   ].filter(Boolean).join(' ');
 
@@ -662,18 +667,67 @@ function _parseAddress(addr) {
   return { street: addr, city: '', state: '', zip: '' };
 }
 
-async function _detectTimezone(city, state) {
-  const query = `${city}, ${state}, USA`;
-  const geo = await fetch(
-    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`,
-    { headers: { 'User-Agent': 'ParishDesk/1.0' } }
-  ).then(r => r.json());
-  if (!geo?.[0]) return null;
-  const { lat, lon } = geo[0];
-  const tzData = await fetch(
-    `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
-  ).then(r => r.json());
-  return tzData?.timezone?.ianaTimeId || tzData?.timezone?.name || null;
+// Primary timezone for each US state/territory — instant lookup, no network call.
+// States that straddle zones are mapped to their dominant/most-populated timezone.
+const STATE_TIMEZONES = {
+  AL: 'America/Chicago',
+  AK: 'America/Anchorage',
+  AZ: 'America/Phoenix',
+  AR: 'America/Chicago',
+  CA: 'America/Los_Angeles',
+  CO: 'America/Denver',
+  CT: 'America/New_York',
+  DE: 'America/New_York',
+  FL: 'America/New_York',
+  GA: 'America/New_York',
+  HI: 'Pacific/Honolulu',
+  ID: 'America/Boise',
+  IL: 'America/Chicago',
+  IN: 'America/Indiana/Indianapolis',
+  IA: 'America/Chicago',
+  KS: 'America/Chicago',
+  KY: 'America/New_York',
+  LA: 'America/Chicago',
+  ME: 'America/New_York',
+  MD: 'America/New_York',
+  MA: 'America/New_York',
+  MI: 'America/Detroit',
+  MN: 'America/Chicago',
+  MS: 'America/Chicago',
+  MO: 'America/Chicago',
+  MT: 'America/Denver',
+  NE: 'America/Chicago',
+  NV: 'America/Los_Angeles',
+  NH: 'America/New_York',
+  NJ: 'America/New_York',
+  NM: 'America/Denver',
+  NY: 'America/New_York',
+  NC: 'America/New_York',
+  ND: 'America/Chicago',
+  OH: 'America/New_York',
+  OK: 'America/Chicago',
+  OR: 'America/Los_Angeles',
+  PA: 'America/New_York',
+  RI: 'America/New_York',
+  SC: 'America/New_York',
+  SD: 'America/Chicago',
+  TN: 'America/Chicago',
+  TX: 'America/Chicago',
+  UT: 'America/Denver',
+  VT: 'America/New_York',
+  VA: 'America/New_York',
+  WA: 'America/Los_Angeles',
+  WV: 'America/New_York',
+  WI: 'America/Chicago',
+  WY: 'America/Denver',
+  DC: 'America/New_York',
+  PR: 'America/Puerto_Rico',
+  VI: 'America/St_Thomas',
+  GU: 'Pacific/Guam',
+};
+
+function _detectTimezone(state) {
+  return STATE_TIMEZONES[state?.toUpperCase()] || null;
 }
 
 async function _renderSettingsTab() {
@@ -758,20 +812,14 @@ async function _renderSettingsTab() {
     const addressParts = [street, city, state ? (zip ? `${state} ${zip}` : state) : zip].filter(Boolean);
     const address = addressParts.length ? `${street}, ${city}, ${state} ${zip}`.replace(/,?\s*$/, '').trim() : '';
 
-    // Auto-detect timezone from city + state
-    let timezone = data?.timezone || null;
-    if (city && state) {
-      try {
-        statusEl.textContent = 'Detecting timezone…';
-        const detected = await _detectTimezone(city, state);
-        timezone = detected;
-        const tzEl = document.getElementById('ps-tz-display');
-        if (tzEl) {
-          tzEl.innerHTML = detected
-            ? `Timezone: <strong>${detected}</strong> <span style="color:#9CA3AF;">(auto-detected)</span>`
-            : `<span style="color:#9CA3AF;">Timezone: Could not auto-detect.</span>`;
-        }
-      } catch { timezone = null; }
+    // Auto-detect timezone from state (instant — no network call)
+    const detected = state ? _detectTimezone(state) : null;
+    const timezone = detected ?? data?.timezone ?? null;
+    const tzEl = document.getElementById('ps-tz-display');
+    if (tzEl) {
+      tzEl.innerHTML = timezone
+        ? `Timezone: <strong>${timezone}</strong> <span style="color:#9CA3AF;">(auto-detected)</span>`
+        : `<span style="color:#9CA3AF;">Could not detect timezone — select a state to auto-detect.</span>`;
     }
 
     statusEl.textContent = 'Saving…';
@@ -814,21 +862,47 @@ function _renderInviteTab() {
   `;
 
   document.getElementById('inv-send').addEventListener('click', async () => {
-    const email = document.getElementById('inv-email').value.trim();
+    const emailEl  = document.getElementById('inv-email');
+    const sendBtn  = document.getElementById('inv-send');
     const statusEl = document.getElementById('inv-status');
-    if (!email) { statusEl.textContent = 'Email is required.'; return; }
-    statusEl.textContent = 'Sending…';
+    const email    = emailEl.value.trim();
+    if (!email) { statusEl.style.color = '#8B1A2F'; statusEl.textContent = 'Email is required.'; return; }
+
+    sendBtn.disabled = true;
+    sendBtn.textContent = 'Sending…';
     statusEl.style.color = '#6B7280';
-    const res = await fetch('/invite-user', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-    });
-    const data = await res.json();
-    if (!res.ok) { statusEl.style.color = '#8B1A2F'; statusEl.textContent = data.error || 'Invite failed.'; return; }
-    statusEl.style.color = '#2E7D32';
-    statusEl.textContent = `Invite sent to ${email}`;
-    document.getElementById('inv-email').value = '';
+    statusEl.textContent = '';
+
+    const controller = new AbortController();
+    const timeout    = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const res  = await fetch('/invite-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const data = await res.json();
+      if (!res.ok) {
+        statusEl.style.color = '#8B1A2F';
+        statusEl.textContent = data.error || 'Invite failed.';
+      } else {
+        statusEl.style.color = '#2E7D32';
+        statusEl.textContent = `Invite sent to ${email}`;
+        emailEl.value = '';
+      }
+    } catch (err) {
+      clearTimeout(timeout);
+      statusEl.style.color = '#8B1A2F';
+      statusEl.textContent = err.name === 'AbortError'
+        ? 'Request timed out — please try again.'
+        : 'Network error — please try again.';
+    } finally {
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Send Invite';
+    }
   });
 }
 

@@ -35,11 +35,147 @@ export function initChatBubble(userId) {
   _currentUserId = userId;
   const bubble = document.getElementById('chat-bubble');
   if (!bubble) return;
+
+  let _dropOpen = false;
+
+  function _openDrop() {
+    let drop = document.getElementById('chat-drop');
+    if (!drop) {
+      drop = document.createElement('div');
+      drop.id = 'chat-drop';
+      drop.style.cssText = `
+        position:fixed;z-index:1200;width:320px;max-height:400px;
+        background:#fff;border:.5px solid #E2DDD6;border-radius:10px;
+        box-shadow:0 8px 24px rgba(0,0,0,.12);display:flex;flex-direction:column;overflow:hidden;
+      `;
+      document.body.appendChild(drop);
+    }
+    const rect = bubble.getBoundingClientRect();
+    drop.style.top  = (rect.bottom + 8) + 'px';
+    drop.style.right = (window.innerWidth - rect.right) + 'px';
+    drop.innerHTML = `<div style="padding:.75rem 1rem;font-size:12px;color:#9CA3AF;border-bottom:.5px solid #F0EDE8;">Loading…</div>`;
+    drop.style.display = 'flex';
+    _dropOpen = true;
+    _renderDrop(drop);
+  }
+
+  function _closeDrop() {
+    const drop = document.getElementById('chat-drop');
+    if (drop) drop.style.display = 'none';
+    _dropOpen = false;
+  }
+
   bubble.addEventListener('click', e => {
     e.stopPropagation();
-    window.switchPanel('messaging', { title: 'Messages' });
+    _dropOpen ? _closeDrop() : _openDrop();
   });
+
+  document.addEventListener('click', e => {
+    if (_dropOpen && !e.target.closest('#chat-drop') && !e.target.closest('#chat-bubble')) {
+      _closeDrop();
+    }
+  });
+
+  // Expose so dropdown rows can navigate into a specific conversation
+  window._openMessagingConv = (convId) => {
+    _closeDrop();
+    _activeConvId = convId;
+    window.switchPanel('messaging', { title: 'Messages' });
+  };
+
   _loadInitialUnread();
+}
+
+async function _renderDrop(drop) {
+  // Fetch fresh conversation data for the dropdown
+  const { data: myParts } = await sb.from('conversation_participants')
+    .select('conversation_id, last_read_at').eq('user_id', _currentUserId);
+
+  if (!myParts?.length) {
+    drop.innerHTML = `
+      <div style="padding:.6rem 1rem;border-bottom:.5px solid #F0EDE8;display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:13px;font-weight:600;color:#1C2B3A;">Messages</span>
+        <button onclick="window._openMessagingConv(null)" style="font-size:12px;color:#8B1A2F;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;font-weight:500;">+ New</button>
+      </div>
+      <div style="padding:2rem 1rem;text-align:center;font-size:13px;color:#9CA3AF;font-style:italic;">No conversations yet.</div>
+      <div style="padding:.6rem 1rem;border-top:.5px solid #F0EDE8;text-align:center;">
+        <button onclick="window.switchPanel('messaging',{title:'Messages'});document.getElementById('chat-drop').style.display='none';" style="font-size:12.5px;color:#8B1A2F;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;font-weight:500;">Show all messages →</button>
+      </div>`;
+    return;
+  }
+
+  const convIds = myParts.map(p => p.conversation_id);
+  const [allPartsRes, msgsRes] = await Promise.all([
+    sb.from('conversation_participants').select('conversation_id, user_id').in('conversation_id', convIds),
+    sb.from('messages').select('*').in('conversation_id', convIds).order('created_at', { ascending: false }),
+  ]);
+
+  const allParts = allPartsRes.data || [];
+  const allMsgs  = msgsRes.data  || [];
+
+  const otherIds = [...new Set(allParts.filter(p => p.user_id !== _currentUserId).map(p => p.user_id))];
+  const profMap  = {};
+  if (otherIds.length) {
+    const { data: profs } = await sb.from('user_profiles')
+      .select('user_id, personnel_id, personnel(name)').in('user_id', otherIds);
+    (profs || []).forEach(p => { profMap[p.user_id] = { name: p.personnel?.name || 'User', pid: p.personnel_id }; });
+  }
+
+  const lrMap = {};
+  myParts.forEach(p => { lrMap[p.conversation_id] = p.last_read_at; });
+
+  const msgsByConv = {};
+  allMsgs.forEach(m => { if (!msgsByConv[m.conversation_id]) msgsByConv[m.conversation_id] = []; msgsByConv[m.conversation_id].push(m); });
+
+  const convs = convIds.map(cid => {
+    const other   = allParts.find(p => p.conversation_id === cid && p.user_id !== _currentUserId);
+    const prof    = other ? (profMap[other.user_id] || { name: 'Unknown', pid: null }) : { name: 'Unknown', pid: null };
+    const msgs    = msgsByConv[cid] || [];
+    const lastMsg = msgs[0] || null;
+    const lr      = lrMap[cid];
+    const unread  = msgs.filter(m => m.sender_id !== _currentUserId && (!lr || new Date(m.created_at) > new Date(lr))).length;
+    return { id: cid, name: prof.name, pid: prof.pid, uid: other?.user_id || '', lastMsg, unread, updatedAt: lastMsg?.created_at || '' };
+  }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8);
+
+  const rows = convs.map(c => {
+    const preview = c.lastMsg ? _truncate(c.lastMsg.body, 36) : 'No messages yet';
+    const ts      = c.lastMsg ? _relTime(c.lastMsg.created_at) : '';
+    return `
+      <div class="chat-drop-row" data-conv-id="${c.id}" style="
+        display:flex;align-items:center;gap:10px;padding:.65rem 1rem;cursor:pointer;
+        border-bottom:.5px solid #F8F7F4;transition:background .1s;
+      " onmouseover="this.style.background='#F8F7F4'" onmouseout="this.style.background=''"
+         onclick="window._openMessagingConv('${c.id}')">
+        <div class="cd-avatar" data-uid="${c.uid}" data-name="${_esc(c.name)}" data-pid="${c.pid || ''}"
+          style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;"></div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
+            <div style="font-size:13px;font-weight:${c.unread ? '600' : '500'};color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(c.name)}</div>
+            <div style="font-size:10.5px;color:#9CA3AF;flex-shrink:0;">${_esc(ts)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;">
+            <div style="font-size:12px;color:#6B7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${_esc(preview)}</div>
+            ${c.unread ? `<div style="width:8px;height:8px;background:#1C2B3A;border-radius:50%;flex-shrink:0;"></div>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  drop.innerHTML = `
+    <div style="padding:.6rem 1rem;border-bottom:.5px solid #E2DDD6;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+      <span style="font-size:13px;font-weight:600;color:#1C2B3A;">Messages</span>
+      <button onclick="window._openMessagingConv(null);document.getElementById('chat-drop').style.display='none';" style="font-size:12px;color:#C9A84C;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;font-weight:600;padding:0;">+ New</button>
+    </div>
+    <div style="overflow-y:auto;flex:1;">${rows || '<div style="padding:1.5rem 1rem;text-align:center;font-size:13px;color:#9CA3AF;font-style:italic;">No conversations yet.</div>'}</div>
+    <div style="padding:.6rem 1rem;border-top:.5px solid #E2DDD6;text-align:center;flex-shrink:0;">
+      <button onclick="window.switchPanel('messaging',{title:'Messages'});document.getElementById('chat-drop').style.display='none';" style="font-size:12.5px;color:#8B1A2F;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;font-weight:500;">Show all messages →</button>
+    </div>`;
+
+  // Hydrate avatars
+  drop.querySelectorAll('.cd-avatar').forEach(slot => {
+    const { uid, name, pid } = slot.dataset;
+    createAvatar({ container: slot, userId: pid || uid, name: name || uid, size: 28 });
+  });
 }
 
 // ── Data ───────────────────────────────────────────────────────────────────

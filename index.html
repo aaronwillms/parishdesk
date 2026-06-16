@@ -74,13 +74,15 @@
     <div id="topbar">
       <button id="hamburger" onclick="toggleSidebar()">☰</button>
       <div class="page-title" id="topbar-title">Parish Dashboard</div>
-      <div id="notif-bell" style="position:relative;display:flex;align-items:center;padding:4px;cursor:pointer;border-radius:6px;" title="Notifications">
-        <i class="ti ti-bell" style="font-size:20px;color:#6B7280;pointer-events:none;"></i>
-        <span id="notif-badge" style="display:none;position:absolute;top:-2px;right:-3px;background:#C0392B;color:#fff;border-radius:50%;font-size:9px;font-weight:700;min-width:16px;height:16px;line-height:16px;text-align:center;padding:0 3px;pointer-events:none;">0</span>
-      </div>
-      <div id="chat-bubble" style="position:relative;display:flex;align-items:center;padding:4px;cursor:pointer;border-radius:6px;margin-left:2px;" title="Messages">
-        <i class="fa-regular fa-comments" style="font-size:19px;color:#6B7280;pointer-events:none;"></i>
-        <span id="chat-badge" style="display:none;position:absolute;top:-2px;right:-3px;background:#8B1A2F;color:#fff;border-radius:50%;font-size:9px;font-weight:700;min-width:16px;height:16px;line-height:16px;text-align:center;padding:0 3px;pointer-events:none;"></span>
+      <div style="display:inline-flex;align-items:center;gap:8px;">
+        <div id="notif-bell" style="position:relative;display:inline-flex;align-items:center;padding:4px;cursor:pointer;border-radius:6px;" title="Notifications">
+          <i class="ti ti-bell" style="font-size:20px;color:#6B7280;pointer-events:none;"></i>
+          <span id="notif-badge" style="display:none;position:absolute;top:-2px;right:-3px;background:#C0392B;color:#fff;border-radius:50%;font-size:9px;font-weight:700;min-width:16px;height:16px;line-height:16px;text-align:center;padding:0 3px;pointer-events:none;">0</span>
+        </div>
+        <div id="chat-bubble" style="position:relative;display:inline-flex;align-items:center;padding:4px;cursor:pointer;border-radius:6px;" title="Messages">
+          <i class="fa-regular fa-comments" style="font-size:19px;color:#6B7280;pointer-events:none;"></i>
+          <span id="chat-badge" style="display:none;position:absolute;top:-2px;right:-3px;background:#8B1A2F;color:#fff;border-radius:50%;font-size:9px;font-weight:700;min-width:16px;height:16px;line-height:16px;text-align:center;padding:0 3px;pointer-events:none;"></span>
+        </div>
       </div>
     </div>
     <div id="content">

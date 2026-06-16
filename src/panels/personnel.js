@@ -20,7 +20,7 @@ const EMPLOYMENT_LABELS = {
 };
 
 function isLayStaff(p) { return p.type === 'staff'; }
-function isVolunteer(p) { return p.type === 'volunteer'; }
+function isVolunteer(p) { return p.type === 'volunteer' || p.employment === 'volunteer'; }
 function isClergy(p)    { return CLERGY_TYPES.includes(p.type); }
 function showsEmployment(type) { return type === 'staff'; }
 
@@ -101,10 +101,9 @@ function renderPersonnel() {
     // Fix 5: basic users skip institutions with no visible personnel
     if (!isAdmin() && !group.length) return;
 
-    const clergy     = group.filter(isClergy);
-    const layStaff   = group.filter(isLayStaff);
-    const volunteers = group.filter(isVolunteer);
-    const hasStaff   = clergy.length || layStaff.length;
+    const clergy   = group.filter(isClergy);
+    const layStaff = group.filter(isLayStaff);
+    const hasStaff = clergy.length || layStaff.length;
 
     html += `<div class="card">`;
 
@@ -121,8 +120,8 @@ function renderPersonnel() {
       ${cogwheel}
     </div>`;
 
-    if (!group.length) {
-      html += `<div style="font-size:13px;color:#6B7280;font-style:italic;">No personnel assigned to this institution.</div>`;
+    if (!hasStaff) {
+      html += `<div style="font-size:13px;color:#6B7280;font-style:italic;">No staff assigned to this institution.</div>`;
     }
 
     if (hasStaff) {
@@ -155,23 +154,30 @@ function renderPersonnel() {
       }
     }
 
-    if (volunteers.length) {
-      html += sectionDivider('Volunteers', hasStaff ? '1.25rem' : '0');
-      volunteers.sort(alpha).forEach(p => { html += personCard(p); });
-    }
-
     html += `</div>`;
   });
 
-  // People with no matching institution (safety net)
+  // People with no matching institution (safety net — excludes volunteers, handled below)
   const instNames = new Set(insts.map(i => i.name));
-  const orphans = all.filter(p => !instNames.has(p.institution));
+  const orphans = all.filter(p => !instNames.has(p.institution) && !isVolunteer(p));
   if (orphans.length) {
     html += `<div class="card">`;
     html += `<div style="margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:2px solid var(--navy);">
       <span style="font-size:17px;font-weight:700;color:var(--navy);">Unassigned</span>
     </div>`;
     orphans.sort(alpha).forEach(p => { html += personCard(p); });
+    html += `</div>`;
+  }
+
+  // Volunteers section — all volunteers across all institutions, always last
+  const allVolunteers = all.filter(isVolunteer).sort(alpha);
+  if (allVolunteers.length) {
+    html += `<div class="card">`;
+    html += `<div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:2px solid var(--navy);">
+      <i class="fa-solid fa-hands-helping" style="font-size:17px;color:#8B1A2F;flex-shrink:0;"></i>
+      <span style="font-size:17px;font-weight:700;color:var(--navy);">Volunteers</span>
+    </div>`;
+    allVolunteers.forEach(p => { html += personCard(p); });
     html += `</div>`;
   }
 
