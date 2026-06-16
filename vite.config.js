@@ -21,6 +21,7 @@ export default defineConfig({
         ],
       },
       workbox: {
+        navigateFallbackDenylist: [/^\/auth\//],
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         runtimeCaching: [
           {
