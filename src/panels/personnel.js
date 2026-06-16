@@ -26,6 +26,24 @@ function showsEmployment(type) { return type === 'staff'; }
 
 const alpha = (a, b) => a.name.localeCompare(b.name);
 
+function calcAge(dob) {
+  if (!dob) return null;
+  const today = new Date();
+  const birth = new Date(dob + 'T12:00:00');
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age;
+}
+
+function fmtDob(dob) {
+  if (!dob) return '';
+  const d = new Date(dob + 'T12:00:00');
+  const formatted = d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const age = calcAge(dob);
+  return age !== null ? `${formatted} (${age} years old)` : formatted;
+}
+
 // ── Data loading ───────────────────────────────────────────────────────────────
 
 export async function loadPersonnel() {
@@ -55,10 +73,14 @@ function personCard(p) {
       <button class="card-action" onclick="openPersonnelModal('${p.id}')">Edit</button>
       <button class="card-action" style="color:#C0392B;" onclick="deletePersonnel('${p.id}')">Delete</button>
     </div>` : '';
+  const dobLine = p.date_of_birth
+    ? `<div style="font-size:11.5px;color:#9CA3AF;margin-top:2px;">🎂 ${fmtDob(p.date_of_birth)}</div>`
+    : '';
   return `<div class="evt-item" style="cursor:default;">
     <div style="flex:1;min-width:0;">
       <div style="font-weight:500;font-size:14px;color:var(--navy);">${p.name}</div>
       ${p.title ? `<div style="font-size:12px;color:#6B7280;margin-top:1px;">${p.title}</div>` : ''}
+      ${dobLine}
       ${contactChips(p)}
     </div>
     ${controls}
@@ -324,6 +346,7 @@ function personnelForm(data) {
   return `<div class="modal-title">${data ? 'Edit person' : 'Add person'}</div>
   <label>Name</label><input id="pf-name" value="${data?.name || ''}" />
   <label>Title / role</label><input id="pf-title" value="${data?.title || ''}" />
+  <label>Date of Birth</label><input type="date" id="pf-dob" value="${data?.date_of_birth || ''}" />
   <label>Phone</label><input id="pf-phone" value="${data?.phone || ''}" placeholder="e.g. (601) 555-0100" />
   <label>Email</label><input id="pf-email" value="${data?.email || ''}" />
   <label>Institution</label>
@@ -374,6 +397,7 @@ async function savePersonnel(id) {
     institution: document.getElementById('pf-inst').value,
     type,
     employment:  showsEmployment(type) ? document.getElementById('pf-emp').value : null,
+    date_of_birth: document.getElementById('pf-dob').value || null,
     sort_order:  parseInt(document.getElementById('pf-sort').value) || 0,
     active:      true,
     updated_at:  new Date().toISOString(),

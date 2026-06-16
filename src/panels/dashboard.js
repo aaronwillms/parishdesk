@@ -164,8 +164,9 @@ export function renderDashProjects() {
 
 // ── Announcements ──────────────────────────────────────────────────────────
 
-let announcements = [];
-let dismissedIds  = new Set();
+let announcements         = [];
+let dismissedIds          = new Set();
+let _birthdayAnnouncements = [];
 
 export async function loadAnnouncements() {
   const today = todayCST();
@@ -183,7 +184,28 @@ export async function loadAnnouncements() {
   if (annRes.error) console.error('[announcements] load error:', annRes.error);
   announcements = annRes.data || [];
   dismissedIds  = new Set((dimRes.data || []).map(d => d.announcement_id));
+  _checkBirthdays();
   renderAnnouncements();
+}
+
+function _checkBirthdays() {
+  const today = new Date();
+  const todayMonth = today.getMonth() + 1;
+  const todayDay   = today.getDate();
+  _birthdayAnnouncements = (store.personnel || [])
+    .filter(p => p.active !== false && p.date_of_birth)
+    .filter(p => {
+      const [, m, d] = p.date_of_birth.split('-').map(Number);
+      return m === todayMonth && d === todayDay;
+    })
+    .map(p => ({
+      id:         `__bday__${p.id}`,
+      message:    `🎂 Today is ${p.name}'s birthday!`,
+      pinned:     false,
+      created_at: today.toISOString(),
+      expires_at: null,
+      _isBirthday: true,
+    }));
 }
 
 function _teamName(id) {
@@ -200,7 +222,10 @@ function _visibilityLabel(a) {
 function renderAnnouncements() {
   const c = document.getElementById('dash-announcements');
   if (!c) return;
-  const visible = announcements.filter(a => !dismissedIds.has(a.id));
+  const visible = [
+    ..._birthdayAnnouncements.filter(a => !dismissedIds.has(a.id)),
+    ...announcements.filter(a => !dismissedIds.has(a.id)),
+  ];
   if (!visible.length) {
     c.innerHTML = '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No announcements.</div>';
     return;
@@ -221,7 +246,7 @@ function renderAnnouncements() {
 async function dismissAnnouncement(id) {
   dismissedIds.add(id);
   renderAnnouncements();
-  if (!currentUserId) return;
+  if (!currentUserId || id.startsWith('__bday__')) return;
   const { error } = await sb.from('announcement_dismissals').insert({ announcement_id: id, user_id: currentUserId });
   if (error && error.code !== '23505') console.error('[announcements] dismiss error:', error);
 }

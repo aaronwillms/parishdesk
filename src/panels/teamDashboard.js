@@ -8,14 +8,14 @@ import { renderDiscussionThread } from '../ui/discussionThread.js';
 let _currentTeamId = null;
 let _team = null;
 let _members = [];
-let _activeTab = 'projects';
+let _activeTab = 'discussions';
 let _memberPicker = null;
 
 // ── Public entry point ─────────────────────────────────────────────────────
 
 export async function renderTeamDashboard(container, teamId) {
   _currentTeamId = teamId;
-  _activeTab = 'projects';
+  _activeTab = 'discussions';
   _memberPicker = null;
   container.innerHTML = '<div style="padding:2rem;text-align:center;color:#9CA3AF;">Loading…</div>';
   await _loadData();
@@ -45,11 +45,10 @@ async function _loadData() {
 // ── Render ─────────────────────────────────────────────────────────────────
 
 const TABS_BASE = [
+  { key: 'discussions',  label: 'Discussions' },
   { key: 'projects',     label: 'Projects' },
   { key: 'tasks',        label: 'Tasks' },
-  { key: 'discussions',  label: 'Discussions' },
   { key: 'schedule',     label: 'Schedule' },
-  { key: 'documents',    label: 'Documents' },
   { key: 'members',      label: 'Members' },
 ];
 const TAB_SETTINGS = { key: 'settings', label: 'Settings' };
@@ -285,7 +284,7 @@ function _isAutoSyncedMember(m) {
   return _team?.is_protected && STAFF_TYPES.has(m.personnel?.employment);
 }
 
-const TEAM_ROLES = ['President', 'Vice President', 'Secretary', 'Treasurer', 'Coordinator', 'Member', 'Other'];
+const TEAM_ROLES = ['President', 'Vice President', 'Secretary', 'Treasurer', 'Coordinator', 'Member', 'Ad Hoc', 'Other'];
 
 function _memberRow(m) {
   const p = m.personnel || {};
@@ -325,7 +324,7 @@ function _openMemberModal(memberId) {
   const p = m.personnel || {};
   const canRemove = !_isAutoSyncedMember(m);
 
-  const PRESET_ROLES = ['President', 'Vice President', 'Secretary', 'Treasurer', 'Coordinator', 'Member'];
+  const PRESET_ROLES = ['President', 'Vice President', 'Secretary', 'Treasurer', 'Coordinator', 'Member', 'Ad Hoc'];
   const currentRole = m.role || 'Member';
   const isOther = currentRole && !PRESET_ROLES.includes(currentRole);
   const selectVal = isOther ? 'Other' : (currentRole || 'Member');

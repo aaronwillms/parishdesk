@@ -154,9 +154,15 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
   injectStyles();
 
   // â”€â”€ State
-  let selectedPerson = null;
-  let debounceTimer  = null;
-  let showingNewForm = false;
+  let selectedPerson  = null;
+  let debounceTimer   = null;
+  let showingNewForm  = false;
+  let _institutions   = []; // fetched once on init
+
+  // Fetch institutions in background so form renders instantly when needed
+  sb.from('institutions').select('name').order('name').then(({ data }) => {
+    _institutions = (data || []).map(r => r.name).filter(Boolean);
+  });
 
   // â”€â”€ DOM skeleton
   container.innerHTML = '';
@@ -253,12 +259,37 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     showingNewForm = true;
     dropdown.innerHTML = '';
 
+    const instOptions = _institutions.map(n =>
+      `<option value="${n.replace(/"/g, '&quot;')}">${n}</option>`
+    ).join('');
+
     const form = document.createElement('div');
     form.className = 'cp-new-form';
     form.innerHTML = `
       <div style="font-size:12px;font-weight:600;color:#555;margin-bottom:2px;">New contact</div>
-      <input id="cp-new-name"  placeholder="Full name *"  value="${prefillName}" />
+      <input id="cp-new-name"  placeholder="Full name *" value="${prefillName.replace(/"/g, '&quot;')}" />
       <input id="cp-new-title" placeholder="Title / role (optional)" />
+      <div style="font-size:11px;color:#6B7280;margin-bottom:-2px;">Date of Birth (optional)</div>
+      <input type="date" id="cp-new-dob" />
+      <select id="cp-new-inst" style="
+        width:100%;box-sizing:border-box;padding:.35rem .55rem;
+        border:.5px solid #D1C9BE;border-radius:var(--radius-sm,5px);
+        font-size:12.5px;font-family:'Inter',sans-serif;
+        background:#fff;color:#1C2B3A;outline:none;
+      ">
+        ${instOptions}
+        <option value="volunteer">Volunteer</option>
+      </select>
+      <select id="cp-new-employment" style="
+        width:100%;box-sizing:border-box;padding:.35rem .55rem;
+        border:.5px solid #D1C9BE;border-radius:var(--radius-sm,5px);
+        font-size:12.5px;font-family:'Inter',sans-serif;
+        background:#fff;color:#1C2B3A;outline:none;
+      ">
+        <option value="full-time">Full-time</option>
+        <option value="part-time">Part-time</option>
+        <option value="contract">Contract</option>
+      </select>
       <div id="cp-new-error" style="font-size:11px;color:#8B1A2F;min-height:14px;margin-top:2px;"></div>
       <div class="cp-new-form-actions">
         <button type="button" class="cp-btn-save"   id="cp-new-save">Add &amp; select</button>
@@ -272,15 +303,26 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     form.addEventListener('mousedown', e => e.stopPropagation());
     form.addEventListener('click',     e => e.stopPropagation());
 
-    form.querySelector('#cp-new-name').focus();
+    const instSel  = form.querySelector('#cp-new-inst');
+    const empSel   = form.querySelector('#cp-new-employment');
+    const saveBtn  = form.querySelector('#cp-new-save');
+    const errEl    = form.querySelector('#cp-new-error');
 
-    const saveBtn = form.querySelector('#cp-new-save');
-    const errEl   = form.querySelector('#cp-new-error');
+    // Show/hide employment based on institution selection
+    function updateEmploymentVisibility() {
+      empSel.style.display = instSel.value === 'volunteer' ? 'none' : '';
+    }
+    instSel.addEventListener('change', updateEmploymentVisibility);
+    updateEmploymentVisibility();
+
+    form.querySelector('#cp-new-name').focus();
 
     saveBtn.addEventListener('click', async e => {
       e.stopPropagation();
       const nameVal  = form.querySelector('#cp-new-name').value.trim();
       const titleVal = form.querySelector('#cp-new-title').value.trim() || null;
+      const isVolunteer = instSel.value === 'volunteer';
+      const dobVal = form.querySelector('#cp-new-dob').value || null;
 
       if (!nameVal) {
         errEl.textContent = 'Name is required.';
@@ -296,9 +338,11 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
         const { data, error } = await sb.from('personnel').insert({
           name:        nameVal,
           title:       titleVal,
-          type:        'staff',
-          active:      true,
-          institution: 'The Basilica of Saint Mary',
+          type:          isVolunteer ? 'volunteer' : 'staff',
+          employment:    isVolunteer ? null : empSel.value,
+          institution:   isVolunteer ? null : instSel.value,
+          date_of_birth: dobVal,
+          active:        true,
         }).select().single();
 
         if (error) {

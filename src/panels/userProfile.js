@@ -12,7 +12,7 @@ export async function loadUserProfile() {
   if (!user) return;
 
   const { data } = await sb.from('user_profiles')
-    .select('*, personnel(id,name,title,phone,email)')
+    .select('*, personnel(id,name,title,phone,email,date_of_birth)')
     .eq('user_id', user.id)
     .maybeSingle();
   _profile = data || null;
@@ -89,6 +89,14 @@ function _render() {
           <div>
             <div style="font-size:11.5px;color:#6B7280;margin-bottom:4px;">Contact Email</div>
             <input id="up-contact-email" type="email" value="${linkedPerson.email || ''}" placeholder="e.g. name@parish.org" style="
+              width:100%;box-sizing:border-box;padding:.4rem .65rem;
+              border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;
+              font-family:'Inter',sans-serif;outline:none;background:#fff;
+            " />
+          </div>
+          <div>
+            <div style="font-size:11.5px;color:#6B7280;margin-bottom:4px;">Date of Birth</div>
+            <input type="date" id="up-dob" value="${linkedPerson.date_of_birth || ''}" style="
               width:100%;box-sizing:border-box;padding:.4rem .65rem;
               border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;
               font-family:'Inter',sans-serif;outline:none;background:#fff;
@@ -201,17 +209,18 @@ async function _saveContactInfo() {
   try {
     const phone = document.getElementById('up-phone')?.value.trim() || null;
     const email = document.getElementById('up-contact-email')?.value.trim() || null;
+    const date_of_birth = document.getElementById('up-dob')?.value || null;
 
     const { error } = await sb.from('personnel')
-      .update({ phone, email, updated_at: new Date().toISOString() })
+      .update({ phone, email, date_of_birth, updated_at: new Date().toISOString() })
       .eq('id', personnelId);
 
     if (error) throw error;
 
     // Update in-memory personnel store so other panels see the change
     const p = (store.personnel || []).find(p => p.id === personnelId);
-    if (p) { p.phone = phone; p.email = email; }
-    if (_profile?.personnel) { _profile.personnel.phone = phone; _profile.personnel.email = email; }
+    if (p) { p.phone = phone; p.email = email; p.date_of_birth = date_of_birth; }
+    if (_profile?.personnel) { _profile.personnel.phone = phone; _profile.personnel.email = email; _profile.personnel.date_of_birth = date_of_birth; }
 
     statusEl.style.color = '#166534';
     statusEl.textContent = 'Saved successfully.';
