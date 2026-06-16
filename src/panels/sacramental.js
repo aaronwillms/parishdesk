@@ -302,7 +302,7 @@ async function quickSacramentalStatus(prog, id, val) {
   const item = sacData[prog].find(i => i.id===id);
   if(!item) return;
   const {error} = await sb.from(cfg.table).update({status_code:val,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error){alert('Save failed: '+error.message);return;}
+  if(error){console.error('[sacramental] quickStatus error:', error);alert('Save failed: '+error.message);return;}
   item.status_code = val;
   updateSacramentalStats(prog);
   renderSacramental(prog);
@@ -320,7 +320,7 @@ async function appendSacNote(prog, id) {
   const ds = `${now.getMonth()+1}/${now.getDate()}/${now.getFullYear()}`;
   const newNotes = item.notes?`${item.notes}\n\n[${ds}] ${txt}`:`[${ds}] ${txt}`;
   const {error} = await sb.from(cfg.table).update({notes:newNotes,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error){alert('Save failed: '+error.message);return;}
+  if(error){console.error('[sacramental] appendNote error:', error);alert('Save failed: '+error.message);return;}
   item.notes = newNotes;
   renderSacramental(prog);
 }
@@ -333,7 +333,7 @@ async function deleteSacNote(prog, id, idx) {
   entries.splice(idx,1);
   const newNotes = entries.join('\n\n');
   const {error} = await sb.from(cfg.table).update({notes:newNotes,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error){alert('Delete failed: '+error.message);return;}
+  if(error){console.error('[sacramental] deleteNote error:', error);alert('Delete failed: '+error.message);return;}
   item.notes = newNotes;
   renderSacramental(prog);
 }
@@ -349,7 +349,7 @@ async function addSacDoc(prog, id) {
   const docs = JSON.parse(JSON.stringify(item.documents||[]));
   docs.push({name, done:false});
   const {error} = await sb.from(cfg.table).update({documents:docs,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error){alert('Save failed: '+error.message);return;}
+  if(error){console.error('[sacramental] addDoc error:', error);alert('Save failed: '+error.message);return;}
   item.documents = docs;
   renderSacramental(prog);
 }
@@ -361,7 +361,7 @@ async function toggleSacDoc(prog, id, idx) {
   const docs = JSON.parse(JSON.stringify(item.documents||[]));
   docs[idx].done = !docs[idx].done;
   const {error} = await sb.from(cfg.table).update({documents:docs,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error){return;}
+  if(error){console.error('[sacramental] toggleDoc error:', error);return;}
   item.documents = docs;
   renderSacramental(prog);
 }
@@ -373,7 +373,7 @@ async function deleteSacDoc(prog, id, idx) {
   const docs = JSON.parse(JSON.stringify(item.documents||[]));
   docs.splice(idx,1);
   const {error} = await sb.from(cfg.table).update({documents:docs,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error){alert('Delete failed: '+error.message);return;}
+  if(error){console.error('[sacramental] deleteDoc error:', error);alert('Delete failed: '+error.message);return;}
   item.documents = docs;
   renderSacramental(prog);
 }
@@ -390,7 +390,7 @@ async function addSacTlEntry(prog, id) {
   const tl = JSON.parse(JSON.stringify(item.timeline||[]));
   tl.push({date, event});
   const {error} = await sb.from(cfg.table).update({timeline:tl,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error){alert('Save failed: '+error.message);return;}
+  if(error){console.error('[sacramental] addTimeline error:', error);alert('Save failed: '+error.message);return;}
   item.timeline = tl;
   renderSacramental(prog);
 }
@@ -402,7 +402,7 @@ async function deleteSacTlEntry(prog, id, idx) {
   const tl = JSON.parse(JSON.stringify(item.timeline||[]));
   tl.splice(idx,1);
   const {error} = await sb.from(cfg.table).update({timeline:tl,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error){alert('Delete failed: '+error.message);return;}
+  if(error){console.error('[sacramental] deleteTimeline error:', error);alert('Delete failed: '+error.message);return;}
   item.timeline = tl;
   renderSacramental(prog);
 }
@@ -458,7 +458,7 @@ async function saveSacramental(prog, id) {
     payload.timeline = [{date:todayCST(), event:'Record created'}];
     const r = await sb.from(cfg.table).insert(payload); err = r.error;
   }
-  if(err){alert('Save failed: '+err.message);return;}
+  if(err){console.error('[sacramental] save error:', err);alert('Save failed: '+err.message);return;}
   if (!id && prog === 'baptism') {
     const { data: { user: _me } } = await sb.auth.getUser();
     const _uids = await getUserIdsForSacrament('baptism');
@@ -472,7 +472,7 @@ async function deleteSacramental(prog, id) {
   const cfg = SACRAMENTAL_CFG[prog];
   if(!confirm('Permanently delete this record? This cannot be undone.')) return;
   const {error} = await sb.from(cfg.table).delete().eq('id',id);
-  if(error){alert('Delete failed: '+error.message);return;}
+  if(error){console.error('[sacramental] delete error:', error);alert('Delete failed: '+error.message);return;}
   closeModal();
   loadSacramental(prog);
 }
@@ -518,7 +518,7 @@ async function sacApplyBulk(prog) {
   const cfg = SACRAMENTAL_CFG[prog];
   const archived = action === 'archive';
   const { error } = await sb.from(cfg.table).update({ archived, updated_at: new Date().toISOString() }).in('id', ids);
-  if (error) { alert('Bulk update failed: ' + error.message); return; }
+  if (error) { console.error('[sacramental] bulkArchive error:', error); alert('Bulk update failed: ' + error.message); return; }
   ids.forEach(id => {
     const item = sacData[prog].find(i => i.id === id);
     if (item) item.archived = archived;

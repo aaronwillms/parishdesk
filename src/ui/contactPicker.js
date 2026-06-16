@@ -150,14 +150,15 @@ function injectStyles() {
 
 // ── Factory ────────────────────────────────────────────────────────────────
 
-export function createContactPicker({ container, placeholder = 'Search by name…', onSelect, initialValue, prefillEmail = '' }) {
+export function createContactPicker({ container, placeholder = 'Search by name…', onSelect, initialValue, prefillEmail = '', multiSelect = false }) {
   injectStyles();
 
   // ── State
-  let selectedPerson  = null;
-  let debounceTimer   = null;
-  let showingNewForm  = false;
-  let _institutions   = []; // fetched once on init
+  let selectedPerson   = null;  // single-select mode
+  let _selectedPersons = [];    // multi-select mode
+  let debounceTimer    = null;
+  let showingNewForm   = false;
+  let _institutions    = []; // fetched once on init
 
   // Fetch institutions in background so form renders instantly when needed
   sb.from('institutions').select('name').order('name').then(({ data }) => {
@@ -167,6 +168,11 @@ export function createContactPicker({ container, placeholder = 'Search by name�
   // ── DOM skeleton
   container.innerHTML = '';
   container.classList.add('cp-wrap');
+
+  // Multi-select chips row (only used when multiSelect=true)
+  const chipsRow = document.createElement('div');
+  chipsRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;margin-bottom:0;';
+  if (multiSelect) container.appendChild(chipsRow);
 
   const input    = document.createElement('input');
   input.type        = 'text';
@@ -191,35 +197,57 @@ export function createContactPicker({ container, placeholder = 'Search by name�
     return [p.title, p.institution].filter(Boolean).join(' · ');
   }
 
-  function showChip(person) {
-    input.style.display = 'none';
-    dropdown.style.display = 'none';
-
+  function _addChip(person, onRemove) {
     const chip = document.createElement('div');
     chip.className = 'cp-chip';
     chip.innerHTML = `<span>${personLabel(person)}</span>`;
-
     const clearBtn = document.createElement('button');
     clearBtn.className = 'cp-chip-clear';
     clearBtn.type = 'button';
     clearBtn.innerHTML = '✕';
-    clearBtn.addEventListener('click', () => {
+    clearBtn.addEventListener('click', onRemove);
+    chip.appendChild(clearBtn);
+    return chip;
+  }
+
+  function showChip(person) {
+    input.style.display = 'none';
+    dropdown.style.display = 'none';
+    const chip = _addChip(person, () => {
       chip.remove();
       selectedPerson = null;
       input.value = '';
       input.style.display = '';
       onSelect?.(null);
     });
-
-    chip.appendChild(clearBtn);
     container.appendChild(chip);
   }
 
+  function _addMultiChip(person) {
+    const chip = _addChip(person, () => {
+      chip.remove();
+      _selectedPersons = _selectedPersons.filter(p => p.id !== person.id);
+      if (!_selectedPersons.length) chipsRow.style.marginBottom = '0';
+      onSelect?.([..._selectedPersons]);
+    });
+    chipsRow.appendChild(chip);
+    chipsRow.style.marginBottom = '6px';
+  }
+
   function select(person) {
-    selectedPerson = person;
-    closeDropdown();
-    showChip(person);
-    onSelect?.(person);
+    if (multiSelect) {
+      if (_selectedPersons.find(p => p.id === person.id)) { closeDropdown(); input.value = ''; return; }
+      _selectedPersons.push(person);
+      _addMultiChip(person);
+      closeDropdown();
+      input.value = '';
+      onSelect?.([..._selectedPersons]);
+    } else {
+      selectedPerson = person;
+      closeDropdown();
+      showChip(person);
+      onSelect?.(person);
+    }
   }
 
   function openDropdown() { dropdown.style.display = 'block'; }
@@ -437,14 +465,20 @@ export function createContactPicker({ container, placeholder = 'Search by name�
   // ── Public API
 
   return {
-    getValue:  () => selectedPerson,
-    getId:     () => selectedPerson?.id || null,
+    getValue:  () => multiSelect ? [..._selectedPersons] : selectedPerson,
+    getId:     () => multiSelect ? _selectedPersons.map(p => p.id) : (selectedPerson?.id || null),
     clear:     () => {
-      const chip = container.querySelector('.cp-chip');
-      if (chip) chip.remove();
-      selectedPerson = null;
+      if (multiSelect) {
+        chipsRow.innerHTML = '';
+        chipsRow.style.marginBottom = '0';
+        _selectedPersons = [];
+      } else {
+        const chip = container.querySelector('.cp-chip');
+        if (chip) chip.remove();
+        selectedPerson = null;
+        input.style.display = '';
+      }
       input.value = '';
-      input.style.display = '';
     },
     destroy:   () => document.removeEventListener('mousedown', outsideHandler),
   };

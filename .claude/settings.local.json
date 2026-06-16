@@ -25,7 +25,11 @@
       "Bash(node --check src/ui/contactPicker.js)",
       "Bash(sed -n '1,10p' /Volumes/RemovableDrive/parishdesk/src/panels/projects.js)",
       "Bash(sed -n '1,10p' /Volumes/RemovableDrive/parishdesk/src/panels/tasks.js)",
-      "Bash(sed -n '1,10p' /Volumes/RemovableDrive/parishdesk/src/panels/teams.js)"
+      "Bash(sed -n '1,10p' /Volumes/RemovableDrive/parishdesk/src/panels/teams.js)",
+      "Bash(grep -rn \"-- conversations\\\\|-- messages\\\\|-- conversation_participants\\\\|conversations table\\\\|messages table\" /Volumes/RemovableDrive/parishdesk/supabase --include=\"*.sql\")",
+      "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/sacramental.js)",
+      "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/ocia.js)",
+      "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/marriage.js)"
     ]
   }
 }

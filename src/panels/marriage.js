@@ -248,7 +248,7 @@ async function toggleDoc(coupleId, docIndex) {
   const docs = JSON.parse(JSON.stringify(couple.documents||[]));
   docs[docIndex].done = !docs[docIndex].done;
   const {error} = await sb.from('couples').update({documents:docs, updated_at:new Date().toISOString()}).eq('id',coupleId);
-  if(error){console.error(error);return;}
+  if(error){console.error('[marriage] toggleDoc error:', error);return;}
   couple.documents = docs;
   renderCouples();
 }
@@ -257,7 +257,7 @@ async function quickCoupleStatusChange(coupleId, newStatus) {
   const couple = allCouples.find(c => c.id===coupleId);
   if(!couple||couple.status_code===newStatus) return;
   const {error} = await sb.from('couples').update({status_code:newStatus,updated_at:new Date().toISOString()}).eq('id',coupleId);
-  if(error){alert('Save failed: '+error.message);return;}
+  if(error){console.error('[marriage] statusChange error:', error);alert('Save failed: '+error.message);return;}
   couple.status_code = newStatus;
   if (newStatus === 'complete') {
     const { data: { user: _me } } = await sb.auth.getUser();
@@ -286,7 +286,7 @@ async function appendCoupleNote(coupleId) {
   const dateStr = (now.getMonth()+1)+'/'+now.getDate()+'/'+now.getFullYear();
   const newNotes = couple.notes?(couple.notes+'\n\n['+dateStr+'] '+addition):('['+dateStr+'] '+addition);
   const {error} = await sb.from('couples').update({notes:newNotes,updated_at:new Date().toISOString()}).eq('id',coupleId);
-  if(error){alert('Save failed: '+error.message);return;}
+  if(error){console.error('[marriage] appendNote error:', error);alert('Save failed: '+error.message);return;}
   couple.notes = newNotes;
   renderCouples();
 }
@@ -299,7 +299,7 @@ async function deleteCoupleNote(coupleId, noteIndex) {
   entries.splice(noteIndex,1);
   const newNotes = entries.join('\n\n');
   const {error} = await sb.from('couples').update({notes:newNotes,updated_at:new Date().toISOString()}).eq('id',coupleId);
-  if(error){alert('Delete failed: '+error.message);return;}
+  if(error){console.error('[marriage] deleteNote error:', error);alert('Delete failed: '+error.message);return;}
   couple.notes = newNotes;
   renderCouples();
 }
@@ -319,7 +319,7 @@ async function addCoupleDoc(coupleId) {
   const docs = JSON.parse(JSON.stringify(couple.documents||[]));
   docs.push({name, done:false});
   const {error} = await sb.from('couples').update({documents:docs,updated_at:new Date().toISOString()}).eq('id',coupleId);
-  if(error){alert('Save failed: '+error.message);return;}
+  if(error){console.error('[marriage] addDoc error:', error);alert('Save failed: '+error.message);return;}
   couple.documents = docs;
   renderCouples();
 }
@@ -331,7 +331,7 @@ async function deleteCoupleDoc(coupleId, docIndex) {
   const docs = JSON.parse(JSON.stringify(couple.documents||[]));
   docs.splice(docIndex,1);
   const {error} = await sb.from('couples').update({documents:docs,updated_at:new Date().toISOString()}).eq('id',coupleId);
-  if(error){alert('Delete failed: '+error.message);return;}
+  if(error){console.error('[marriage] deleteDoc error:', error);alert('Delete failed: '+error.message);return;}
   couple.documents = docs;
   renderCouples();
 }
@@ -352,7 +352,7 @@ async function addCoupleTlEntry(coupleId) {
   const tl = JSON.parse(JSON.stringify(couple.timeline||[]));
   tl.push({date, event});
   const {error} = await sb.from('couples').update({timeline:tl,updated_at:new Date().toISOString()}).eq('id',coupleId);
-  if(error){alert('Save failed: '+error.message);return;}
+  if(error){console.error('[marriage] addTimeline error:', error);alert('Save failed: '+error.message);return;}
   couple.timeline = tl;
   renderCouples();
 }
@@ -364,7 +364,7 @@ async function deleteCoupleTlEntry(coupleId, index) {
   const tl = JSON.parse(JSON.stringify(couple.timeline||[]));
   tl.splice(index,1);
   const {error} = await sb.from('couples').update({timeline:tl,updated_at:new Date().toISOString()}).eq('id',coupleId);
-  if(error){alert('Delete failed: '+error.message);return;}
+  if(error){console.error('[marriage] deleteTimeline error:', error);alert('Delete failed: '+error.message);return;}
   couple.timeline = tl;
   renderCouples();
 }
@@ -468,7 +468,7 @@ function initPmEditors(data) {
 async function deleteCouple(id) {
   if(!confirm('Permanently delete this couple? This cannot be undone.')) return;
   const {error} = await sb.from('couples').delete().eq('id',id);
-  if(error){alert('Delete failed: '+error.message);return;}
+  if(error){console.error('[marriage] deleteCouple error:', error);alert('Delete failed: '+error.message);return;}
   closeModal(); loadCouples();
 }
 
@@ -498,7 +498,7 @@ async function saveCouple(id) {
   let err;
   if(id){const r=await sb.from('couples').update(payload).eq('id',id);err=r.error;}
   else{const r=await sb.from('couples').insert(payload);err=r.error;}
-  if(err){alert('Save failed: '+err.message);return;}
+  if(err){console.error('[marriage] saveCouple error:', err);alert('Save failed: '+err.message);return;}
   const coupleName = [payload.groom, payload.bride].filter(Boolean).join(' & ');
   logActivity({ action: id ? 'updated marriage prep record' : 'created marriage prep record', entityType: 'marriage', entityName: coupleName, contextType: 'couple', contextId: id || null });
   closeModal(); loadCouples();

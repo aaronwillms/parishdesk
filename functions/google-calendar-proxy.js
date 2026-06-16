@@ -42,12 +42,26 @@ async function _getValidToken(calendarRow, env, supaUrl, serviceKey) {
   return td.access_token;
 }
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost(context) {
+  const { request, env } = context;
+
   let body;
-  try { body = await request.json(); } catch { return new Response('Bad JSON', { status: 400 }); }
+  try {
+    body = await request.json();
+  } catch (e) {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
   const { user_id, action, calendarId = 'primary', event } = body;
-  if (!user_id || !action) return new Response('Missing user_id or action', { status: 400 });
+  if (!user_id || !action) {
+    return new Response(JSON.stringify({ error: 'Missing user_id or action', received: { user_id, action } }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
   const supaUrl = env.VITE_SUPA_URL;
   const serviceKey = env.SUPABASE_SERVICE_KEY;

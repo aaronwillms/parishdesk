@@ -20,9 +20,6 @@ export async function loadMessaging(opts) {
   if (!user) return;
   _currentUserId = user.id;
 
-  // Honour a specific conversation requested by the caller (e.g. dropdown click).
-  // If opts.conversationId is provided, open that thread directly.
-  // If _activeConvId was pre-set by window._openMessagingConv, keep it.
   if (opts?.conversationId) {
     _activeConvId = opts.conversationId;
   } else if (!opts?.preserveThread) {
@@ -84,7 +81,6 @@ export function initChatBubble(userId) {
     }
   });
 
-  // Expose so dropdown rows can navigate into a specific conversation
   window._openMessagingConv = (convId) => {
     _closeDrop();
     _activeConvId = convId;
@@ -95,40 +91,27 @@ export function initChatBubble(userId) {
 }
 
 async function _renderDrop(drop) {
-  // Fetch fresh conversation data for the dropdown
   const { data: myParts } = await sb.from('conversation_participants')
     .select('conversation_id, last_read_at').eq('user_id', _currentUserId);
 
   if (!myParts?.length) {
-    drop.innerHTML = `
-      <div style="padding:.6rem 1rem;border-bottom:.5px solid #F0EDE8;display:flex;justify-content:space-between;align-items:center;">
-        <span style="font-size:13px;font-weight:600;color:#1C2B3A;">Messages</span>
-        <button onclick="window._openMessagingConv(null)" style="font-size:12px;color:#8B1A2F;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;font-weight:500;">+ New</button>
-      </div>
-      <div style="padding:2rem 1rem;text-align:center;font-size:13px;color:#9CA3AF;font-style:italic;">No conversations yet.</div>
-      <div style="padding:.6rem 1rem;border-top:.5px solid #F0EDE8;text-align:center;">
-        <button onclick="window.switchPanel('messaging',{title:'Messages'});document.getElementById('chat-drop').style.display='none';" style="font-size:12.5px;color:#8B1A2F;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;font-weight:500;">Show all messages →</button>
-      </div>`;
+    drop.innerHTML = _dropEmptyHtml();
     return;
   }
 
   const allConvIds = myParts.map(p => p.conversation_id);
   const { data: convMeta } = await sb.from('conversations')
-    .select('id, deleted_at').in('id', allConvIds);
-  const activeConvIds = (convMeta || []).filter(c => !c.deleted_at).map(c => c.id);
-  if (!activeConvIds.length) {
-    drop.innerHTML = `
-      <div style="padding:.6rem 1rem;border-bottom:.5px solid #F0EDE8;display:flex;justify-content:space-between;align-items:center;">
-        <span style="font-size:13px;font-weight:600;color:#1C2B3A;">Messages</span>
-        <button onclick="window._openMessagingConv(null)" style="font-size:12px;color:#8B1A2F;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;font-weight:500;">+ New</button>
-      </div>
-      <div style="padding:2rem 1rem;text-align:center;font-size:13px;color:#9CA3AF;font-style:italic;">No conversations yet.</div>
-      <div style="padding:.6rem 1rem;border-top:.5px solid #F0EDE8;text-align:center;">
-        <button onclick="window.switchPanel('messaging',{title:'Messages'});document.getElementById('chat-drop').style.display='none';" style="font-size:12.5px;color:#8B1A2F;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;font-weight:500;">Show all messages →</button>
-      </div>`;
+    .select('id, deleted_at, is_group, name').in('id', allConvIds);
+  const activeConvs = (convMeta || []).filter(c => !c.deleted_at);
+  if (!activeConvs.length) {
+    drop.innerHTML = _dropEmptyHtml();
     return;
   }
-  const convIds = activeConvIds;
+
+  const convIds = activeConvs.map(c => c.id);
+  const convInfoMap = {};
+  activeConvs.forEach(c => { convInfoMap[c.id] = c; });
+
   const [allPartsRes, msgsRes] = await Promise.all([
     sb.from('conversation_participants').select('conversation_id, user_id').in('conversation_id', convIds),
     sb.from('messages').select('*').in('conversation_id', convIds).order('created_at', { ascending: false }),
@@ -151,30 +134,45 @@ async function _renderDrop(drop) {
   const msgsByConv = {};
   allMsgs.forEach(m => { if (!msgsByConv[m.conversation_id]) msgsByConv[m.conversation_id] = []; msgsByConv[m.conversation_id].push(m); });
 
+  const partsByConv = {};
+  allParts.forEach(p => { if (!partsByConv[p.conversation_id]) partsByConv[p.conversation_id] = []; partsByConv[p.conversation_id].push(p); });
+
   const convs = convIds.map(cid => {
-    const other   = allParts.find(p => p.conversation_id === cid && p.user_id !== _currentUserId);
-    const prof    = other ? (profMap[other.user_id] || { name: 'Unknown', pid: null }) : { name: 'Unknown', pid: null };
+    const info    = convInfoMap[cid];
     const msgs    = msgsByConv[cid] || [];
     const lastMsg = msgs[0] || null;
     const lr      = lrMap[cid];
     const unread  = msgs.filter(m => m.sender_id !== _currentUserId && (!lr || new Date(m.created_at) > new Date(lr))).length;
-    return { id: cid, name: prof.name, pid: prof.pid, uid: other?.user_id || '', lastMsg, unread, updatedAt: lastMsg?.created_at || '' };
+    let displayName, uid, pid;
+    if (info.is_group) {
+      const others = (partsByConv[cid] || []).filter(p => p.user_id !== _currentUserId);
+      displayName = info.name || _truncate(others.map(p => profMap[p.user_id]?.name || 'User').join(', '), 30);
+      uid = null; pid = null;
+    } else {
+      const other = (partsByConv[cid] || []).find(p => p.user_id !== _currentUserId);
+      uid = other?.user_id || '';
+      pid = uid ? (profMap[uid]?.pid || null) : null;
+      displayName = uid ? (profMap[uid]?.name || 'Unknown') : 'Unknown';
+    }
+    return { id: cid, isGroup: !!info.is_group, displayName, uid, pid, lastMsg, unread, updatedAt: lastMsg?.created_at || '' };
   }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8);
 
   const rows = convs.map(c => {
     const preview = c.lastMsg ? _truncate(c.lastMsg.body, 36) : 'No messages yet';
     const ts      = c.lastMsg ? _relTime(c.lastMsg.created_at) : '';
+    const avatar  = c.isGroup
+      ? `<div style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#6B7280;"><i class="fa-solid fa-users"></i></div>`
+      : `<div class="cd-avatar" data-uid="${c.uid}" data-name="${_esc(c.displayName)}" data-pid="${c.pid || ''}" style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;"></div>`;
     return `
       <div class="chat-drop-row" data-conv-id="${c.id}" style="
         display:flex;align-items:center;gap:10px;padding:.65rem 1rem;cursor:pointer;
         border-bottom:.5px solid #F8F7F4;transition:background .1s;
       " onmouseover="this.style.background='#F8F7F4'" onmouseout="this.style.background=''"
          onclick="window._openMessagingConv('${c.id}')">
-        <div class="cd-avatar" data-uid="${c.uid}" data-name="${_esc(c.name)}" data-pid="${c.pid || ''}"
-          style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;"></div>
+        ${avatar}
         <div style="flex:1;min-width:0;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
-            <div style="font-size:13px;font-weight:${c.unread ? '600' : '500'};color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(c.name)}</div>
+            <div style="font-size:13px;font-weight:${c.unread ? '600' : '500'};color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(c.displayName)}</div>
             <div style="font-size:10.5px;color:#9CA3AF;flex-shrink:0;">${_esc(ts)}</div>
           </div>
           <div style="display:flex;align-items:center;gap:4px;">
@@ -195,11 +193,22 @@ async function _renderDrop(drop) {
       <button onclick="window.switchPanel('messaging',{title:'Messages'});document.getElementById('chat-drop').style.display='none';" style="font-size:12.5px;color:#8B1A2F;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;font-weight:500;">Show all messages →</button>
     </div>`;
 
-  // Hydrate avatars
   drop.querySelectorAll('.cd-avatar').forEach(slot => {
     const { uid, name, pid } = slot.dataset;
     createAvatar({ container: slot, userId: pid || uid, name: name || uid, size: 28 });
   });
+}
+
+function _dropEmptyHtml() {
+  return `
+    <div style="padding:.6rem 1rem;border-bottom:.5px solid #F0EDE8;display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-size:13px;font-weight:600;color:#1C2B3A;">Messages</span>
+      <button onclick="window._openMessagingConv(null)" style="font-size:12px;color:#8B1A2F;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;font-weight:500;">+ New</button>
+    </div>
+    <div style="padding:2rem 1rem;text-align:center;font-size:13px;color:#9CA3AF;font-style:italic;">No conversations yet.</div>
+    <div style="padding:.6rem 1rem;border-top:.5px solid #F0EDE8;text-align:center;">
+      <button onclick="window.switchPanel('messaging',{title:'Messages'});document.getElementById('chat-drop').style.display='none';" style="font-size:12.5px;color:#8B1A2F;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;font-weight:500;">Show all messages →</button>
+    </div>`;
 }
 
 // ── Data ───────────────────────────────────────────────────────────────────
@@ -224,7 +233,7 @@ async function _loadConversations() {
       .in('conversation_id', convIds)
       .order('created_at', { ascending: false }),
     sb.from('conversations')
-      .select('id, deleted_at')
+      .select('id, deleted_at, is_group, name')
       .in('id', convIds),
   ]);
 
@@ -232,8 +241,8 @@ async function _loadConversations() {
   const allMsgs   = msgsRes.data     || [];
   const convMeta  = convsRes.data    || [];
 
-  const deletedAtMap = {};
-  convMeta.forEach(c => { deletedAtMap[c.id] = c.deleted_at || null; });
+  const convInfoMap = {};
+  convMeta.forEach(c => { convInfoMap[c.id] = c; });
 
   const myPinnedMap = {};
   myParts.forEach(p => { myPinnedMap[p.conversation_id] = !!p.pinned; });
@@ -260,29 +269,56 @@ async function _loadConversations() {
     msgsByConv[m.conversation_id].push(m);
   });
 
+  const partsByConv = {};
+  allParts.forEach(p => {
+    if (!partsByConv[p.conversation_id]) partsByConv[p.conversation_id] = [];
+    partsByConv[p.conversation_id].push(p);
+  });
+
   _conversations = convIds.map(cid => {
-    const otherPart    = allParts.find(p => p.conversation_id === cid && p.user_id !== _currentUserId);
-    const otherUserId  = otherPart?.user_id;
-    const otherProfile = otherUserId ? _userProfileMap[otherUserId] : null;
-    const msgs         = msgsByConv[cid] || [];
-    const lastMsg      = msgs[0] || null;
-    const lr           = lastReadMap[cid];
-    const unreadCount  = msgs.filter(m =>
+    const info    = convInfoMap[cid] || {};
+    const msgs    = msgsByConv[cid]  || [];
+    const lastMsg = msgs[0] || null;
+    const lr      = lastReadMap[cid];
+    const unreadCount = msgs.filter(m =>
       m.sender_id !== _currentUserId && (!lr || new Date(m.created_at) > new Date(lr)),
     ).length;
+
+    const participants = (partsByConv[cid] || []).map(p => ({
+      userId: p.user_id,
+      name: _userProfileMap[p.user_id]?.name || 'User',
+      personnelId: _userProfileMap[p.user_id]?.personnelId || null,
+    }));
+
+    let otherUserId = null, otherName = 'Unknown', otherPersonnelId = null, displayName;
+    if (info.is_group) {
+      const others = participants.filter(p => p.userId !== _currentUserId);
+      displayName = info.name || _truncate(others.map(p => p.name).join(', '), 30);
+    } else {
+      const otherPart = (partsByConv[cid] || []).find(p => p.user_id !== _currentUserId);
+      otherUserId = otherPart?.user_id || null;
+      const otherProfile = otherUserId ? _userProfileMap[otherUserId] : null;
+      otherName = otherProfile?.name || 'Unknown';
+      otherPersonnelId = otherProfile?.personnelId || null;
+      displayName = otherName;
+    }
+
     return {
       id: cid,
+      isGroup: !!info.is_group,
+      name: info.name || null,
+      displayName,
+      participants,
       otherUserId,
-      otherName:        otherProfile?.name || 'Unknown',
-      otherPersonnelId: otherProfile?.personnelId || null,
+      otherName,
+      otherPersonnelId,
       lastMsg,
       unreadCount,
       updatedAt:  lastMsg?.created_at || '',
-      deletedAt: deletedAtMap[cid] || null,
-      pinned:    myPinnedMap[cid]  || false,
+      deletedAt: info.deleted_at || null,
+      pinned:    myPinnedMap[cid] || false,
     };
   }).sort((a, b) => {
-    // Pinned active first, then by last message date
     if (!a.deletedAt && !b.deletedAt) {
       if (a.pinned && !b.pinned) return -1;
       if (!a.pinned && b.pinned) return 1;
@@ -297,9 +333,15 @@ async function _loadInitialUnread() {
     .select('conversation_id, last_read_at').eq('user_id', _currentUserId);
   if (!myParts?.length) { _setBadge(0); return; }
   const convIds = myParts.map(p => p.conversation_id);
+
+  // Only count unread in non-deleted conversations
+  const { data: convMeta } = await sb.from('conversations')
+    .select('id, deleted_at').in('id', convIds);
+  const activeIds = new Set((convMeta || []).filter(c => !c.deleted_at).map(c => c.id));
+
   const { data: msgs } = await sb.from('messages')
     .select('conversation_id, sender_id, created_at')
-    .in('conversation_id', convIds)
+    .in('conversation_id', [...activeIds])
     .neq('sender_id', _currentUserId);
   const lrMap = {};
   myParts.forEach(p => { lrMap[p.conversation_id] = p.last_read_at; });
@@ -363,7 +405,7 @@ function _convListHtml() {
       <div class="msg-deleted-row" data-conv-id="${c.id}"
         style="display:flex;align-items:center;gap:8px;padding:.6rem 1rem;border-bottom:.5px solid #F8F7F4;">
         <div style="flex:1;min-width:0;">
-          <div style="font-size:12.5px;color:#9CA3AF;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(c.otherName)}</div>
+          <div style="font-size:12.5px;color:#9CA3AF;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(c.displayName)}</div>
           <div style="font-size:11.5px;color:#C0BAB2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(preview)}</div>
           <div style="font-size:10.5px;color:#C0BAB2;margin-top:1px;">Deleted ${_esc(delDate)}</div>
         </div>
@@ -404,17 +446,23 @@ function _convRowHtml(c) {
   const preview  = c.lastMsg ? _truncate(c.lastMsg.body, 34) : 'No messages yet';
   const ts       = c.lastMsg ? _relTime(c.lastMsg.created_at) : '';
   const hasBold  = c.unreadCount > 0;
+
+  const avatarEl = c.isGroup
+    ? `<div style="flex-shrink:0;width:36px;height:36px;border-radius:50%;background:#E2DDD6;display:flex;align-items:center;justify-content:center;font-size:14px;color:#6B7280;"><i class="fa-solid fa-users"></i></div>`
+    : `<div class="msg-avatar-slot" data-uid="${c.otherUserId || ''}" data-name="${_esc(c.otherName)}" style="flex-shrink:0;width:36px;height:36px;border-radius:50%;background:#E2DDD6;"></div>`;
+
   return `
     <div class="msg-conv-row" data-conv-id="${c.id}" style="
       position:relative;display:flex;align-items:center;gap:10px;padding:.75rem 1rem;cursor:pointer;
       background:${isActive ? '#F8F7F4' : '#fff'};border-bottom:.5px solid #F0EDE8;
     ">
-      <div class="msg-avatar-slot" data-uid="${c.otherUserId || ''}" data-name="${_esc(c.otherName)}" style="flex-shrink:0;width:36px;height:36px;border-radius:50%;background:#E2DDD6;"></div>
+      ${avatarEl}
       <div style="flex:1;min-width:0;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:2px;">
           <div style="display:flex;align-items:center;gap:5px;min-width:0;">
             ${c.pinned ? `<i class="fa-solid fa-thumbtack" style="color:#C9A84C;font-size:10px;flex-shrink:0;transform:rotate(45deg);"></i>` : ''}
-            <div style="font-size:13.5px;font-weight:${hasBold ? '600' : '500'};color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(c.otherName)}</div>
+            ${c.isGroup ? `<i class="fa-solid fa-users" style="color:#9CA3AF;font-size:10px;flex-shrink:0;"></i>` : ''}
+            <div style="font-size:13.5px;font-weight:${hasBold ? '600' : '500'};color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(c.displayName)}</div>
           </div>
           <div style="font-size:11px;color:#9CA3AF;flex-shrink:0;">${_esc(ts)}</div>
         </div>
@@ -423,7 +471,7 @@ function _convRowHtml(c) {
           ${c.unreadCount ? `<div style="flex-shrink:0;width:18px;height:18px;background:#1C2B3A;border-radius:50%;display:flex;align-items:center;justify-content:center;"><span style="font-size:9px;color:#fff;font-weight:700;">${c.unreadCount > 9 ? '9+' : c.unreadCount}</span></div>` : ''}
         </div>
       </div>
-      <div class="msg-row-actions" style="display:none;flex-shrink:0;display:none;align-items:center;gap:2px;">
+      <div class="msg-row-actions" style="display:none;flex-shrink:0;align-items:center;gap:2px;">
         <button class="msg-pin-btn" data-conv-id="${c.id}" title="${c.pinned ? 'Unpin' : 'Pin conversation'}" style="
           background:none;border:none;cursor:pointer;
           color:${c.pinned ? '#C9A84C' : '#C0BAB2'};font-size:12px;padding:2px 4px;line-height:1;
@@ -473,15 +521,29 @@ function _emptyThreadHtml() {
 
 function _threadHtml(mobile) {
   const conv = _conversations.find(c => c.id === _activeConvId);
-  const name  = conv?.otherName || 'Conversation';
+  const displayName = conv?.displayName || 'Conversation';
   const uid   = conv?.otherUserId || '';
   const pid   = conv?.otherPersonnelId || '';
+  const isGroup = conv?.isGroup || false;
+
+  const avatarEl = isGroup
+    ? `<div style="width:32px;height:32px;border-radius:50%;background:#E2DDD6;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;color:#6B7280;"><i class="fa-solid fa-users"></i></div>`
+    : `<div id="msg-thread-avatar-slot" data-uid="${uid}" data-name="${_esc(displayName)}" data-pid="${pid}" style="width:32px;height:32px;border-radius:50%;background:#E2DDD6;flex-shrink:0;"></div>`;
+
+  const groupBtn = isGroup
+    ? `<button id="msg-participants-btn" title="View participants" style="
+        margin-left:auto;background:none;border:none;cursor:pointer;
+        color:#9CA3AF;font-size:15px;padding:4px 6px;line-height:1;
+      "><i class="fa-solid fa-user-group"></i></button>`
+    : '';
+
   return `
     <div style="display:flex;flex-direction:column;height:100%;">
       <div style="padding:.75rem 1rem;border-bottom:.5px solid #E2DDD6;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0;">
         ${mobile ? `<button id="msg-back-btn" style="background:none;border:none;cursor:pointer;color:#8B1A2F;font-size:22px;padding:0;line-height:1;margin-right:2px;">‹</button>` : ''}
-        <div id="msg-thread-avatar-slot" data-uid="${uid}" data-name="${_esc(name)}" data-pid="${pid}" style="width:32px;height:32px;border-radius:50%;background:#E2DDD6;flex-shrink:0;"></div>
-        <div style="font-size:14px;font-weight:600;color:#1C2B3A;">${_esc(name)}</div>
+        ${avatarEl}
+        <div style="font-size:14px;font-weight:600;color:#1C2B3A;">${_esc(displayName)}</div>
+        ${groupBtn}
       </div>
       <div id="msg-messages" style="flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;background:#FAFAF8;"></div>
       <div style="padding:.75rem 1rem;border-top:.5px solid #E2DDD6;background:#fff;flex-shrink:0;display:flex;gap:8px;align-items:flex-end;">
@@ -501,6 +563,9 @@ function _threadHtml(mobile) {
 function _renderMessages() {
   const el = document.getElementById('msg-messages');
   if (!el) return;
+
+  const conv = _conversations.find(c => c.id === _activeConvId);
+  const isGroup = conv?.isGroup || false;
 
   if (!_messages.length) {
     el.innerHTML = `<div style="text-align:center;font-size:13px;color:#9CA3AF;font-style:italic;padding:2rem 0;margin:auto;">No messages yet. Say hello!</div>`;
@@ -522,17 +587,18 @@ function _renderMessages() {
     const prof = uid === _currentUserId ? null : (_userProfileMap[uid] || { name: 'User', personnelId: null });
     const name = prof?.name || '';
     const pid  = prof?.personnelId || '';
-    // Avatar anchored to last message in group (iMessage style); spacer keeps alignment for earlier bubbles
     const avatarSlot = !isMine
       ? (isLast
           ? `<div class="msg-inline-avatar" data-uid="${uid}" data-name="${_esc(name)}" data-pid="${pid}" style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;align-self:flex-end;"></div>`
           : `<div style="width:28px;flex-shrink:0;"></div>`)
       : '';
+    // In group chats, show sender name on first message in each bubble group
+    const showSenderName = !isMine && isFirst && (isGroup || true);
     return `
       <div style="display:flex;align-items:flex-end;gap:6px;justify-content:${isMine ? 'flex-end' : 'flex-start'};margin-top:${isFirst ? '8px' : '2px'};">
         ${!isMine ? avatarSlot : ''}
         <div style="max-width:70%;display:flex;flex-direction:column;${isMine ? 'align-items:flex-end;' : 'align-items:flex-start;'}">
-          ${!isMine && isFirst ? `<div style="font-size:11px;color:#9CA3AF;margin-bottom:2px;margin-left:4px;">${_esc(name)}</div>` : ''}
+          ${showSenderName ? `<div style="font-size:11px;color:#9CA3AF;margin-bottom:2px;margin-left:4px;">${_esc(name)}</div>` : ''}
           <div style="
             background:${isMine ? '#1C2B3A' : '#F0F0F0'};
             color:${isMine ? '#fff' : '#1C2B3A'};
@@ -660,6 +726,8 @@ async function _restoreConversation(convId) {
 }
 
 function _hydrateThread() {
+  const conv = _conversations.find(c => c.id === _activeConvId);
+
   const headerSlot = document.getElementById('msg-thread-avatar-slot');
   if (headerSlot) {
     const { uid, name, pid } = headerSlot.dataset;
@@ -676,6 +744,12 @@ function _hydrateThread() {
     const el = document.getElementById('messaging-root');
     if (el) _render(el);
   });
+
+  if (conv?.isGroup) {
+    document.getElementById('msg-participants-btn')?.addEventListener('click', () => {
+      _openGroupParticipantsModal(conv);
+    });
+  }
 
   const input = document.getElementById('msg-input');
   if (input) {
@@ -697,6 +771,13 @@ async function _openConversation(convId) {
   _activeConvId = convId;
   _messages = [];
 
+  await _markConversationRead(convId);
+
+  const el = document.getElementById('messaging-root');
+  if (el) _render(el);
+}
+
+async function _markConversationRead(convId) {
   await sb.from('conversation_participants')
     .update({ last_read_at: new Date().toISOString() })
     .eq('conversation_id', convId)
@@ -705,13 +786,13 @@ async function _openConversation(convId) {
   const conv = _conversations.find(c => c.id === convId);
   if (conv) conv.unreadCount = 0;
   _updateBadge();
-
-  const el = document.getElementById('messaging-root');
-  if (el) _render(el);
 }
 
 async function _fetchAndRenderMessages() {
   if (!_activeConvId) return;
+
+  // Mark as read whenever we display the thread (covers dropdown → panel navigation path)
+  await _markConversationRead(_activeConvId);
 
   const { data } = await sb.from('messages')
     .select('*')
@@ -719,7 +800,6 @@ async function _fetchAndRenderMessages() {
     .order('created_at', { ascending: true });
   _messages = data || [];
 
-  // Fill in any missing sender profiles
   const unknown = [...new Set(_messages.map(m => m.sender_id).filter(id => id && id !== _currentUserId && !_userProfileMap[id]))];
   if (unknown.length) {
     const { data: profiles } = await sb.from('user_profiles')
@@ -768,7 +848,6 @@ function _subscribeGlobal() {
       conv.updatedAt = msg.created_at;
       _conversations.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       _updateBadge();
-      // Re-render conv list column if visible
       const listCol = document.getElementById('msg-list-col');
       if (listCol) {
         listCol.innerHTML = _convListHtml();
@@ -786,11 +865,32 @@ async function _sendMessage() {
   const body = input.value.trim();
   if (!body || !_activeConvId) return;
 
+  // Fix 3: if the active conversation is deleted, create a new one with same participants
+  const activeConv = _conversations.find(c => c.id === _activeConvId);
+  let targetConvId = _activeConvId;
+
+  if (activeConv?.deletedAt) {
+    const participants = activeConv.participants || [];
+    const { data: newConv, error: ce } = await sb.from('conversations').insert({
+      is_group: activeConv.isGroup || false,
+      name: activeConv.name || null,
+    }).select().single();
+    if (ce) { console.error('[messaging] failed to recreate conversation:', ce); return; }
+    await sb.from('conversation_participants').insert(
+      participants.map(p => ({ conversation_id: newConv.id, user_id: p.userId }))
+    );
+    targetConvId = newConv.id;
+    _activeConvId = newConv.id;
+    await _loadConversations();
+    const el = document.getElementById('messaging-root');
+    if (el) _render(el);
+  }
+
   input.value = '';
   input.style.height = 'auto';
 
   const { data: msg, error } = await sb.from('messages').insert({
-    conversation_id: _activeConvId,
+    conversation_id: targetConvId,
     sender_id: _currentUserId,
     body,
   }).select().single();
@@ -802,37 +902,31 @@ async function _sendMessage() {
     _renderMessages();
   }
 
-  const conv = _conversations.find(c => c.id === _activeConvId);
+  const conv = _conversations.find(c => c.id === targetConvId);
   if (conv) {
     conv.lastMsg = msg;
     conv.updatedAt = msg.created_at;
     _conversations.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  }
-
-  // Notify recipient
-  const recipient = conv?.otherUserId;
-  if (recipient) {
-    const myName = _userProfileMap[_currentUserId]?.name || 'Someone';
-    sb.from('notifications').insert({
-      user_id: recipient,
-      message: `${myName}: ${body.length > 60 ? body.substring(0, 60) + '…' : body}`,
-      type: 'info',
-      module: 'messaging',
-      record_id: _activeConvId,
-    }).then(() => {});
   }
 }
 
 // ── New message modal ──────────────────────────────────────────────────────
 
 function _openNewMessageModal() {
-  let _pickedPerson = null;
+  let _picker = null;
 
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-title">New Message</div>
-    <div style="margin-bottom:1rem;">
-      <div style="font-size:11.5px;color:#6B7280;margin-bottom:6px;">Send to:</div>
+    <div style="margin-bottom:.5rem;">
+      <div style="font-size:11.5px;color:#6B7280;margin-bottom:6px;">Send to (select one or more):</div>
       <div id="msg-new-picker-wrap"></div>
+    </div>
+    <div style="margin-bottom:1rem;">
+      <div style="font-size:11.5px;color:#6B7280;margin-bottom:4px;">Group name <span style="color:#C0BAB2;">(optional, for groups)</span></div>
+      <input id="msg-new-group-name" placeholder="e.g. Planning Committee" style="
+        width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;
+        border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;
+      "/>
     </div>
     <div id="msg-new-status" style="font-size:12px;color:#8B1A2F;min-height:16px;margin-bottom:.5rem;"></div>
     <div class="modal-actions">
@@ -841,63 +935,116 @@ function _openNewMessageModal() {
     </div>`;
   document.getElementById('modal-overlay').classList.add('open');
 
-  createContactPicker({
+  _picker = createContactPicker({
     container: document.getElementById('msg-new-picker-wrap'),
     placeholder: 'Search directory…',
-    onSelect: person => {
-      _pickedPerson = person?.id ? person : null;
+    multiSelect: true,
+    onSelect: persons => {
       const btn = document.getElementById('msg-new-start');
-      if (btn) btn.disabled = !_pickedPerson;
+      if (btn) btn.disabled = !persons?.length;
     },
   });
 
   document.getElementById('msg-new-start')?.addEventListener('click', async () => {
-    if (!_pickedPerson?.id) return;
+    const persons = _picker?.getValue() || [];
+    if (!persons.length) return;
     const statusEl = document.getElementById('msg-new-status');
-    statusEl.textContent = 'Looking up account…';
+    statusEl.textContent = 'Looking up accounts…';
 
-    const { data: profile } = await sb.from('user_profiles')
-      .select('user_id')
-      .eq('personnel_id', _pickedPerson.id)
-      .maybeSingle();
+    // Resolve each person to a user_id
+    const resolved = await Promise.all(persons.map(async person => {
+      if (!person?.id) return null;
+      const { data: profile } = await sb.from('user_profiles')
+        .select('user_id')
+        .eq('personnel_id', person.id)
+        .maybeSingle();
+      if (!profile?.user_id) return { error: `${person.name || 'Someone'} does not have a ParishDesk account yet.` };
+      if (profile.user_id === _currentUserId) return { error: 'You cannot message yourself.' };
+      return { userId: profile.user_id, name: person.name, personnelId: person.id };
+    }));
 
-    if (!profile?.user_id) {
-      statusEl.textContent = 'This person does not have a ParishDesk account yet.';
-      return;
-    }
-    if (profile.user_id === _currentUserId) {
-      statusEl.textContent = 'You cannot message yourself.';
-      return;
-    }
+    const failed = resolved.find(r => !r || r.error);
+    if (failed) { statusEl.textContent = failed?.error || 'Could not resolve all recipients.'; return; }
+
+    const recipientIds = resolved.map(r => r.userId);
+    const groupName = document.getElementById('msg-new-group-name')?.value.trim() || null;
+    const isGroup = recipientIds.length > 1;
 
     statusEl.textContent = 'Opening conversation…';
 
-    // Check for existing conversation between these two users
-    const { data: myParts }    = await sb.from('conversation_participants').select('conversation_id').eq('user_id', _currentUserId);
-    const { data: theirParts } = await sb.from('conversation_participants').select('conversation_id').eq('user_id', profile.user_id);
-    const mySet    = new Set((myParts || []).map(p => p.conversation_id));
-    const existing = (theirParts || []).find(p => mySet.has(p.conversation_id));
-
     let convId;
-    if (existing) {
-      convId = existing.conversation_id;
+
+    if (!isGroup) {
+      // 1:1 — look for existing non-deleted, non-group conversation
+      const recipientId = recipientIds[0];
+      const { data: myParts }    = await sb.from('conversation_participants').select('conversation_id').eq('user_id', _currentUserId);
+      const { data: theirParts } = await sb.from('conversation_participants').select('conversation_id').eq('user_id', recipientId);
+
+      const allIds = [...new Set([...(myParts||[]), ...(theirParts||[])].map(p => p.conversation_id))];
+      if (allIds.length) {
+        const { data: convMeta } = await sb.from('conversations')
+          .select('id, deleted_at, is_group').in('id', allIds);
+        const activeDirectIds = new Set(
+          (convMeta || []).filter(c => !c.deleted_at && !c.is_group).map(c => c.id)
+        );
+        const mySet    = new Set((myParts || []).filter(p => activeDirectIds.has(p.conversation_id)).map(p => p.conversation_id));
+        const existing = (theirParts || []).find(p => mySet.has(p.conversation_id));
+        if (existing) convId = existing.conversation_id;
+      }
+
+      if (!convId) {
+        const { data: conv, error } = await sb.from('conversations').insert({ is_group: false }).select().single();
+        if (error) { statusEl.textContent = 'Failed: ' + error.message; return; }
+        convId = conv.id;
+        await sb.from('conversation_participants').insert([
+          { conversation_id: convId, user_id: _currentUserId },
+          { conversation_id: convId, user_id: recipientId },
+        ]);
+        _userProfileMap[recipientId] = { name: resolved[0].name, personnelId: resolved[0].personnelId };
+        _conversations.unshift({
+          id: convId,
+          isGroup: false,
+          name: null,
+          displayName: resolved[0].name,
+          participants: [
+            { userId: _currentUserId, name: _userProfileMap[_currentUserId]?.name || 'Me', personnelId: null },
+            { userId: recipientId, name: resolved[0].name, personnelId: resolved[0].personnelId },
+          ],
+          otherUserId: recipientId,
+          otherName: resolved[0].name,
+          otherPersonnelId: resolved[0].personnelId,
+          lastMsg: null, unreadCount: 0, updatedAt: '', deletedAt: null, pinned: false,
+        });
+      }
     } else {
-      const { data: conv, error } = await sb.from('conversations').insert({}).select().single();
+      // Group conversation — always create new
+      const { data: conv, error } = await sb.from('conversations').insert({
+        is_group: true,
+        name: groupName || null,
+      }).select().single();
       if (error) { statusEl.textContent = 'Failed: ' + error.message; return; }
       convId = conv.id;
-      await sb.from('conversation_participants').insert([
-        { conversation_id: convId, user_id: _currentUserId },
-        { conversation_id: convId, user_id: profile.user_id },
-      ]);
-      _userProfileMap[profile.user_id] = { name: _pickedPerson.name, personnelId: _pickedPerson.id };
+      const allParticipants = [_currentUserId, ...recipientIds];
+      await sb.from('conversation_participants').insert(
+        allParticipants.map(uid => ({ conversation_id: convId, user_id: uid }))
+      );
+      resolved.forEach(r => { _userProfileMap[r.userId] = { name: r.name, personnelId: r.personnelId }; });
+      const others = resolved.map(r => r.name);
+      const displayName = groupName || _truncate(others.join(', '), 30);
+      const participants = [
+        { userId: _currentUserId, name: _userProfileMap[_currentUserId]?.name || 'Me', personnelId: null },
+        ...resolved.map(r => ({ userId: r.userId, name: r.name, personnelId: r.personnelId })),
+      ];
       _conversations.unshift({
         id: convId,
-        otherUserId: profile.user_id,
-        otherName: _pickedPerson.name,
-        otherPersonnelId: _pickedPerson.id,
-        lastMsg: null,
-        unreadCount: 0,
-        updatedAt: '',
+        isGroup: true,
+        name: groupName || null,
+        displayName,
+        participants,
+        otherUserId: null,
+        otherName: displayName,
+        otherPersonnelId: null,
+        lastMsg: null, unreadCount: 0, updatedAt: '', deletedAt: null, pinned: false,
       });
     }
 
@@ -906,10 +1053,58 @@ function _openNewMessageModal() {
   });
 }
 
+// ── Group participants modal ───────────────────────────────────────────────
+
+function _openGroupParticipantsModal(conv) {
+  const rows = (conv.participants || []).map(p => {
+    const isMe = p.userId === _currentUserId;
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:.55rem 0;border-bottom:.5px solid #F0EDE8;">
+        <div class="gp-avatar" data-uid="${p.userId}" data-name="${_esc(p.name)}"
+          style="width:30px;height:30px;border-radius:50%;background:#E2DDD6;flex-shrink:0;"></div>
+        <div style="flex:1;font-size:13px;color:#1C2B3A;">${_esc(p.name)}${isMe ? ' <span style="font-size:11px;color:#9CA3AF;">(you)</span>' : ''}</div>
+      </div>`;
+  }).join('');
+
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-title">${_esc(conv.displayName)}</div>
+    <div style="font-size:11.5px;color:#6B7280;margin-bottom:.75rem;">${conv.participants.length} participants</div>
+    <div style="margin-bottom:1rem;">${rows}</div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Close</button>
+      <button id="gp-leave-btn" style="
+        background:none;border:.5px solid #8B1A2F;color:#8B1A2F;border-radius:6px;
+        padding:.4rem .9rem;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;
+      ">Leave group</button>
+    </div>`;
+  document.getElementById('modal-overlay').classList.add('open');
+
+  document.querySelectorAll('.gp-avatar').forEach(slot => {
+    createAvatar({ container: slot, userId: slot.dataset.uid, name: slot.dataset.name || slot.dataset.uid, size: 30 });
+  });
+
+  document.getElementById('gp-leave-btn')?.addEventListener('click', async () => {
+    if (!confirm('Leave this group conversation? You will no longer receive messages from it.')) return;
+    await sb.from('conversations').update({ deleted_at: new Date().toISOString() }).eq('id', conv.id);
+    const c = _conversations.find(x => x.id === conv.id);
+    if (c) c.deletedAt = new Date().toISOString();
+    if (_activeConvId === conv.id) {
+      _activeConvId = null;
+      _messages = [];
+      if (_msgChannel) { sb.removeChannel(_msgChannel); _msgChannel = null; }
+    }
+    closeModal();
+    const el = document.getElementById('messaging-root');
+    if (el) _render(el);
+  });
+}
+
 // ── Badge ──────────────────────────────────────────────────────────────────
 
 function _updateBadge() {
-  const total = _conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+  const total = _conversations
+    .filter(c => !c.deletedAt)
+    .reduce((sum, c) => sum + (c.unreadCount || 0), 0);
   _setBadge(total);
 }
 

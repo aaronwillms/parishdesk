@@ -357,7 +357,7 @@ async function linkOciaPriorCase(personId, pmIndex) {
   const pm = JSON.parse(JSON.stringify(person.prior_marriages||[]));
   pm[pmIndex].annulment_case_id = sel.value;
   const {error} = await sb.from('sacramental_ocia').update({prior_marriages:pm,updated_at:new Date().toISOString()}).eq('id',personId);
-  if(error){alert('Save failed: '+error.message);return;}
+  if(error){console.error('[ocia] linkCase error:', error);alert('Save failed: '+error.message);return;}
   person.prior_marriages = pm;
   if(caseIsConfirmed(sel.value)) {
     createNotification(`${person.name}'s annulment has been confirmed — review OCIA status`, 'success', 'ocia', personId);
@@ -371,7 +371,7 @@ async function unlinkOciaPriorCase(personId, pmIndex) {
   const pm = JSON.parse(JSON.stringify(person.prior_marriages||[]));
   pm[pmIndex].annulment_case_id = null;
   const {error} = await sb.from('sacramental_ocia').update({prior_marriages:pm,updated_at:new Date().toISOString()}).eq('id',personId);
-  if(error){alert('Save failed: '+error.message);return;}
+  if(error){console.error('[ocia] unlinkCase error:', error);alert('Save failed: '+error.message);return;}
   person.prior_marriages = pm;
   renderOcia();
 }
@@ -385,7 +385,7 @@ async function appendOciaNote(id) {
   const ds = `${now.getMonth()+1}/${now.getDate()}/${now.getFullYear()}`;
   const newNotes = p.notes?`${p.notes}\n\n[${ds}] ${txt}`:`[${ds}] ${txt}`;
   const {error} = await sb.from('sacramental_ocia').update({notes:newNotes,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error){alert('Save failed: '+error.message);return;}
+  if(error){console.error('[ocia] appendNote error:', error);alert('Save failed: '+error.message);return;}
   p.notes = newNotes; renderOcia();
 }
 
@@ -394,7 +394,7 @@ async function deleteOciaNote(id, idx) {
   const entries = p.notes.split('\n\n').filter(n=>n.trim()); entries.splice(idx,1);
   const newNotes = entries.join('\n\n');
   const {error} = await sb.from('sacramental_ocia').update({notes:newNotes,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error){alert('Delete failed: '+error.message);return;}
+  if(error){console.error('[ocia] deleteNote error:', error);alert('Delete failed: '+error.message);return;}
   p.notes = newNotes; renderOcia();
 }
 
@@ -405,7 +405,7 @@ async function addOciaDoc(id) {
   const name = document.getElementById('ocia-doc-name-'+id).value.trim(); if(!name){alert('Please enter a document name.');return;}
   const docs = JSON.parse(JSON.stringify(p.documents||[])); docs.push({name,done:false});
   const {error} = await sb.from('sacramental_ocia').update({documents:docs,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error){alert('Save failed: '+error.message);return;}
+  if(error){console.error('[ocia] addDoc error:', error);alert('Save failed: '+error.message);return;}
   p.documents = docs; renderOcia();
 }
 
@@ -413,14 +413,14 @@ async function toggleOciaDoc(id, idx) {
   const p = allOcia.find(x => x.id===id); if(!p) return;
   const docs = JSON.parse(JSON.stringify(p.documents||[])); docs[idx].done = !docs[idx].done;
   const {error} = await sb.from('sacramental_ocia').update({documents:docs,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error) return; p.documents = docs; renderOcia();
+  if(error){console.error('[ocia] toggleDoc error:', error);return;} p.documents = docs; renderOcia();
 }
 
 async function deleteOciaDoc(id, idx) {
   const p = allOcia.find(x => x.id===id); if(!p||!confirm(`Delete "${p.documents[idx].name}"?`)) return;
   const docs = JSON.parse(JSON.stringify(p.documents||[])); docs.splice(idx,1);
   const {error} = await sb.from('sacramental_ocia').update({documents:docs,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error){alert('Delete failed: '+error.message);return;}
+  if(error){console.error('[ocia] deleteDoc error:', error);alert('Delete failed: '+error.message);return;}
   p.documents = docs; renderOcia();
 }
 
@@ -432,7 +432,7 @@ async function addOciaTlEntry(id) {
   const event = document.getElementById('ocia-tl-event-'+id).value.trim(); if(!event){alert('Please enter a comment.');return;}
   const tl = JSON.parse(JSON.stringify(p.timeline||[])); tl.push({date,event});
   const {error} = await sb.from('sacramental_ocia').update({timeline:tl,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error){alert('Save failed: '+error.message);return;}
+  if(error){console.error('[ocia] addTimeline error:', error);alert('Save failed: '+error.message);return;}
   p.timeline = tl; renderOcia();
 }
 
@@ -440,7 +440,7 @@ async function deleteOciaTlEntry(id, idx) {
   const p = allOcia.find(x => x.id===id); if(!p||!confirm('Delete this timeline entry?')) return;
   const tl = JSON.parse(JSON.stringify(p.timeline||[])); tl.splice(idx,1);
   const {error} = await sb.from('sacramental_ocia').update({timeline:tl,updated_at:new Date().toISOString()}).eq('id',id);
-  if(error){alert('Delete failed: '+error.message);return;}
+  if(error){console.error('[ocia] deleteTimeline error:', error);alert('Delete failed: '+error.message);return;}
   p.timeline = tl; renderOcia();
 }
 
@@ -718,7 +718,7 @@ async function saveOcia(id) {
     _ociaSaving = false;
     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
   }
-  if(err){alert('Save failed: '+err.message);return;}
+  if(err){console.error('[ocia] save error:', err);alert('Save failed: '+err.message);return;}
   logActivity({ action: id ? 'updated OCIA record' : 'added OCIA candidate', entityType: 'ocia', entityName: name, contextType: 'ocia' });
   if (!id) {
     const { data: { user: _me } } = await sb.auth.getUser();
@@ -732,7 +732,7 @@ async function saveOcia(id) {
 async function deleteOciaPerson(id) {
   if(!confirm('Permanently delete this record? This cannot be undone.')) return;
   const {error} = await sb.from('sacramental_ocia').delete().eq('id',id);
-  if(error){alert('Delete failed: '+error.message);return;}
+  if(error){console.error('[ocia] delete error:', error);alert('Delete failed: '+error.message);return;}
   closeModal(); loadOcia();
 }
 
