@@ -143,10 +143,11 @@ async function _renderDrop(drop) {
     const lastMsg = msgs[0] || null;
     const lr      = lrMap[cid];
     const unread  = msgs.filter(m => m.sender_id !== _currentUserId && (!lr || new Date(m.created_at) > new Date(lr))).length;
-    let displayName, uid, pid;
+    let displayName, uid, pid, otherParticipants = [];
     if (info.is_group) {
       const others = (partsByConv[cid] || []).filter(p => p.user_id !== _currentUserId);
-      displayName = info.name || _truncate(others.map(p => profMap[p.user_id]?.name || 'User').join(', '), 30);
+      otherParticipants = others.map(p => ({ userId: p.user_id, name: profMap[p.user_id]?.name || 'User' }));
+      displayName = info.name || _truncate(otherParticipants.map(p => p.name).join(', '), 30);
       uid = null; pid = null;
     } else {
       const other = (partsByConv[cid] || []).find(p => p.user_id !== _currentUserId);
@@ -154,14 +155,14 @@ async function _renderDrop(drop) {
       pid = uid ? (profMap[uid]?.pid || null) : null;
       displayName = uid ? (profMap[uid]?.name || 'Unknown') : 'Unknown';
     }
-    return { id: cid, isGroup: !!info.is_group, displayName, uid, pid, lastMsg, unread, updatedAt: lastMsg?.created_at || '' };
+    return { id: cid, isGroup: !!info.is_group, displayName, uid, pid, otherParticipants, lastMsg, unread, updatedAt: lastMsg?.created_at || '' };
   }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8);
 
   const rows = convs.map(c => {
     const preview = c.lastMsg ? _truncate(c.lastMsg.body, 36) : 'No messages yet';
     const ts      = c.lastMsg ? _relTime(c.lastMsg.created_at) : '';
     const avatar  = c.isGroup
-      ? `<div style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#6B7280;"><i class="fa-solid fa-users"></i></div>`
+      ? _groupAvatarClusterHtml(c.otherParticipants, 3, 28, 10)
       : `<div class="cd-avatar" data-uid="${c.uid}" data-name="${_esc(c.displayName)}" data-pid="${c.pid || ''}" style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;"></div>`;
     return `
       <div class="chat-drop-row" data-conv-id="${c.id}" style="
@@ -196,6 +197,9 @@ async function _renderDrop(drop) {
   drop.querySelectorAll('.cd-avatar').forEach(slot => {
     const { uid, name, pid } = slot.dataset;
     createAvatar({ container: slot, userId: pid || uid, name: name || uid, size: 28 });
+  });
+  drop.querySelectorAll('.msg-group-av-slot').forEach(slot => {
+    createAvatar({ container: slot, userId: slot.dataset.uid, name: slot.dataset.name || slot.dataset.uid, size: 28 });
   });
 }
 
@@ -447,8 +451,9 @@ function _convRowHtml(c) {
   const ts       = c.lastMsg ? _relTime(c.lastMsg.created_at) : '';
   const hasBold  = c.unreadCount > 0;
 
+  const others   = c.isGroup ? c.participants.filter(p => p.userId !== _currentUserId) : [];
   const avatarEl = c.isGroup
-    ? `<div style="flex-shrink:0;width:36px;height:36px;border-radius:50%;background:#E2DDD6;display:flex;align-items:center;justify-content:center;font-size:14px;color:#6B7280;"><i class="fa-solid fa-users"></i></div>`
+    ? _groupAvatarClusterHtml(others, 3, 28, 10)
     : `<div class="msg-avatar-slot" data-uid="${c.otherUserId || ''}" data-name="${_esc(c.otherName)}" style="flex-shrink:0;width:36px;height:36px;border-radius:50%;background:#E2DDD6;"></div>`;
 
   return `
@@ -526,8 +531,9 @@ function _threadHtml(mobile) {
   const pid   = conv?.otherPersonnelId || '';
   const isGroup = conv?.isGroup || false;
 
+  const headerOthers = isGroup ? (conv?.participants || []).filter(p => p.userId !== _currentUserId) : [];
   const avatarEl = isGroup
-    ? `<div style="width:32px;height:32px;border-radius:50%;background:#E2DDD6;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;color:#6B7280;"><i class="fa-solid fa-users"></i></div>`
+    ? _groupAvatarClusterHtml(headerOthers, 4, 30, 10)
     : `<div id="msg-thread-avatar-slot" data-uid="${uid}" data-name="${_esc(displayName)}" data-pid="${pid}" style="width:32px;height:32px;border-radius:50%;background:#E2DDD6;flex-shrink:0;"></div>`;
 
   const groupBtn = isGroup
@@ -650,6 +656,9 @@ function _hydrateConvList() {
     const { uid, name } = slot.dataset;
     createAvatar({ container: slot, userId: uid, name: name || uid, size: 36 });
   });
+  document.querySelectorAll('.msg-group-av-slot').forEach(slot => {
+    createAvatar({ container: slot, userId: slot.dataset.uid, name: slot.dataset.name || slot.dataset.uid, size: 28 });
+  });
 
   document.querySelectorAll('.msg-conv-row').forEach(row => {
     const actions = row.querySelector('.msg-row-actions');
@@ -733,6 +742,10 @@ function _hydrateThread() {
     const { uid, name, pid } = headerSlot.dataset;
     createAvatar({ container: headerSlot, userId: uid, name: name || uid, size: 32 });
   }
+  // Group header cluster slots
+  document.querySelectorAll('#msg-thread-col .msg-group-av-slot, #msg-mobile-pane .msg-group-av-slot').forEach(slot => {
+    createAvatar({ container: slot, userId: slot.dataset.uid, name: slot.dataset.name || slot.dataset.uid, size: 30 });
+  });
 
   _fetchAndRenderMessages();
 
@@ -1117,6 +1130,34 @@ function _setBadge(n) {
   } else {
     badge.style.display = 'none';
   }
+}
+
+// ── Group avatar cluster ───────────────────────────────────────────────────
+
+// Returns an HTML string with overlapping avatar slots (rightmost on top).
+// `others` = array of {userId, name}
+function _groupAvatarClusterHtml(others, maxShown, size, offset) {
+  const shown = others.slice(0, maxShown);
+  const extra = others.length - shown.length;
+  const containerWidth = size + Math.max(0, shown.length - 1 + (extra ? 1 : 0)) * offset;
+
+  let html = `<div style="position:relative;width:${containerWidth}px;height:${size}px;flex-shrink:0;">`;
+  shown.forEach((p, i) => {
+    html += `<div class="msg-group-av-slot" data-uid="${p.userId || ''}" data-name="${_esc(p.name)}"
+      style="position:absolute;left:${i * offset}px;z-index:${i + 1};
+             width:${size}px;height:${size}px;border-radius:50%;
+             box-sizing:border-box;border:2px solid #fff;overflow:hidden;background:#E2DDD6;"></div>`;
+  });
+  if (extra > 0) {
+    const fs = Math.round(size * 0.36);
+    html += `<div style="position:absolute;left:${shown.length * offset}px;z-index:0;
+      width:${size}px;height:${size}px;border-radius:50%;background:#C4BDB3;
+      box-sizing:border-box;border:2px solid #fff;
+      display:flex;align-items:center;justify-content:center;
+      font-size:${fs}px;color:#fff;font-weight:700;font-family:'Inter',sans-serif;">+${extra}</div>`;
+  }
+  html += '</div>';
+  return html;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
