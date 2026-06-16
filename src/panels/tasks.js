@@ -141,15 +141,15 @@ function taskRow(t) {
     t.completed && t.completed_at ? `<span style="font-size:11px;color:#1E8449;">✓ ${fmtDate(t.completed_at.slice(0,10))}</span>` : '',
   ].filter(Boolean).join('');
 
-  return `<div class="evt-item" style="cursor:default;gap:10px;" id="task-row-${t.id}">
-    <input type="checkbox" ${t.completed ? 'checked' : ''} onchange="toggleTask('${t.id}',this.checked)"
+  return `<div class="task-row" id="task-row-${t.id}" style="display:flex;align-items:center;gap:10px;border-bottom:.5px solid var(--stone);" onclick="openTaskDetail('${t.id}')">
+    <input type="checkbox" ${t.completed ? 'checked' : ''} onclick="event.stopPropagation()" onchange="toggleTask('${t.id}',this.checked)"
       style="width:16px;height:16px;flex-shrink:0;cursor:pointer;accent-color:var(--cardinal);" />
-    <div style="flex:1;min-width:0;" onclick="openTaskDetail('${t.id}')" style="cursor:pointer;">
+    <div style="flex:1;min-width:0;">
       <div class="evt-title" style="${t.completed ? 'text-decoration:line-through;color:#9CA3AF;' : ''}">${t.title}</div>
       ${chips ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:3px;">${chips}</div>` : ''}
       ${t.notes ? `<div style="font-size:12px;color:#9CA3AF;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.notes}</div>` : ''}
     </div>
-    <button onclick="openTaskDetail('${t.id}')" title="Edit" style="background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:13px;padding:0;flex-shrink:0;" onmouseover="this.style.color='var(--navy)'" onmouseout="this.style.color='#D1D5DB'">✏</button>
+    <button class="task-edit-btn" onclick="event.stopPropagation();openTaskDetail('${t.id}')" title="Edit task"><i class="fa-solid fa-pencil"></i></button>
   </div>`;
 }
 

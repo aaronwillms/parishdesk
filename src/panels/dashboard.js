@@ -525,18 +525,23 @@ async function loadActivityFeed() {
   const [projRes, tasksRes, actRes, ...sacRes] = await Promise.all(queries);
 
   // Build profile map for activity_log entries
+  if (actRes.error) console.error('[activity_log] fetch error:', actRes.error);
+  console.log('[activity_log] raw rows:', actRes.data);
   const actData = actRes.data || [];
-  const triggerIds = [...new Set(actData.map(r => r.triggered_by).filter(Boolean))];
-  const actProfileMap = {};
-  if (triggerIds.length) {
-    const { data: profs } = await sb.from('user_profiles')
-      .select('user_id, avatar_url, personnel_id, personnel(name)')
-      .in('user_id', triggerIds);
+  const triggeredByIds = [...new Set(actData.map(r => r.triggered_by).filter(Boolean))];
+  const userMap = {};
+  if (triggeredByIds.length) {
+    const { data: profs, error: profErr } = await sb
+      .from('user_profiles')
+      .select('user_id, avatar_url, initials_color, personnel(name)')
+      .in('user_id', triggeredByIds);
+    if (profErr) console.error('[activity_log] user_profiles fetch error:', profErr);
+    console.log('[activity_log] profiles for triggered_by ids:', profs);
     (profs || []).forEach(p => {
-      actProfileMap[p.user_id] = {
-        name:       p.personnel?.name || null,
-        personnelId: p.personnel_id   || null,
-        avatarUrl:  p.avatar_url      || null,
+      userMap[p.user_id] = {
+        name:           p.personnel?.name || 'Unknown',
+        avatarUrl:      p.avatar_url      || null,
+        initialsColor:  p.initials_color  || null,
       };
     });
   }
@@ -545,17 +550,17 @@ async function loadActivityFeed() {
 
   // activity_log entries — attributed to triggering user
   actData.forEach(r => {
-    const prof = r.triggered_by ? (actProfileMap[r.triggered_by] || {}) : null;
+    const user = r.triggered_by ? (userMap[r.triggered_by] || { name: 'Unknown User' }) : null;
     items.push({
-      icon:             _contextIcon(r.context_type || 'general', r.context_id),
-      label:            r.action || 'Action',
-      name:             r.entity_name || '',
-      ts:               r.created_at,
-      actorName:        prof ? (prof.name || 'Unknown User') : null,
-      actorUserId:      r.triggered_by || null,
-      actorPersonnelId: prof?.personnelId || null,
-      isSystem:         !r.triggered_by,
-      isFa:             true,
+      icon:        _contextIcon(r.context_type || 'general', r.context_id),
+      label:       r.action || 'Action',
+      name:        r.entity_name || '',
+      ts:          r.created_at,
+      actorName:   user?.name || null,
+      actorUserId: r.triggered_by || null,
+      avatarUrl:   user?.avatarUrl || null,
+      isSystem:    !r.triggered_by,
+      isFa:        true,
     });
   });
 
@@ -627,7 +632,7 @@ async function loadActivityFeed() {
   top10.forEach((item, i) => {
     if (!item.actorName || item.isSystem) return;
     const slot = c.querySelector(`.feed-avatar-slot[data-idx="${i}"]`);
-    if (slot) createAvatar({ container: slot, userId: item.actorUserId || '', name: item.actorName, size: 24 });
+    if (slot) createAvatar({ container: slot, userId: item.actorUserId || '', name: item.actorName, size: 24, avatarUrl: item.avatarUrl || null });
   });
 }
 

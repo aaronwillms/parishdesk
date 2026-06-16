@@ -723,10 +723,11 @@ async function saveOcia(id) {
   sb.auth.getUser().then(({ data }) => {
     const uid = data?.user?.id || null;
     sb.from('activity_log').insert({
-      triggered_by: uid,
-      action: id ? 'OCIA record updated' : 'OCIA record created',
-      entity_type: 'ocia',
-      entity_name: name,
+      triggered_by:  uid,
+      action:        id ? 'OCIA record updated' : 'OCIA record created',
+      entity_type:   'ocia',
+      entity_name:   name,
+      context_type:  'ocia',
     }).then(() => {});
   });
   closeModal();
