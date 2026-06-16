@@ -2,6 +2,27 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { createAvatar } from './avatar.js';
 
+const GROUP_BUBBLE_COLORS = [
+  '#E3F2FD', '#F3E5F5', '#E8F5E9', '#FFF3E0',
+  '#FCE4EC', '#E0F7FA', '#FFF8E1', '#EDE7F6',
+];
+const GROUP_LABEL_COLORS = [
+  '#1565C0', '#6A1B9A', '#2E7D32', '#E65100',
+  '#880E4F', '#006064', '#F57F17', '#4527A0',
+];
+
+function _buildDiscColorMap(msgs, currentUserId) {
+  const map = {};
+  let idx = 0;
+  for (const m of msgs) {
+    const uid = m.sender_id;
+    if (!uid || uid === currentUserId || map[uid] !== undefined) continue;
+    map[uid] = idx % GROUP_BUBBLE_COLORS.length;
+    idx++;
+  }
+  return map;
+}
+
 const _subs = {}; // discussion_id → realtime channel
 
 // ── Public ─────────────────────────────────────────────────────────────────
@@ -472,6 +493,7 @@ function _renderMsgs(discId, msgs, currentUserId, profileMap) {
     return;
   }
 
+  const colorMap = _buildDiscColorMap(msgs, currentUserId);
   const grouped = _groupMsgs(msgs, currentUserId);
   el.innerHTML = grouped.map(item => {
     if (item.type === 'date') {
@@ -486,6 +508,10 @@ function _renderMsgs(discId, msgs, currentUserId, profileMap) {
     const prof = profileMap[m.sender_id] || { name: 'User', personnelId: null };
     const name = prof.name || '';
     const uid  = m.sender_id || '';
+    const colorIdx   = (!isMine && colorMap[uid] !== undefined) ? colorMap[uid] : null;
+    const bubbleBg   = isMine ? '#1C2B3A' : (colorIdx !== null ? GROUP_BUBBLE_COLORS[colorIdx] : '#F0F0F0');
+    const bubbleColor = isMine ? '#fff' : '#1C2B3A';
+    const labelColor  = colorIdx !== null ? GROUP_LABEL_COLORS[colorIdx] : '#9CA3AF';
     const avatarSlot = !isMine
       ? (isLast
           ? `<div class="disc-msg-avatar" data-uid="${uid}" data-name="${_esc(name)}" style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;align-self:flex-end;"></div>`
@@ -495,10 +521,10 @@ function _renderMsgs(discId, msgs, currentUserId, profileMap) {
       <div style="display:flex;align-items:flex-end;gap:8px;margin-top:${isFirst ? '8px' : '2px'};justify-content:${isMine ? 'flex-end' : 'flex-start'};">
         ${!isMine ? avatarSlot : ''}
         <div style="max-width:72%;display:flex;flex-direction:column;${isMine ? 'align-items:flex-end;' : 'align-items:flex-start;'}">
-          ${!isMine && isFirst ? `<div style="font-size:11px;color:#9CA3AF;margin-bottom:2px;margin-left:4px;">${_esc(name)}</div>` : ''}
+          ${!isMine && isFirst ? `<div style="font-size:11px;color:${labelColor};margin-bottom:2px;margin-left:4px;font-weight:600;">${_esc(name)}</div>` : ''}
           <div style="
-            background:${isMine ? '#1C2B3A' : '#F0F0F0'};
-            color:${isMine ? '#fff' : '#1C2B3A'};
+            background:${bubbleBg};
+            color:${bubbleColor};
             border-radius:18px;
             ${isMine ? 'border-bottom-right-radius:4px;' : 'border-bottom-left-radius:4px;'}
             padding:9px 14px;font-size:13px;line-height:1.45;word-break:break-word;white-space:pre-wrap;

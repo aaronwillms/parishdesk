@@ -3,6 +3,30 @@ import { store } from '../store.js';
 import { createAvatar } from '../ui/avatar.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 
+// ── Group bubble palette ───────────────────────────────────────────────────
+
+const GROUP_BUBBLE_COLORS = [
+  '#E3F2FD', // Light Blue
+  '#F3E5F5', // Light Purple
+  '#E8F5E9', // Light Green
+  '#FFF3E0', // Light Orange
+  '#FCE4EC', // Light Pink
+  '#E0F7FA', // Light Cyan
+  '#FFF8E1', // Light Yellow
+  '#EDE7F6', // Light Lavender
+];
+
+const GROUP_LABEL_COLORS = [
+  '#1565C0', // Blue
+  '#6A1B9A', // Purple
+  '#2E7D32', // Green
+  '#E65100', // Orange
+  '#880E4F', // Pink
+  '#006064', // Cyan
+  '#F57F17', // Yellow/Amber
+  '#4527A0', // Lavender
+];
+
 // ── State ──────────────────────────────────────────────────────────────────
 
 let _currentUserId = null;
@@ -230,7 +254,7 @@ async function _loadConversations() {
 
   const [allPartsRes, msgsRes, convsRes] = await Promise.all([
     sb.from('conversation_participants')
-      .select('conversation_id, user_id')
+      .select('conversation_id, user_id, created_at')
       .in('conversation_id', convIds),
     sb.from('messages')
       .select('*')
@@ -307,12 +331,20 @@ async function _loadConversations() {
       displayName = otherName;
     }
 
+    // For group convs: ordered participant list (by join time) for deterministic color assignment
+    const participantOrder = info.is_group
+      ? [...(partsByConv[cid] || [])]
+          .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
+          .map(p => p.user_id)
+      : [];
+
     return {
       id: cid,
       isGroup: !!info.is_group,
       name: info.name || null,
       displayName,
       participants,
+      participantOrder,
       otherUserId,
       otherName,
       otherPersonnelId,
@@ -572,6 +604,7 @@ function _renderMessages() {
 
   const conv = _conversations.find(c => c.id === _activeConvId);
   const isGroup = conv?.isGroup || false;
+  const colorMap = _buildColorMap(conv);
 
   if (!_messages.length) {
     el.innerHTML = `<div style="text-align:center;font-size:13px;color:#9CA3AF;font-style:italic;padding:2rem 0;margin:auto;">No messages yet. Say hello!</div>`;
@@ -593,21 +626,24 @@ function _renderMessages() {
     const prof = uid === _currentUserId ? null : (_userProfileMap[uid] || { name: 'User', personnelId: null });
     const name = prof?.name || '';
     const pid  = prof?.personnelId || '';
+    const colorIdx   = (!isMine && isGroup && colorMap[uid] !== undefined) ? colorMap[uid] : null;
+    const bubbleBg   = isMine ? '#1C2B3A' : (colorIdx !== null ? GROUP_BUBBLE_COLORS[colorIdx] : '#F0F0F0');
+    const bubbleColor = isMine ? '#fff' : '#1C2B3A';
+    const labelColor  = colorIdx !== null ? GROUP_LABEL_COLORS[colorIdx] : '#9CA3AF';
     const avatarSlot = !isMine
       ? (isLast
           ? `<div class="msg-inline-avatar" data-uid="${uid}" data-name="${_esc(name)}" data-pid="${pid}" style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;align-self:flex-end;"></div>`
           : `<div style="width:28px;flex-shrink:0;"></div>`)
       : '';
-    // In group chats, show sender name on first message in each bubble group
-    const showSenderName = !isMine && isFirst && (isGroup || true);
+    const showSenderName = !isMine && isFirst;
     return `
       <div style="display:flex;align-items:flex-end;gap:6px;justify-content:${isMine ? 'flex-end' : 'flex-start'};margin-top:${isFirst ? '8px' : '2px'};">
         ${!isMine ? avatarSlot : ''}
         <div style="max-width:70%;display:flex;flex-direction:column;${isMine ? 'align-items:flex-end;' : 'align-items:flex-start;'}">
-          ${showSenderName ? `<div style="font-size:11px;color:#9CA3AF;margin-bottom:2px;margin-left:4px;">${_esc(name)}</div>` : ''}
+          ${showSenderName ? `<div style="font-size:11px;color:${labelColor};margin-bottom:2px;margin-left:4px;font-weight:600;">${_esc(name)}</div>` : ''}
           <div style="
-            background:${isMine ? '#1C2B3A' : '#F0F0F0'};
-            color:${isMine ? '#fff' : '#1C2B3A'};
+            background:${bubbleBg};
+            color:${bubbleColor};
             border-radius:18px;
             ${isMine ? 'border-bottom-right-radius:5px;' : 'border-bottom-left-radius:5px;'}
             padding:10px 14px;font-size:13px;line-height:1.4;word-break:break-word;white-space:pre-wrap;
@@ -1130,6 +1166,20 @@ function _setBadge(n) {
   } else {
     badge.style.display = 'none';
   }
+}
+
+// ── Group bubble color map ─────────────────────────────────────────────────
+
+function _buildColorMap(conv) {
+  if (!conv?.isGroup) return {};
+  const map = {};
+  let idx = 0;
+  for (const uid of (conv.participantOrder || [])) {
+    if (uid === _currentUserId) continue;
+    map[uid] = idx % GROUP_BUBBLE_COLORS.length;
+    idx++;
+  }
+  return map;
 }
 
 // ── Group avatar cluster ───────────────────────────────────────────────────
