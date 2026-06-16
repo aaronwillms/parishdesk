@@ -19,11 +19,17 @@ export async function loadUserProfile() {
   _profile = data || null;
   store.currentUserProfile = _profile;
 
+  console.log('[userProfile] querying calendars — auth user.id:', user.id);
+  // Broad query first: no type filter, to isolate whether user_id itself matches
+  const { data: allCalRows, error: allCalErr } = await sb.from('calendars')
+    .select('id, user_id, type, scope')
+    .eq('user_id', user.id);
+  console.log('[userProfile] calendars (user_id only) — rows:', allCalRows, '| error:', allCalErr);
   const { data: gcalRows, error: gcalErr } = await sb.from('calendars')
     .select('*')
     .eq('user_id', user.id)
     .eq('type', 'google');
-  console.log('[userProfile] raw gcal rows — user_id:', user.id, '| rows:', gcalRows, '| error:', gcalErr);
+  console.log('[userProfile] calendars (user_id + type=google) — rows:', gcalRows, '| error:', gcalErr);
   const gcal = gcalRows?.[0] ?? null;
   _googleCal = gcal;
 

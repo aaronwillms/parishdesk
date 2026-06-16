@@ -22,7 +22,10 @@
       "Bash(kill 76581)",
       "Bash(node --check src/panels/messaging.js)",
       "Bash(node --check src/ui/discussionThread.js)",
-      "Bash(node --check src/ui/contactPicker.js)"
+      "Bash(node --check src/ui/contactPicker.js)",
+      "Bash(sed -n '1,10p' /Volumes/RemovableDrive/parishdesk/src/panels/projects.js)",
+      "Bash(sed -n '1,10p' /Volumes/RemovableDrive/parishdesk/src/panels/tasks.js)",
+      "Bash(sed -n '1,10p' /Volumes/RemovableDrive/parishdesk/src/panels/teams.js)"
     ]
   }
 }

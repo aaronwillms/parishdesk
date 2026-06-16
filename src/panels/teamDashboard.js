@@ -3,6 +3,7 @@ import { store } from '../store.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { logActivity, fmtDate, todayCST } from '../utils.js';
 import { isTeamAdmin, isSuperAdmin, isAdmin } from '../roles.js';
+import { notifyUsers, getUserIdForPersonnel } from '../notifications.js';
 import { createAvatar } from '../ui/avatar.js';
 import { renderDiscussionThread } from '../ui/discussionThread.js';
 import { STATUS, GROUP_ORDER, projectCard, openNewProjectModal } from './projects.js';
@@ -424,6 +425,9 @@ async function _confirmAddMember() {
   });
   if (error) { alert('Failed to add member: ' + error.message); return; }
   logActivity({ action: 'added member to team', entityType: 'team', entityName: _team?.name || 'Unknown', contextType: 'team', contextId: _currentTeamId });
+  const { data: { user: _me } } = await sb.auth.getUser();
+  const newMemberUserId = await getUserIdForPersonnel(person.id);
+  if (newMemberUserId) notifyUsers([newMemberUserId], _me?.id, `You've been added to the team: ${_team?.name || 'a team'}`, 'info', 'teams', _currentTeamId);
   _memberPicker = null;
   await _loadData();
   _renderTabContent();

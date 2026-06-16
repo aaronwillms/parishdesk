@@ -136,3 +136,75 @@ export function isTeamAdmin(teamId) {
   if (isAdmin()) return true;  // admin and super_admin can manage all teams
   return store.currentUserRoles?.teamIds.includes(teamId) || false;
 }
+
+// ── Notification visibility gate ───────────────────────────────────────────
+// Returns true if the given user (by userId) should receive a notification
+// for the given context. Queries DB directly since we don't have another
+// user's roles in store.
+//
+// contextType: 'team' | 'project' | 'task' | 'sacrament' | 'announcement' | null
+// contextId:   team_id / sacrament name / announcement visible_to array / etc.
+export async function canUserSeeNotification(sb, userId, contextType, contextId) {
+  if (!contextType || !userId) return true; // no gate — notify freely
+
+  // Lookup this user's role row to determine admin status
+  const { data: roleRows } = await sb.from('user_roles').select('role').eq('user_id', userId);
+  const isSuperAdm = (roleRows || []).some(r => r.role === 'super_admin');
+  const isAdm      = (roleRows || []).some(r => r.role === 'admin' || r.role === 'super_admin');
+  if (isSuperAdm) return true;
+
+  if (contextType === 'team') {
+    // contextId = team_id
+    const { data: profile } = await sb.from('user_profiles').select('personnel_id').eq('user_id', userId).maybeSingle();
+    if (!profile?.personnel_id) return isAdm;
+    const { data: mem } = await sb.from('team_members').select('id').eq('team_id', contextId).eq('personnel_id', profile.personnel_id).maybeSingle();
+    return !!mem || isAdm;
+  }
+
+  if (contextType === 'project') {
+    // contextId = project id; project is visible if user is assigned or is admin
+    const { data: proj } = await sb.from('projects').select('assigned_to,team_id').eq('id', contextId).maybeSingle();
+    if (!proj) return false;
+    if (isAdm) return true;
+    const { data: profile } = await sb.from('user_profiles').select('personnel_id').eq('user_id', userId).maybeSingle();
+    const { data: uProf } = await sb.from('user_profiles').select('personnel_id').eq('user_id', userId).maybeSingle();
+    if (proj.assigned_to && uProf?.personnel_id && (proj.assigned_to === uProf.personnel_id || (Array.isArray(proj.assigned_to) && proj.assigned_to.includes(uProf.personnel_id)))) return true;
+    return false;
+  }
+
+  if (contextType === 'task') {
+    const { data: task } = await sb.from('tasks').select('assigned_to,team_id').eq('id', contextId).maybeSingle();
+    if (!task) return false;
+    if (isAdm) return true;
+    const { data: uProf } = await sb.from('user_profiles').select('personnel_id').eq('user_id', userId).maybeSingle();
+    return task.assigned_to && uProf?.personnel_id && task.assigned_to === uProf.personnel_id;
+  }
+
+  if (contextType === 'sacrament') {
+    // contextId = sacrament name e.g. 'ocia', 'baptism', 'marriage', 'annulments'
+    if (isAdm) return true;
+    const { data: sacRole } = await sb.from('sacramental_roles').select('sacrament').eq('user_id', userId).eq('sacrament', contextId).maybeSingle();
+    if (sacRole) return true;
+    const { data: uProf } = await sb.from('user_profiles').select('personnel_id').eq('user_id', userId).maybeSingle();
+    if (uProf?.personnel_id) {
+      const { data: coord } = await sb.from('program_coordinators').select('program').eq('program', contextId).contains('coordinator_ids', [uProf.personnel_id]).maybeSingle();
+      if (coord) return true;
+    }
+    return false;
+  }
+
+  if (contextType === 'announcement') {
+    // contextId = visible_to array or null (null = all)
+    if (!contextId || !contextId.length) return true;
+    if (isAdm) return true;
+    const { data: uProf } = await sb.from('user_profiles').select('personnel_id').eq('user_id', userId).maybeSingle();
+    if (!uProf?.personnel_id) return false;
+    for (const teamId of contextId) {
+      const { data: mem } = await sb.from('team_members').select('id').eq('team_id', teamId).eq('personnel_id', uProf.personnel_id).maybeSingle();
+      if (mem) return true;
+    }
+    return false;
+  }
+
+  return true;
+}

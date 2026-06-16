@@ -5,6 +5,7 @@ import { getUserScope, isVisible } from '../ui/userScope.js';
 import { isSuperAdmin, isAdmin } from '../roles.js';
 import { parseICS } from '../utils/icsParser.js';
 import { createAvatar } from '../ui/avatar.js';
+import { notifyUsers, getAllUserIds, getUserIdsForTeam } from '../notifications.js';
 
 let currentUserId     = null;
 let _dashPersonnelId  = null;
@@ -282,24 +283,34 @@ export function renderDashProjects() {
 // ── Announcements ──────────────────────────────────────────────────────────
 
 let announcements         = [];
+let scheduledAnnouncements = [];
 let dismissedIds          = new Set();
 let _birthdayAnnouncements = [];
 
 export async function loadAnnouncements() {
   const today = todayCST();
-  const [annRes, dimRes] = await Promise.all([
+  const now = new Date().toISOString();
+  // Auto-publish any scheduled announcements whose publish_at has passed
+  await sb.from('announcements').update({ active: true }).eq('active', false).not('publish_at', 'is', null).lte('publish_at', now);
+  const [annRes, scheduledRes, dimRes] = await Promise.all([
     sb.from('announcements')
       .select('*')
       .eq('active', true)
       .or(`expires_at.is.null,expires_at.gte.${today}`)
       .order('pinned', { ascending: false })
       .order('created_at', { ascending: false }),
+    sb.from('announcements')
+      .select('*')
+      .eq('active', false)
+      .not('publish_at', 'is', null)
+      .order('publish_at', { ascending: true }),
     currentUserId
       ? sb.from('announcement_dismissals').select('announcement_id').eq('user_id', currentUserId)
       : Promise.resolve({ data: [] }),
   ]);
   if (annRes.error) console.error('[announcements] load error:', annRes.error);
   announcements = annRes.data || [];
+  scheduledAnnouncements = scheduledRes.data || [];
   dismissedIds  = new Set((dimRes.data || []).map(d => d.announcement_id));
   _checkBirthdays();
   renderAnnouncements();
@@ -343,11 +354,18 @@ function renderAnnouncements() {
     ..._birthdayAnnouncements.filter(a => !dismissedIds.has(a.id)),
     ...announcements.filter(a => !dismissedIds.has(a.id)),
   ];
-  if (!visible.length) {
+  const isAdminUser = store.currentUserRoles?.isAdmin || store.currentUserRoles?.isSuperAdmin;
+  const scheduledVisible = isAdminUser ? scheduledAnnouncements : [];
+  if (!visible.length && !scheduledVisible.length) {
     c.innerHTML = '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No announcements.</div>';
     return;
   }
-  c.innerHTML = visible.map(a => `
+  const fmtScheduled = a => {
+    const d = new Date(a.publish_at);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' at ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  };
+  c.innerHTML = [
+    ...visible.map(a => `
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:.5rem 0;border-bottom:.5px solid var(--stone);" class="annc-item">
       <div style="flex:1;min-width:0;">
         ${a.pinned ? `<span style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#922B21;text-transform:uppercase;margin-right:6px;">📌 Pinned</span>` : ''}
@@ -357,7 +375,17 @@ function renderAnnouncements() {
         </div>
       </div>
       <button onclick="dismissAnnouncement('${a.id}')" title="Dismiss" style="background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:14px;padding:0;flex-shrink:0;line-height:1;margin-top:2px;" onmouseover="this.style.color='#6B7280'" onmouseout="this.style.color='#D1D5DB'">✕</button>
-    </div>`).join('');
+    </div>`),
+    ...scheduledVisible.map(a => `
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:.5rem 0;border-bottom:.5px solid var(--stone);opacity:.75;" class="annc-item">
+      <div style="flex:1;min-width:0;">
+        <span style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#6B7280;text-transform:uppercase;background:#F0EDE8;border-radius:4px;padding:2px 6px;margin-right:6px;">🕐 Scheduled for ${fmtScheduled(a)}</span>
+        <span style="font-size:13px;color:#6B7280;line-height:1.5;">${a.message}</span>
+        <div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${_visibilityLabel(a)}</div>
+      </div>
+      <button onclick="openAnnouncementModal(${JSON.stringify(a).replace(/"/g,'&quot;')})" title="Edit" style="background:none;border:none;cursor:pointer;color:#9CA3AF;font-size:12px;padding:0 2px;flex-shrink:0;line-height:1;margin-top:2px;" onmouseover="this.style.color='var(--cardinal)'" onmouseout="this.style.color='#9CA3AF'">✏️</button>
+    </div>`),
+  ].join('');
 }
 
 async function dismissAnnouncement(id) {
@@ -387,9 +415,12 @@ function announcementForm(data) {
         </div>`).join('')
     : '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No teams found.</div>';
 
+  const publishVal = data?.publish_at ? new Date(data.publish_at).toISOString().slice(0,16) : '';
   return `<div class="modal-title">${data ? 'Edit announcement' : 'Add announcement'}</div>
   <label>Message</label><textarea id="af-msg" rows="3">${data?.message || ''}</textarea>
   <label>Expires (optional)</label><input type="date" id="af-exp" value="${data?.expires_at || ''}" />
+  <label>Publish date (optional — leave blank to publish now)</label>
+  <input type="datetime-local" id="af-publish" value="${publishVal}" />
   <div style="display:flex;align-items:center;gap:8px;margin:.5rem 0;">
     <input type="checkbox" id="af-pin" ${data?.pinned ? 'checked' : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />
     <label for="af-pin" style="margin:0;cursor:pointer;">Pin to top</label>
@@ -433,21 +464,36 @@ async function saveAnnouncement(id) {
     visible_to = checked.length ? checked : null;
   }
 
+  const publishAtRaw = document.getElementById('af-publish')?.value || '';
+  const publishAt = publishAtRaw ? new Date(publishAtRaw).toISOString() : null;
+  const isScheduled = publishAt && new Date(publishAt) > new Date();
   const payload = {
     message,
     expires_at: document.getElementById('af-exp').value || null,
     pinned:     !!document.getElementById('af-pin').checked,
     visible_to,
-    active:     true,
+    active:     !isScheduled,
+    publish_at: publishAt,
   };
-  let err;
+  let err, savedId = id;
   if (id) {
     const r = await sb.from('announcements').update(payload).eq('id', id); err = r.error;
   } else {
-    const r = await sb.from('announcements').insert({ ...payload, created_by: currentUserId }); err = r.error;
+    const r = await sb.from('announcements').insert({ ...payload, created_by: currentUserId }).select('id').single(); err = r.error; if(r.data) savedId = r.data.id;
   }
   if (err) { alert('Save failed: ' + err.message); return; }
   logActivity({ action: id ? 'updated announcement' : 'posted announcement', entityType: 'announcement', entityName: payload.message.slice(0, 60) || 'Announcement', contextType: 'announcement' });
+  // Notify recipients of new active announcements (skip scheduled ones)
+  if (!id && !isScheduled) {
+    let targetUserIds;
+    if (!payload.visible_to || !payload.visible_to.length) {
+      targetUserIds = await getAllUserIds();
+    } else {
+      const teamUserSets = await Promise.all(payload.visible_to.map(tid => getUserIdsForTeam(tid)));
+      targetUserIds = [...new Set(teamUserSets.flat())];
+    }
+    notifyUsers(targetUserIds, currentUserId, `New announcement: ${payload.message.slice(0, 80)}`, 'info', 'announcement', savedId);
+  }
   closeModal();
   loadAnnouncements();
 }

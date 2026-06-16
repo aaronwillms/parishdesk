@@ -28,6 +28,51 @@ export async function createNotification(message, type = 'info', module = null, 
   else console.log('[notifications] insert succeeded');
 }
 
+// Send a notification to a list of user IDs, skipping the triggering user.
+// visibilityCheck: optional async (userId) => bool — skip users that return false.
+export async function notifyUsers(userIds, triggeringUserId, message, type = 'info', module = null, record_id = null, visibilityCheck = null) {
+  const targets = [...new Set(userIds)].filter(id => id && id !== triggeringUserId);
+  if (!targets.length) return;
+  const checked = visibilityCheck
+    ? (await Promise.all(targets.map(async id => ({ id, ok: await visibilityCheck(id) })))).filter(r => r.ok).map(r => r.id)
+    : targets;
+  if (!checked.length) return;
+  const rows = checked.map(user_id => ({ user_id, message, type, module, record_id }));
+  const { error } = await sb.from('notifications').insert(rows);
+  if (error) console.error('[notifications] notifyUsers insert failed:', error);
+}
+
+// Fetch all user IDs who have a specific sacramental role or are super_admin/admin.
+export async function getUserIdsForSacrament(sacrament) {
+  const [{ data: sacRoles }, { data: adminRoles }] = await Promise.all([
+    sb.from('sacramental_roles').select('user_id').eq('sacrament', sacrament),
+    sb.from('user_roles').select('user_id').in('role', ['admin', 'super_admin']),
+  ]);
+  return [...new Set([...(sacRoles || []), ...(adminRoles || [])].map(r => r.user_id))];
+}
+
+// Fetch all user IDs who are members of a specific team (via personnel link).
+export async function getUserIdsForTeam(teamId) {
+  const { data: members } = await sb.from('team_members').select('personnel_id').eq('team_id', teamId);
+  if (!members?.length) return [];
+  const personnelIds = members.map(m => m.personnel_id).filter(Boolean);
+  const { data: profiles } = await sb.from('user_profiles').select('user_id').in('personnel_id', personnelIds);
+  return (profiles || []).map(p => p.user_id).filter(Boolean);
+}
+
+// Fetch all authenticated user IDs.
+export async function getAllUserIds() {
+  const { data } = await sb.from('user_profiles').select('user_id');
+  return (data || []).map(p => p.user_id).filter(Boolean);
+}
+
+// Resolve a personnel_id to the user_id of that person.
+export async function getUserIdForPersonnel(personnelId) {
+  if (!personnelId) return null;
+  const { data } = await sb.from('user_profiles').select('user_id').eq('personnel_id', personnelId).maybeSingle();
+  return data?.user_id || null;
+}
+
 export async function loadNotifications() {
   if (!currentUserId) return;
   const { data, error } = await sb

@@ -1,6 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, logActivity } from '../utils.js';
+import { notifyUsers, getUserIdsForTeam, getUserIdForPersonnel } from '../notifications.js';
 import { updateProjectStats, renderDashProjects } from './dashboard.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { getUserScope, isVisible, scopeNotice } from '../ui/userScope.js';
@@ -368,6 +369,21 @@ async function saveNewProject() {
   updateProjectStats();
   renderDashProjects();
   logActivity({ action: 'created project', entityType: 'project', entityName: newProj.title, contextType: 'project', contextId: newProj.id });
+  // Notify Parish Staff team members if project belongs to that team
+  if (newProj.team_id) {
+    const team = (store.teams || []).find(t => t.id === newProj.team_id);
+    if (team?.name?.toLowerCase().includes('parish staff')) {
+      const _uids = await getUserIdsForTeam(newProj.team_id);
+      notifyUsers(_uids, user?.id, `New Parish Staff project: ${newProj.title}`, 'info', 'projects', newProj.id);
+    }
+  }
+  // Notify assigned personnel
+  if (newProj.assigned_to?.length) {
+    for (const personnelId of newProj.assigned_to) {
+      const assigneeUserId = await getUserIdForPersonnel(personnelId);
+      if (assigneeUserId) notifyUsers([assigneeUserId], user?.id, `You've been assigned to project: ${newProj.title}`, 'info', 'projects', newProj.id);
+    }
+  }
 }
 
 // ── Legacy modal support (used by openModal('project') in main.js) ─────────
@@ -428,7 +444,32 @@ async function saveProject(id) {
     const r = await sb.from('projects').insert(payload); err = r.error;
   }
   if (err) { alert('Save failed: ' + err.message); return; }
+  const { data: { user: _me } } = await sb.auth.getUser();
   logActivity({ action: id ? 'updated project' : 'created project', entityType: 'project', entityName: payload.title, contextType: 'project', contextId: id || null });
+  if (!id) {
+    // New project via legacy modal
+    if (payload.team_id) {
+      const team = (store.teams || []).find(t => t.id === payload.team_id);
+      if (team?.name?.toLowerCase().includes('parish staff')) {
+        const _uids = await getUserIdsForTeam(payload.team_id);
+        notifyUsers(_uids, _me?.id, `New Parish Staff project: ${payload.title}`, 'info', 'projects');
+      }
+    }
+    if (payload.assigned_to) {
+      const assigneeUserId = await getUserIdForPersonnel(payload.assigned_to);
+      if (assigneeUserId) notifyUsers([assigneeUserId], _me?.id, `You've been assigned to project: ${payload.title}`, 'info', 'projects');
+    }
+  } else {
+    // Edit — notify if newly marked complete
+    const prior = store.allProjects?.find(p => p.id === id);
+    if (payload.status_code === 'complete' && prior?.status_code !== 'complete') {
+      const assignees = Array.isArray(prior?.assigned_to) ? prior.assigned_to : (prior?.assigned_to ? [prior.assigned_to] : []);
+      for (const personnelId of assignees) {
+        const uid = await getUserIdForPersonnel(personnelId);
+        if (uid) notifyUsers([uid], _me?.id, `Project marked complete: ${payload.title}`, 'success', 'projects', id);
+      }
+    }
+  }
   closeModal();
   await invalidateProjects();
   loadProjects();

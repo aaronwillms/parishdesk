@@ -3,6 +3,7 @@ import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity } from '../utils.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { getUserScope, isVisible, scopeNotice } from '../ui/userScope.js';
+import { notifyUsers, getUserIdsForTeam, getUserIdForPersonnel } from '../notifications.js';
 
 let _taskAssignedPicker = null;
 let _newTaskTeamId = null;
@@ -251,7 +252,14 @@ async function toggleTask(id, checked) {
   if (error) { console.error('[tasks] toggle failed:', error); return; }
   const t = (store.allTasks || []).find(x => x.id === id);
   if (t) Object.assign(t, payload);
-  if (checked) logActivity({ action: 'completed task', entityType: 'task', entityName: t?.title || 'Unknown', contextType: 'task', contextId: id });
+  if (checked) {
+    logActivity({ action: 'completed task', entityType: 'task', entityName: t?.title || 'Unknown', contextType: 'task', contextId: id });
+    if (t?.assigned_to) {
+      const { data: { user: _me } } = await sb.auth.getUser();
+      const uid = await getUserIdForPersonnel(t.assigned_to);
+      if (uid) notifyUsers([uid], _me?.id, `Task marked complete: ${t.title}`, 'success', 'tasks', id);
+    }
+  }
   renderTasks();
 }
 
@@ -354,8 +362,14 @@ async function saveTask(id) {
   if (id) {
     const { error } = await sb.from('tasks').update(payload).eq('id', id);
     if (error) { alert('Save failed: ' + error.message); return; }
-    const t = (store.allTasks || []).find(x => x.id === id);
-    if (t) Object.assign(t, payload);
+    const prior = (store.allTasks || []).find(x => x.id === id);
+    const { data: { user: _me } } = await sb.auth.getUser();
+    // Notify if newly assigned
+    if (payload.assigned_to && payload.assigned_to !== prior?.assigned_to) {
+      const uid = await getUserIdForPersonnel(payload.assigned_to);
+      if (uid) notifyUsers([uid], _me?.id, `You've been assigned to task: ${payload.title}`, 'info', 'tasks', id);
+    }
+    if (prior) Object.assign(prior, payload);
     logActivity({ action: 'updated task', entityType: 'task', entityName: payload.title, contextType: 'task', contextId: id });
     closeModal();
     renderTasks();
@@ -367,6 +381,19 @@ async function saveTask(id) {
     if (!store.allTasks) store.allTasks = [];
     store.allTasks.push(newTask);
     logActivity({ action: 'created task', entityType: 'task', entityName: newTask.title, contextType: 'task', contextId: newTask.id });
+    // Notify Parish Staff team members
+    if (newTask.team_id) {
+      const team = (store.teams || []).find(t => t.id === newTask.team_id);
+      if (team?.name?.toLowerCase().includes('parish staff')) {
+        const _uids = await getUserIdsForTeam(newTask.team_id);
+        notifyUsers(_uids, user?.id, `New Parish Staff task: ${newTask.title}`, 'info', 'tasks', newTask.id);
+      }
+    }
+    // Notify assigned person
+    if (newTask.assigned_to) {
+      const uid = await getUserIdForPersonnel(newTask.assigned_to);
+      if (uid) notifyUsers([uid], user?.id, `You've been assigned to task: ${newTask.title}`, 'info', 'tasks', newTask.id);
+    }
     _newTaskTeamId = null;
     closeModal();
     renderTasks();

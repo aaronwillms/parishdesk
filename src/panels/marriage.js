@@ -2,6 +2,7 @@ import { sb } from '../supabase.js';
 import { fmtDate, fmtDateYear, daysUntil, todayCST, logActivity } from '../utils.js';
 import { store } from '../store.js';
 import { expandCase } from './annulments.js';
+import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 
 export const COUPLE_STATUS = {
   inprogress:{label:'In progress',  color:'#7D6608', bg:'#FEF9E7', dot:'#D4AC0D'},
@@ -258,6 +259,12 @@ async function quickCoupleStatusChange(coupleId, newStatus) {
   const {error} = await sb.from('couples').update({status_code:newStatus,updated_at:new Date().toISOString()}).eq('id',coupleId);
   if(error){alert('Save failed: '+error.message);return;}
   couple.status_code = newStatus;
+  if (newStatus === 'complete') {
+    const { data: { user: _me } } = await sb.auth.getUser();
+    const _uids = await getUserIdsForSacrament('marriage');
+    const coupleName = [couple.groom, couple.bride].filter(Boolean).join(' & ');
+    notifyUsers(_uids, _me?.id, `Marriage marked complete: ${coupleName}`, 'success', 'marriage', coupleId);
+  }
   updateCoupleStats();
   renderMarriageAlerts();
   renderCouples();

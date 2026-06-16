@@ -2,7 +2,7 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, fmtDateYear, todayCST, logActivity } from '../utils.js';
 import { CASE_STATUS, expandCase } from './annulments.js';
-import { createNotification } from '../notifications.js';
+import { createNotification, notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 
 const OCIA_STATUS = {
   inquirer:    {label:'Inquirer',                color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED'},
@@ -720,6 +720,11 @@ async function saveOcia(id) {
   }
   if(err){alert('Save failed: '+err.message);return;}
   logActivity({ action: id ? 'updated OCIA record' : 'added OCIA candidate', entityType: 'ocia', entityName: name, contextType: 'ocia' });
+  if (!id) {
+    const { data: { user: _me } } = await sb.auth.getUser();
+    const _uids = await getUserIdsForSacrament('ocia');
+    notifyUsers(_uids, _me?.id, `New OCIA candidate added: ${name}`, 'info', 'ocia');
+  }
   closeModal();
   loadOcia();
 }

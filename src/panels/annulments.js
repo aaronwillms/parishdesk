@@ -1,5 +1,5 @@
 import { sb } from '../supabase.js';
-import { createNotification } from '../notifications.js';
+import { createNotification, notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST } from '../utils.js';
 
@@ -510,8 +510,9 @@ async function saveCase(id) {
     console.log('[annulments] affirm+finalized save — wasAlreadyFinal:', wasAlreadyFinal, '| prior:', prior?.status_code, prior?.judgement_finalized);
     if(!wasAlreadyFinal) {
       const resp = payload.respondent ? ` v. ${payload.respondent}` : '';
-      console.log('[annulments] firing createNotification for:', payload.petitioner);
-      await createNotification(`Annulment granted: ${payload.petitioner}${resp}`, 'success', 'annulments', id);
+      const { data: { user: _me } } = await sb.auth.getUser();
+      const _uids = await getUserIdsForSacrament('annulments');
+      notifyUsers(_uids, _me?.id, `Annulment rendered final judgment: ${payload.petitioner}${resp}`, 'success', 'annulments', id);
     }
   }
   closeModal(); loadCases();

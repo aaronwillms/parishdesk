@@ -1,5 +1,6 @@
 import { sb } from '../supabase.js';
 import { fmtDate, todayCST } from '../utils.js';
+import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 
 const SACRAMENTAL_CFG = {
   baptism: {
@@ -70,6 +71,7 @@ const SACRAMENTAL_CFG = {
 const sacData = {baptism:[],firstcomm:[],confirmation:[]};
 const sacFilter = {baptism:'all',firstcomm:'all',confirmation:'all'};
 const sacExpanded = {baptism:null,firstcomm:null,confirmation:null};
+const sacSelected = {baptism:new Set(),firstcomm:new Set(),confirmation:new Set()};
 
 function setSacramentalFilter(prog, f, el) {
   sacFilter[prog] = f;
@@ -121,15 +123,45 @@ function renderSacramental(prog) {
     return matchQ&&matchF;
   });
   const el = document.getElementById(cfg.listEl);
-  if(!items.length){el.innerHTML='<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No records found.</div>';return;}
+  if(!items.length){el.innerHTML='<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No records found.</div>';_renderSacBulkBar(prog);return;}
   const activeSac = items.filter(i => !i.archived);
   const archivedSac = items.filter(i => i.archived);
-  let html = activeSac.map(i => renderSacramentalCard(prog,i)).join('');
+  const allVisible = items.map(i => i.id);
+  const sel = sacSelected[prog];
+  const allChecked = allVisible.length > 0 && allVisible.every(id => sel.has(id));
+  let html = `<div style="display:flex;align-items:center;gap:8px;padding:4px 0 10px;border-bottom:.5px solid var(--stone);margin-bottom:8px;">
+    <input type="checkbox" id="sac-sel-all-${prog}" ${allChecked?'checked':''} onchange="sacToggleAll('${prog}',this.checked)" style="width:14px;height:14px;accent-color:var(--cardinal);cursor:pointer;flex-shrink:0;" />
+    <label for="sac-sel-all-${prog}" style="font-size:12px;color:#6B7280;cursor:pointer;margin:0;">Select all</label>
+  </div>`;
+  html += activeSac.map(i => renderSacramentalCard(prog,i)).join('');
   if(archivedSac.length) {
     html += `<div style="display:flex;align-items:center;gap:10px;margin:18px 0 10px;"><div style="flex:1;height:.5px;background:var(--stone);"></div><span style="font-size:11px;color:#6B7280;letter-spacing:.07em;text-transform:uppercase;font-weight:500;white-space:nowrap;">Archived</span><div style="flex:1;height:.5px;background:var(--stone);"></div></div>`;
     html += archivedSac.map(i => renderSacramentalCard(prog,i)).join('');
   }
   el.innerHTML = html;
+  _renderSacBulkBar(prog);
+}
+
+function _renderSacBulkBar(prog) {
+  const barId = `sac-bulk-bar-${prog}`;
+  let bar = document.getElementById(barId);
+  const sel = sacSelected[prog];
+  if (!sel.size) { if(bar) bar.remove(); return; }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = barId;
+    bar.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;background:var(--navy);color:#fff;border-radius:10px;padding:10px 18px;display:flex;align-items:center;gap:14px;box-shadow:0 4px 24px rgba(0,0,0,.22);font-size:13px;';
+    document.body.appendChild(bar);
+  }
+  bar.innerHTML = `
+    <span style="font-weight:600;">${sel.size} selected</span>
+    <select id="sac-bulk-action-${prog}" style="border-radius:6px;border:none;padding:4px 8px;font-size:12px;font-family:'Inter',sans-serif;background:#fff;color:var(--navy);cursor:pointer;">
+      <option value="">— Action —</option>
+      <option value="archive">Archive</option>
+      <option value="unarchive">Unarchive</option>
+    </select>
+    <button onclick="sacApplyBulk('${prog}')" style="background:var(--cardinal);color:#fff;border:none;border-radius:6px;padding:5px 14px;font-size:12px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:600;">Apply</button>
+    <button onclick="sacClearSelection('${prog}')" style="background:none;border:1px solid rgba(255,255,255,.3);color:#fff;border-radius:6px;padding:5px 10px;font-size:12px;font-family:'Inter',sans-serif;cursor:pointer;">✕</button>`;
 }
 
 function renderSacramentalCard(prog, item) {
@@ -153,9 +185,11 @@ function renderSacramentalCard(prog, item) {
     dateChip = `<span style="font-size:11px;color:${urgent?'#C0392B':'#777'};background:${urgent?'#FDEDEC':'#EFEFEF'};border-radius:20px;padding:2px 8px;">${urgent?'⚠️ ':''}${fmtDate(dateVal)}${days>=0&&days<=60?` · ${days===0?'Today':days===1?'Tomorrow':days+' days'}`:''}</span>`;
   }
 
+  const isSelChecked = sacSelected[prog].has(item.id);
   let h = `<div class="couple-card" style="border-left:4px solid var(--gold);">
-    <div class="couple-header" onclick="toggleSacramental('${prog}','${item.id}')">
-      <div style="flex:1;">
+    <div class="couple-header" style="gap:10px;">
+      <input type="checkbox" class="sac-sel-cb" data-prog="${prog}" data-id="${item.id}" ${isSelChecked?'checked':''} onchange="sacToggleOne('${prog}','${item.id}',this.checked)" onclick="event.stopPropagation()" style="width:14px;height:14px;accent-color:var(--cardinal);cursor:pointer;flex-shrink:0;" />
+      <div style="flex:1;" onclick="toggleSacramental('${prog}','${item.id}')">
         <div class="couple-name">${item.name||'—'}</div>
         <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center;">
           ${badge}${dateChip}
@@ -425,6 +459,11 @@ async function saveSacramental(prog, id) {
     const r = await sb.from(cfg.table).insert(payload); err = r.error;
   }
   if(err){alert('Save failed: '+err.message);return;}
+  if (!id && prog === 'baptism') {
+    const { data: { user: _me } } = await sb.auth.getUser();
+    const _uids = await getUserIdsForSacrament('baptism');
+    notifyUsers(_uids, _me?.id, `New baptismal prep child added: ${name}`, 'info', 'baptism');
+  }
   closeModal();
   loadSacramental(prog);
 }
@@ -438,10 +477,63 @@ async function deleteSacramental(prog, id) {
   loadSacramental(prog);
 }
 
+function sacToggleOne(prog, id, checked) {
+  if (checked) sacSelected[prog].add(id);
+  else sacSelected[prog].delete(id);
+  // Update select-all checkbox without full re-render
+  const cfg = SACRAMENTAL_CFG[prog];
+  const items = sacData[prog].filter(i => !i.archived);
+  const allChecked = items.length > 0 && items.every(i => sacSelected[prog].has(i.id));
+  const allCb = document.getElementById(`sac-sel-all-${prog}`);
+  if (allCb) allCb.checked = allChecked;
+  _renderSacBulkBar(prog);
+}
+
+function sacToggleAll(prog, checked) {
+  const cfg = SACRAMENTAL_CFG[prog];
+  const q = (document.getElementById(cfg.searchEl)?.value||'').toLowerCase();
+  const f = sacFilter[prog];
+  sacData[prog].filter(i => {
+    const matchQ = !q||(i.name||'').toLowerCase().includes(q);
+    let matchF = true;
+    if(f==='active') matchF = !i.archived;
+    else if(f==='archived') matchF = i.archived;
+    return matchQ && matchF;
+  }).forEach(i => { if(checked) sacSelected[prog].add(i.id); else sacSelected[prog].delete(i.id); });
+  document.querySelectorAll(`.sac-sel-cb[data-prog="${prog}"]`).forEach(cb => { cb.checked = checked; });
+  _renderSacBulkBar(prog);
+}
+
+function sacClearSelection(prog) {
+  sacSelected[prog].clear();
+  document.getElementById(`sac-bulk-bar-${prog}`)?.remove();
+  renderSacramental(prog);
+}
+
+async function sacApplyBulk(prog) {
+  const action = document.getElementById(`sac-bulk-action-${prog}`)?.value;
+  if (!action) { alert('Select an action first.'); return; }
+  const ids = [...sacSelected[prog]];
+  if (!ids.length) return;
+  const cfg = SACRAMENTAL_CFG[prog];
+  const archived = action === 'archive';
+  const { error } = await sb.from(cfg.table).update({ archived, updated_at: new Date().toISOString() }).in('id', ids);
+  if (error) { alert('Bulk update failed: ' + error.message); return; }
+  ids.forEach(id => {
+    const item = sacData[prog].find(i => i.id === id);
+    if (item) item.archived = archived;
+  });
+  sacSelected[prog].clear();
+  document.getElementById(`sac-bulk-bar-${prog}`)?.remove();
+  updateSacramentalStats(prog);
+  renderSacramental(prog);
+}
+
 Object.assign(window, {
   renderSacramental, setSacramentalFilter, toggleSacramental, quickSacramentalStatus,
   toggleSacNoteForm, appendSacNote, deleteSacNote,
   toggleSacDocForm, addSacDoc, toggleSacDoc, deleteSacDoc,
   toggleSacTlForm, addSacTlEntry, deleteSacTlEntry,
   openSacramentalModal, saveSacramental, deleteSacramental,
+  sacToggleOne, sacToggleAll, sacClearSelection, sacApplyBulk,
 });
