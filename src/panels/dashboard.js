@@ -557,10 +557,13 @@ const FEED_ICONS = {
   general:      'fa-gear',
 };
 
-function _contextIcon(contextType, contextId) {
+function _contextIcon(contextType, contextId, projectIconMap) {
   if (contextType === 'team') {
     const team = (store.teams || []).find(t => t.id === contextId);
     return team?.icon || FEED_ICONS.team;
+  }
+  if (contextType === 'project' && contextId && projectIconMap) {
+    return projectIconMap[contextId] || 'fa-clipboard';
   }
   return FEED_ICONS[contextType] || FEED_ICONS.general;
 }
@@ -665,11 +668,31 @@ async function loadActivityFeed() {
 
   const visibleActData = actData.filter(_canSeeEntry);
 
+  // Build project icon map for activity entries referencing a project
+  const projectIconMap = {};
+  const projContextIds = [...new Set(
+    visibleActData
+      .filter(r => r.context_type === 'project' && r.context_id)
+      .map(r => r.context_id)
+  )];
+  if (projContextIds.length) {
+    // Check store first to avoid unnecessary fetches
+    const missing = projContextIds.filter(id => {
+      const cached = (store.allProjects || []).find(p => p.id === id);
+      if (cached) { projectIconMap[id] = cached.icon || 'fa-clipboard'; return false; }
+      return true;
+    });
+    if (missing.length) {
+      const { data: iconRows } = await sb.from('projects').select('id, icon').in('id', missing);
+      (iconRows || []).forEach(p => { projectIconMap[p.id] = p.icon || 'fa-clipboard'; });
+    }
+  }
+
   // activity_log entries — attributed to triggering user
   visibleActData.forEach(r => {
     const user = r.triggered_by ? (userMap[r.triggered_by] || { name: 'Unknown User' }) : null;
     items.push({
-      icon:        _contextIcon(r.context_type || 'general', r.context_id),
+      icon:        _contextIcon(r.context_type || 'general', r.context_id, projectIconMap),
       label:       r.action || 'Action',
       name:        r.entity_name || '',
       ts:          r.created_at,

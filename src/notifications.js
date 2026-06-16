@@ -5,6 +5,9 @@ let currentUserId = null;
 let realtimeChannel = null;
 let panelOpen = false;
 
+// Project icon cache: projectId → icon class string
+const _projIconCache = {};
+
 export function setNotificationUser(userId) {
   currentUserId = userId;
 }
@@ -84,6 +87,7 @@ export async function loadNotifications() {
   if (error) { console.error('[notifications] load failed:', error); return; }
   store.notifications = data || [];
   updateBadge();
+  await _prefetchProjectIcons(store.notifications);
   if (panelOpen) renderPanel();
 }
 
@@ -144,6 +148,26 @@ function fmtNotifTime(ts) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+async function _prefetchProjectIcons(notifs) {
+  const ids = [...new Set(
+    (notifs || [])
+      .filter(n => n.module === 'projects' && n.record_id)
+      .map(n => n.record_id)
+      .filter(id => !_projIconCache[id])
+  )];
+  if (!ids.length) return;
+  const { data } = await sb.from('projects').select('id, icon').in('id', ids);
+  (data || []).forEach(p => { _projIconCache[p.id] = p.icon || 'fa-clipboard'; });
+}
+
+function _notifLeadIcon(n) {
+  if (n.module === 'projects' && n.record_id) {
+    const icon = _projIconCache[n.record_id] || 'fa-clipboard';
+    return `<i class="fa-solid ${icon}" style="font-size:15px;color:#8B1A2F;flex-shrink:0;"></i>`;
+  }
+  return typeIcon(n.type);
+}
+
 function typeIcon(type) {
   if (type === 'success') return '<i class="ti ti-circle-check" style="color:#2D6A4F;font-size:15px;"></i>';
   if (type === 'warning') return '<i class="ti ti-alert-triangle" style="color:#D4AC0D;font-size:15px;"></i>';
@@ -176,7 +200,7 @@ function renderPanel() {
       ${notifs.map(n => `
         <div class="notif-item${n.read ? '' : ' notif-unread'}" data-id="${n.id}">
           <div style="display:flex;align-items:flex-start;gap:8px;flex:1;">
-            <div style="margin-top:1px;flex-shrink:0;">${typeIcon(n.type)}</div>
+            <div style="margin-top:1px;flex-shrink:0;">${_notifLeadIcon(n)}</div>
             <div style="flex:1;min-width:0;">
               <div style="font-size:13px;color:var(--navy);line-height:1.4;">${n.message}</div>
               <div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${fmtNotifTime(n.created_at)}</div>
@@ -187,7 +211,7 @@ function renderPanel() {
     </div>`;
 }
 
-function openPanel() {
+async function openPanel() {
   let panel = document.getElementById('notif-panel');
   if (!panel) {
     panel = document.createElement('div');
@@ -195,6 +219,7 @@ function openPanel() {
     panel.className = 'notif-panel';
     document.body.appendChild(panel);
   }
+  await _prefetchProjectIcons(store.notifications);
   renderPanel();
   // Position below bell
   const bell = document.getElementById('notif-bell');
@@ -226,9 +251,10 @@ export function subscribeNotifications() {
       schema: 'public',
       table: 'notifications',
       filter: `user_id=eq.${currentUserId}`,
-    }, payload => {
+    }, async payload => {
       store.notifications = [payload.new, ...(store.notifications || [])];
       updateBadge();
+      await _prefetchProjectIcons([payload.new]);
       if (panelOpen) renderPanel();
     })
     .subscribe();
