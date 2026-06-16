@@ -194,6 +194,7 @@ export function renderDashProjects() {
       type:          'project',
       id:            p.id,
       title:         p.title,
+      icon:          p.icon || 'fa-clipboard',
       dueDate:       p.due_date || null,
       statusCode:    p.status_code || 'not_started',
       assigneeCount: Array.isArray(p.assigned_to) ? p.assigned_to.length : (p.assigned_to ? 1 : 0),
@@ -245,7 +246,10 @@ export function renderDashProjects() {
         " onmouseover="this.style.background='#FAFAF8'" onmouseout="this.style.background=''">
           <span style="font-size:9.5px;font-weight:700;background:${st.bg};color:${st.color};border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;margin-top:3px;">${st.label}</span>
           <div style="flex:1;min-width:0;">
-            <div style="font-size:13px;font-weight:500;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</div>
+            <div style="display:flex;align-items:center;gap:6px;overflow:hidden;">
+              <i class="fa-solid ${item.icon}" style="font-size:12px;color:#8B1A2F;flex-shrink:0;"></i>
+              <span style="font-size:13px;font-weight:500;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
+            </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:1px;">
               ${item.dueDate ? `<span style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};">📅 ${fmtDate(item.dueDate)}</span>` : ''}
               ${item.assigneeCount > 0 ? `<span style="font-size:11px;color:#9CA3AF;">👤 ${item.assigneeCount}</span>` : ''}

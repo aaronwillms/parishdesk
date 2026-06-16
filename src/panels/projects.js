@@ -18,6 +18,65 @@ export const STATUS = {
 
 export const GROUP_ORDER = ['in_progress', 'blocked', 'not_started', 'complete'];
 
+// ── Icon config ────────────────────────────────────────────────────────────
+
+const PROJECT_ICONS = [
+  { cls: 'fa-clipboard',        label: 'General' },
+  { cls: 'fa-diagram-project',  label: 'Project' },
+  { cls: 'fa-church',           label: 'Parish' },
+  { cls: 'fa-cross',            label: 'Religious' },
+  { cls: 'fa-hands-praying',    label: 'Prayer' },
+  { cls: 'fa-book-open',        label: 'Study' },
+  { cls: 'fa-music',            label: 'Music' },
+  { cls: 'fa-building-columns', label: 'Admin' },
+  { cls: 'fa-dollar-sign',      label: 'Finance' },
+  { cls: 'fa-school',           label: 'Education' },
+  { cls: 'fa-tools',            label: 'Facilities' },
+  { cls: 'fa-calendar-days',    label: 'Events' },
+  { cls: 'fa-users',            label: 'Community' },
+  { cls: 'fa-heart',            label: 'Pastoral' },
+  { cls: 'fa-dove',             label: 'Spirit' },
+  { cls: 'fa-fire',             label: 'Liturgy' },
+  { cls: 'fa-water',            label: 'Baptism' },
+  { cls: 'fa-star',             label: 'Priority' },
+  { cls: 'fa-file-lines',       label: 'Documents' },
+  { cls: 'fa-bullhorn',         label: 'Outreach' },
+];
+
+function _iconPickerHtml(currentIcon) {
+  const selected = currentIcon || 'fa-clipboard';
+  return `
+    <label>Icon</label>
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:.85rem;">
+      ${PROJECT_ICONS.map(ic => {
+        const isSel = ic.cls === selected;
+        return `<button type="button" class="pf-icon-btn" data-icon="${ic.cls}"
+          onclick="selectProjectIcon('${ic.cls}')"
+          style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:.5rem .2rem;
+            border-radius:6px;cursor:pointer;font-family:'Inter',sans-serif;font-size:9.5px;
+            color:${isSel ? '#C9A84C' : '#6B7280'};
+            border:1.5px solid ${isSel ? '#C9A84C' : '#E2DDD6'};
+            background:${isSel ? '#FEF9E7' : '#fff'};"
+          title="${ic.label}">
+          <i class="fa-solid ${ic.cls}" style="font-size:14px;color:${isSel ? '#C9A84C' : '#9CA3AF'};"></i>
+          <span>${ic.label}</span>
+        </button>`;
+      }).join('')}
+    </div>
+    <input type="hidden" id="pf-icon" value="${selected}" />`;
+}
+
+window.selectProjectIcon = function(icon) {
+  document.getElementById('pf-icon').value = icon;
+  document.querySelectorAll('.pf-icon-btn').forEach(btn => {
+    const sel = btn.dataset.icon === icon;
+    btn.style.border      = `1.5px solid ${sel ? '#C9A84C' : '#E2DDD6'}`;
+    btn.style.background  = sel ? '#FEF9E7' : '#fff';
+    btn.style.color       = sel ? '#C9A84C' : '#6B7280';
+    btn.querySelector('i').style.color = sel ? '#C9A84C' : '#9CA3AF';
+  });
+};
+
 // ── Module state ───────────────────────────────────────────────────────────
 
 let _newProjPicker    = null;
@@ -250,6 +309,7 @@ function statusBadge(code) {
 
 export function projectCard(p) {
   const assignees = assigneeLabel(p.assigned_to);
+  const icon = p.icon || 'fa-clipboard';
   return `
     <div onclick="window.showProjectDashboard('${p.id}')" style="
       background:#FFFFFF;border:.5px solid #E2DDD6;border-radius:8px;
@@ -260,7 +320,10 @@ export function projectCard(p) {
     onmouseout="this.style.boxShadow='';this.style.borderColor='#E2DDD6';">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
         <div style="flex:1;min-width:0;">
-          <div style="font-size:14.5px;font-weight:600;color:#1C2B3A;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.title}</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+            <i class="fa-solid ${icon}" style="font-size:16px;color:#8B1A2F;flex-shrink:0;"></i>
+            <div style="font-size:14.5px;font-weight:600;color:#1C2B3A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.title}</div>
+          </div>
           ${p.notes ? `<div style="font-size:12px;color:#6B7280;margin-bottom:5px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${p.notes}</div>` : ''}
           <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
             ${statusBadge(p.status_code)}
@@ -287,6 +350,7 @@ export function openNewProjectModal({ teamId = null } = {}) {
     <select id="pf-status">
       ${Object.entries(STATUS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}
     </select>
+    ${_iconPickerHtml('fa-clipboard')}
     <label>Members (optional)</label>
     <div id="pf-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;min-height:0;"></div>
     <div id="pf-assignee-cp"></div>
@@ -351,6 +415,7 @@ async function saveNewProject() {
   const payload = {
     title,
     status_code: document.getElementById('pf-status').value,
+    icon:        document.getElementById('pf-icon')?.value || 'fa-clipboard',
     assigned_to: _newProjAssignees.length ? _newProjAssignees.map(p => p.id) : null,
     due_date:    document.getElementById('pf-due').value || null,
     notes:       document.getElementById('pf-notes').value.trim() || null,

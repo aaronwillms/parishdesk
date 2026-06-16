@@ -109,6 +109,7 @@ function _render(container) {
         " onmouseover="this.style.color='#1C2B3A'" onmouseout="this.style.color='#8FA8BF'">←</button>
         <div style="flex:1;min-width:0;">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
+            <i class="fa-solid ${_project.icon || 'fa-clipboard'}" style="font-size:22px;color:#8B1A2F;flex-shrink:0;"></i>
             <h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-size:26px;font-weight:700;color:#1C2B3A;margin:0;line-height:1.2;">${_project.title}</h1>
             ${_statusBadge(_project.status_code)}
           </div>
