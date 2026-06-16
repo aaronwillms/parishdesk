@@ -253,10 +253,20 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
   body.dark-mode .notif-unread{background:#243447;}
   body.dark-mode .notification-dropdown,body.dark-mode [id*="notif-dropdown"],body.dark-mode [class*="notif-drop"]{background:#1A2634 !important;border-color:#2D3F50 !important;}
   body.dark-mode .notification-dropdown *{color:#F8F7F4 !important;}
-  /* Message / chat dropdown */
+  /* Message / chat dropdown — actual element is #chat-drop with rows .chat-drop-row.
+     Its bg is set via JS .style.cssText (reserialized to rgb()), so [style*] rules
+     can't catch it; target by id/class instead. */
+  body.dark-mode #chat-drop,
   body.dark-mode .message-dropdown,body.dark-mode .chat-dropdown,
-  body.dark-mode [id*="message-dropdown"],body.dark-mode [class*="message-drop"]{background:#1A2634 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
-  body.dark-mode .message-dropdown *,body.dark-mode .chat-dropdown *{color:#F8F7F4 !important;}
+  body.dark-mode [id*="chat-drop"],body.dark-mode [id*="message-drop"],
+  body.dark-mode [class*="message-drop"],body.dark-mode [class*="chat-drop"]:not(.chat-drop-row){background:#1A2634 !important;border-color:#2D3F50 !important;box-shadow:0 4px 20px rgba(0,0,0,.5) !important;color:#F8F7F4 !important;}
+  body.dark-mode #chat-drop *,
+  body.dark-mode .message-dropdown *,body.dark-mode .chat-dropdown *{color:#F8F7F4 !important;background-color:transparent !important;border-color:#2D3F50 !important;}
+  /* Conversation rows inside the dropdown */
+  body.dark-mode #chat-drop .chat-drop-row{border-bottom-color:#2D3F50 !important;}
+  body.dark-mode #chat-drop .chat-drop-row:hover{background:#243447 !important;}
+  /* Unread dot: navy #1C2B3A would vanish on the dark row — make it a gold accent */
+  body.dark-mode #chat-drop .chat-drop-row [style*="width:8px"]{background:#C9A84C !important;}
   /* Message bubbles */
   body.dark-mode .message-bubble-incoming,body.dark-mode .msg-bubble.incoming,
   body.dark-mode [class*="bubble"]:not([class*="outgoing"]):not([class*="sent"]){background:#243447 !important;color:#F8F7F4 !important;}
@@ -269,6 +279,48 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
   body.dark-mode [class*="mobile-settings"],body.dark-mode #mobile-settings{background:#1A2634 !important;border-color:#2D3F50 !important;}
   body.dark-mode #up-mobile-settings *,body.dark-mode .mobile-settings-card *,
   body.dark-mode [class*="mobile-settings"] *,body.dark-mode #mobile-settings *{color:#F8F7F4 !important;}
+
+  /* Inline-styled status chips / badges (no class — rendered from status maps).
+     The card catch-all forces their text to parchment; here we re-darken each
+     pastel background and restore a readable, semantically-matched text colour.
+     Pastel hexes are background-only in the markup, so bare-hex matching (case
+     -insensitive) is safe. These rules sit last so they win the line-213 *. */
+  /* Amber / gold (in-progress, fee, in-tribunal, in-preparation) */
+  body.dark-mode [style*="#FEF9E7" i],body.dark-mode [style*="#FEF9E7" i] *,
+  body.dark-mode [style*="#FFFBEB" i],body.dark-mode [style*="#FFFBEB" i] *{
+    background:#3B2F00 !important;color:#FCD34D !important;border-color:#C9A84C !important;}
+  /* Green (complete, affirmative) */
+  body.dark-mode [style*="#D8F3DC" i],body.dark-mode [style*="#D8F3DC" i] *,
+  body.dark-mode [style*="#F0FDF4" i],body.dark-mode [style*="#F0FDF4" i] *{
+    background:#14381F !important;color:#86EFAC !important;border-color:#2E7D32 !important;}
+  /* Red (inactive, blocked, negative, annulment-required, urgent date) */
+  body.dark-mode [style*="#FEF2F2" i],body.dark-mode [style*="#FEF2F2" i] *,
+  body.dark-mode [style*="#FDEDEC" i],body.dark-mode [style*="#FDEDEC" i] *,
+  body.dark-mode [style*="#FDEAED" i],body.dark-mode [style*="#FDEAED" i] *,
+  body.dark-mode [style*="#FCEBEB" i],body.dark-mode [style*="#FCEBEB" i] *{
+    background:#3B1219 !important;color:#FCA5A5 !important;border-color:#8B1A2F !important;}
+  /* Blue (preparing, in-progress, received) */
+  body.dark-mode [style*="#EFF6FF" i],body.dark-mode [style*="#EFF6FF" i] *,
+  body.dark-mode [style*="#D6EAF8" i],body.dark-mode [style*="#D6EAF8" i] *,
+  body.dark-mode [style*="#F0F4F8" i],body.dark-mode [style*="#F0F4F8" i] *{
+    background:#1E3A5F !important;color:#93C5FD !important;border-color:#1565C0 !important;}
+  /* Purple (inquirer, not-started) */
+  body.dark-mode [style*="#F5F3FF" i],body.dark-mode [style*="#F5F3FF" i] *,
+  body.dark-mode [style*="#EDE9FE" i],body.dark-mode [style*="#EDE9FE" i] *{
+    background:#2D1B4E !important;color:#C4B5FD !important;border-color:#6A1B9A !important;}
+  /* Grey (external, inactive, neutral) */
+  body.dark-mode [style*="#F2F3F4" i],body.dark-mode [style*="#F2F3F4" i] *,
+  body.dark-mode [style*="#F3F4F6" i],body.dark-mode [style*="#F3F4F6" i] *,
+  body.dark-mode [style*="#EFEFEF" i],body.dark-mode [style*="#EFEFEF" i] *,
+  body.dark-mode [style*="#D1D5DB" i],body.dark-mode [style*="#D1D5DB" i] *{
+    background:#243447 !important;color:#9CA3AF !important;border-color:#4B5563 !important;}
+  /* Neutral cream / white nested containers (detail boxes, fee strips) */
+  body.dark-mode [style*="#FFF8EE" i],body.dark-mode [style*="#FFF8EE" i] *,
+  body.dark-mode [style*="#FDF8EE" i],body.dark-mode [style*="#FDF8EE" i] *,
+  body.dark-mode [style*="#F0ECE8" i],body.dark-mode [style*="#F0ECE8" i] *,
+  body.dark-mode [style*="#F0EDE8" i],body.dark-mode [style*="#F0EDE8" i] *,
+  body.dark-mode [style*="#E2DDD6" i],body.dark-mode [style*="#E2DDD6" i] *{
+    background:#1F2D3D !important;color:#F8F7F4 !important;border-color:#2D3F50 !important;}
 }
 
 /* AUTH SCREEN */

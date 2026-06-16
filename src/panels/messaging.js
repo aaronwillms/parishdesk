@@ -72,6 +72,7 @@ export function initChatBubble(userId) {
     if (!drop) {
       drop = document.createElement('div');
       drop.id = 'chat-drop';
+      drop.className = 'chat-dropdown message-dropdown';
       drop.style.cssText = `
         position:fixed;z-index:1200;width:320px;max-height:400px;
         background:#fff;border:.5px solid #E2DDD6;border-radius:10px;
