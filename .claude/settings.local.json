@@ -33,7 +33,8 @@
       "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/dashboard.js)",
       "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/main.js)",
       "Bash(git -C /Volumes/RemovableDrive/parishdesk log --oneline --all)",
-      "Bash(grep -rn \"fetch\\('/\\\\|fetch\\(\\\\`/\" /Volumes/RemovableDrive/parishdesk/src/)"
+      "Bash(grep -rn \"fetch\\('/\\\\|fetch\\(\\\\`/\" /Volumes/RemovableDrive/parishdesk/src/)",
+      "Bash(npm install *)"
     ]
   }
 }

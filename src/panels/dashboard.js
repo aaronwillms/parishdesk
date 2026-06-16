@@ -57,17 +57,14 @@ function _renderCalendarEvents() {
       ? 'background:#F3F4F6;border-left:3px solid #2E7D32;padding-left:8px;margin-left:-8px;border-radius:0 4px 4px 0;'
       : '';
 
-    const nowDot = isNow
-      ? `<span class="event-now-dot" style="margin-top:5px;"></span>`
-      : '';
+    const leadDot = isNow
+      ? `<span class="event-now-dot" style="margin-top:3px;"></span>`
+      : `<span class="sched-dot" style="background:${ev._calColor};flex-shrink:0;margin-top:3px;"></span>`;
 
     return `<div class="sched-item" style="${itemStyle}">
-      <span class="sched-dot" style="background:${ev._calColor};flex-shrink:0;margin-top:3px;"></span>
+      ${leadDot}
       <div style="flex:1;min-width:0;">
-        <div style="display:flex;align-items:center;gap:6px;">
-          ${nowDot}
-          <div class="sched-desc">${ev.title}</div>
-        </div>
+        <div class="sched-desc">${ev.title}</div>
         <div style="font-size:11.5px;color:#9CA3AF;margin-top:1px;">
           ${_fmtEventDate(ev.start)}${ev.allDay ? '' : ' · ' + _fmtEventTime(ev.start, false)}
           <span style="margin-left:4px;">${ev._calName}</span>
@@ -145,25 +142,17 @@ export async function loadCalendar() {
         return;
       }
 
-      // ICS — filter to today only
-      const raw = await _fetchICS(cal.url);
-      const events = parseICS(raw);
-      console.log('[dashboard] ICS events parsed:', events);
-      console.log('[dashboard] ICS event dates:', events.map(e => ({
-        title: e.title, start: e.start, startStr: new Date(e.start).toString(), tzid: e._tzid,
-      })));
-      for (const ev of events) {
-        if (!ev.start) continue;
-        const evTz = ev._tzid || parishTz;
-        const evDateStr = ev.allDay
-          ? new Date(ev.start).toLocaleDateString('en-CA')            // date-only: no tz conversion needed
-          : new Date(ev.start).toLocaleDateString('en-CA', { timeZone: evTz });
-        console.log('[dashboard] ICS event filter:', ev.title, evDateStr, '===?', todayStr);
-        if (evDateStr === todayStr) {
+      // ICS — parser expands recurrences and filters to today in one pass
+      try {
+        const raw = await _fetchICS(cal.url);
+        const events = parseICS(raw, { targetDate: now, parishTz });
+        console.log('[dashboard] ICS events for today:', events.length, events.map(e => e.title));
+        for (const ev of events) {
           allEvents.push({ ...ev, _calName: cal.name, _calColor: cal.color, _priority: 3 });
         }
+      } catch (e) {
+        console.warn('[calendar] ICS fetch/parse failed:', cal.name, e);
       }
-      console.log('[dashboard] ICS events for today:', allEvents.filter(e => e._priority === 3).length);
     }));
 
     // Sort by priority first so higher-priority sources win deduplication
