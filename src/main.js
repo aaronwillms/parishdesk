@@ -184,5 +184,15 @@ async function syncParishStaff() {
     store._taskScopeReady = undefined;
     clearUserScope();
   });
+  // Surface OAuth callback result from query params
+  const _params = new URLSearchParams(window.location.search);
+  if (_params.has('google_connected')) {
+    console.log('[oauth] Google Calendar connected successfully');
+  } else if (_params.has('google_error')) {
+    const reason = _params.get('google_error');
+    const detail = _params.get('detail') ?? '';
+    console.error('[oauth] Google Calendar connection failed — reason:', reason, detail ? `| detail: ${detail}` : '');
+  }
+
   initAuth(startApp);
 })();
