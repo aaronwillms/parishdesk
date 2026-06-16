@@ -20,7 +20,9 @@ const GROUP_ORDER = ['in_progress', 'blocked', 'not_started', 'complete'];
 // ── Module state ───────────────────────────────────────────────────────────
 
 let _newProjPicker    = null;
-let _newProjAssignees = [];  // array of {id, name} objects for multi-person modal
+let _newProjAssignees = [];
+let _searchQuery      = '';
+let _statusFilter     = 'all';
 
 // ── Data ───────────────────────────────────────────────────────────────────
 
@@ -55,14 +57,33 @@ export async function loadProjects() {
 // ── Landing render ─────────────────────────────────────────────────────────
 
 export function renderProjects() {
+  _initFilterBar();
+
   const el = document.getElementById('projects-list');
   if (!el) return;
 
   const notice = store._projectScopeReady === false ? scopeNotice() : '';
-  const items = store.allProjects;
+  let items = store.allProjects || [];
+
+  // Apply search
+  if (_searchQuery) {
+    const q = _searchQuery.toLowerCase();
+    items = items.filter(p =>
+      p.title?.toLowerCase().includes(q) ||
+      p.notes?.toLowerCase().includes(q)
+    );
+  }
+
+  // Apply status filter
+  if (_statusFilter !== 'all') {
+    items = items.filter(p => (p.status_code || 'not_started') === _statusFilter);
+  }
 
   if (!items.length) {
-    el.innerHTML = notice + '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No projects yet. Use the button above to create one.</div>';
+    const msg = (_searchQuery || _statusFilter !== 'all')
+      ? 'No projects match your search.'
+      : 'No projects yet. Use the button above to create one.';
+    el.innerHTML = notice + `<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">${msg}</div>`;
     return;
   }
 
@@ -88,6 +109,91 @@ export function renderProjects() {
       </div>`;
   });
   el.innerHTML = notice + html;
+}
+
+// ── Filter bar ─────────────────────────────────────────────────────────────
+
+const _FILTER_OPTIONS = [
+  { key: 'all',         label: 'All' },
+  { key: 'in_progress', label: 'In Progress' },
+  { key: 'blocked',     label: 'Blocked' },
+  { key: 'not_started', label: 'Not Started' },
+  { key: 'complete',    label: 'Complete' },
+];
+
+function _filterPillHtml(key, label) {
+  const active = key === _statusFilter;
+  return `<button class="proj-filter-btn" data-filter="${key}" style="
+    padding:.28rem .75rem;font-size:12px;font-family:'Inter',sans-serif;font-weight:500;
+    border-radius:20px;border:.5px solid ${active ? '#C9A84C' : '#D1C9BE'};
+    background:${active ? '#C9A84C' : '#fff'};color:${active ? '#fff' : '#1C2B3A'};
+    cursor:pointer;white-space:nowrap;
+  ">${label}</button>`;
+}
+
+function _updateFilterPills() {
+  const bar = document.getElementById('proj-filter-bar');
+  if (!bar) return;
+  bar.querySelectorAll('.proj-filter-btn').forEach(btn => {
+    const active = btn.dataset.filter === _statusFilter;
+    btn.style.background   = active ? '#C9A84C' : '#fff';
+    btn.style.color        = active ? '#fff'    : '#1C2B3A';
+    btn.style.borderColor  = active ? '#C9A84C' : '#D1C9BE';
+  });
+}
+
+function _initFilterBar() {
+  const bar = document.getElementById('proj-filter-bar');
+  if (!bar || bar.dataset.inited) return;
+  bar.dataset.inited = '1';
+
+  bar.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:1rem;">
+      <div style="position:relative;flex:0 0 auto;width:clamp(180px,300px,100%);">
+        <i class="fa-solid fa-magnifying-glass" style="
+          position:absolute;left:9px;top:50%;transform:translateY(-50%);
+          color:#9CA3AF;font-size:11px;pointer-events:none;
+        "></i>
+        <input id="proj-search" placeholder="Search projects…" autocomplete="off" style="
+          width:100%;box-sizing:border-box;padding:.38rem .75rem .38rem 2rem;
+          border:.5px solid #D1C9BE;border-radius:6px;font-size:13px;
+          font-family:'Inter',sans-serif;outline:none;background:#fff;
+        " />
+        <button id="proj-search-clear" style="
+          display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);
+          background:none;border:none;cursor:pointer;color:#9CA3AF;
+          font-size:13px;padding:0;line-height:1;
+        ">✕</button>
+      </div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;">
+        ${_FILTER_OPTIONS.map(f => _filterPillHtml(f.key, f.label)).join('')}
+      </div>
+    </div>
+  `;
+
+  const searchInput = bar.querySelector('#proj-search');
+  const clearBtn    = bar.querySelector('#proj-search-clear');
+
+  searchInput.addEventListener('input', () => {
+    _searchQuery = searchInput.value;
+    clearBtn.style.display = _searchQuery ? '' : 'none';
+    renderProjects();
+  });
+
+  clearBtn.addEventListener('click', () => {
+    _searchQuery = '';
+    searchInput.value = '';
+    clearBtn.style.display = 'none';
+    renderProjects();
+  });
+
+  bar.querySelectorAll('.proj-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _statusFilter = btn.dataset.filter;
+      _updateFilterPills();
+      renderProjects();
+    });
+  });
 }
 
 function assigneeLabel(ids) {
@@ -200,6 +306,7 @@ function _renderNewProjChips() {
 }
 
 async function saveNewProject() {
+  const { data: { user } } = await sb.auth.getUser();
   const title = document.getElementById('pf-title').value.trim();
   if (!title) { alert('Title is required.'); return; }
   const payload = {
@@ -208,15 +315,19 @@ async function saveNewProject() {
     assigned_to: _newProjAssignees.length ? _newProjAssignees.map(p => p.id) : null,
     due_date:    document.getElementById('pf-due').value || null,
     notes:       document.getElementById('pf-notes').value.trim() || null,
+    created_by:  user?.id || null,
     updated_at:  new Date().toISOString(),
   };
-  const { error } = await sb.from('projects').insert(payload);
+  const { data: newProj, error } = await sb.from('projects').insert(payload).select().single();
   if (error) { alert('Save failed: ' + error.message); return; }
   _newProjPicker    = null;
   _newProjAssignees = [];
   closeModal();
-  await invalidateProjects();
-  loadProjects();
+  if (!store.allProjects) store.allProjects = [];
+  store.allProjects.unshift(newProj);
+  renderProjects();
+  updateProjectStats();
+  renderDashProjects();
 }
 
 // ── Legacy modal support (used by openModal('project') in main.js) ─────────

@@ -36,17 +36,21 @@ export async function renderDiscussionThread({ container, contextType, contextId
   }
 
   const { data: discussions } = await sb.from('discussions')
-    .select('id, title, created_by, created_at, updated_at, pinned, pinned_at')
+    .select('id, title, created_by, created_at, updated_at, pinned, pinned_at, deleted_at')
     .eq('context_type', contextType)
     .eq('context_id', contextId)
     .order('updated_at', { ascending: false });
 
-  let list = (discussions || []).sort((a, b) => {
+  const _allDiscs = discussions || [];
+  let deletedList = _allDiscs.filter(d => !!d.deleted_at)
+    .sort((a, b) => (b.deleted_at || '').localeCompare(a.deleted_at || ''));
+  let list = _allDiscs.filter(d => !d.deleted_at).sort((a, b) => {
     if (a.pinned && !b.pinned) return -1;
     if (!a.pinned && b.pinned) return 1;
     if (a.pinned && b.pinned) return (b.pinned_at || '').localeCompare(a.pinned_at || '');
     return (b.updated_at || '').localeCompare(a.updated_at || '');
   });
+  let _showDeleted = false;
 
   // Profile map for thread creators
   const profileMap = {};
@@ -140,10 +144,48 @@ export async function renderDiscussionThread({ container, contextType, contextId
   // ── Thread list HTML ────────────────────────────────────────────────────
 
   function _listHtml() {
-    if (!list.length) {
-      return `<div style="padding:2rem 1rem;text-align:center;font-size:13px;color:#9CA3AF;font-style:italic;">No threads yet. Start one!</div>`;
-    }
-    return list.map(d => _threadRowHtml(d)).join('');
+    const activeHtml = list.length
+      ? list.map(d => _threadRowHtml(d)).join('')
+      : `<div style="padding:2rem 1rem;text-align:center;font-size:13px;color:#9CA3AF;font-style:italic;">No threads yet. Start one!</div>`;
+
+    if (!deletedList.length) return activeHtml;
+
+    const deletedHtml = _showDeleted
+      ? deletedList.map(d => _deletedRowHtml(d)).join('')
+      : '';
+
+    return activeHtml + `
+      <div id="disc-deleted-toggle" style="
+        display:flex;align-items:center;justify-content:space-between;
+        padding:.5rem 1rem;cursor:pointer;user-select:none;
+        border-top:.5px solid #E2DDD6;
+      ">
+        <span style="font-size:11.5px;color:#9CA3AF;font-style:italic;font-weight:500;">
+          Deleted Threads (${deletedList.length})
+        </span>
+        <i class="fa-solid fa-chevron-${_showDeleted ? 'up' : 'down'}" style="font-size:10px;color:#C0BAB2;"></i>
+      </div>
+      <div id="disc-deleted-list">${deletedHtml}</div>
+    `;
+  }
+
+  function _deletedRowHtml(d) {
+    return `
+      <div class="disc-deleted-row" style="
+        display:flex;align-items:center;justify-content:space-between;gap:10px;
+        padding:.6rem 1rem;border-bottom:.5px solid #F0EDE8;background:#FAFAF8;
+      ">
+        <div style="min-width:0;flex:1;">
+          <div style="font-size:13px;color:#9CA3AF;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(d.title)}</div>
+          <div style="font-size:11px;color:#C0BAB2;margin-top:2px;">Deleted ${_relTime(d.deleted_at)}</div>
+        </div>
+        <button class="disc-restore-btn" data-disc-id="${d.id}" style="
+          flex-shrink:0;font-size:12px;color:#6B7280;background:none;
+          border:.5px solid #D1C9BE;border-radius:5px;padding:.25rem .6rem;
+          font-family:'Inter',sans-serif;cursor:pointer;white-space:nowrap;
+        " onmouseover="this.style.borderColor='#1C2B3A';this.style.color='#1C2B3A';"
+           onmouseout="this.style.borderColor='#D1C9BE';this.style.color='#6B7280';">Restore</button>
+      </div>`;
   }
 
   function _threadRowHtml(d) {
@@ -228,12 +270,32 @@ export async function renderDiscussionThread({ container, contextType, contextId
       }
     });
 
+    document.getElementById('disc-deleted-toggle')?.addEventListener('click', () => {
+      _showDeleted = !_showDeleted;
+      const listEl = document.getElementById('disc-deleted-list');
+      const icon   = document.querySelector('#disc-deleted-toggle i');
+      if (listEl) listEl.innerHTML = _showDeleted ? deletedList.map(d => _deletedRowHtml(d)).join('') : '';
+      if (icon)   { icon.className = `fa-solid fa-chevron-${_showDeleted ? 'up' : 'down'}`; icon.style.fontSize = '10px'; icon.style.color = '#C0BAB2'; }
+      if (_showDeleted) _hydrateDeletedList();
+    });
+
     document.getElementById('disc-new-btn')?.addEventListener('click', () => {
       _openNewThreadModal({ contextType, contextId, currentUserId, profileMap, onCreated: (disc) => {
         list.unshift(disc);
         _activeDiscId = disc.id;
         rerender();
       }});
+    });
+  }
+
+  // ── Hydrate deleted list ────────────────────────────────────────────────
+
+  function _hydrateDeletedList() {
+    container.querySelectorAll('.disc-restore-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        _restoreThread(btn.dataset.discId);
+      });
     });
   }
 
@@ -259,17 +321,39 @@ export async function renderDiscussionThread({ container, contextType, contextId
     rerender();
   }
 
-  // ── Delete thread ───────────────────────────────────────────────────────
+  // ── Delete thread (soft) ────────────────────────────────────────────────
 
   async function _deleteThread(discId) {
-    if (!confirm('Delete this thread and all its replies? This cannot be undone.')) return;
-    await sb.from('discussion_messages').delete().eq('discussion_id', discId);
-    await sb.from('discussions').delete().eq('id', discId);
+    if (!confirm('Move this thread to trash? It can be restored within 14 days.')) return;
+    const now = new Date().toISOString();
+    await sb.from('discussions').update({ deleted_at: now }).eq('id', discId);
     if (_subs[discId]) { sb.removeChannel(_subs[discId]); delete _subs[discId]; }
-    list = list.filter(d => d.id !== discId);
-    delete replyMap[discId];
-    delete lastMsgMap[discId];
+    const disc = list.find(d => d.id === discId);
+    if (disc) {
+      disc.deleted_at = now;
+      deletedList.unshift(disc);
+      list = list.filter(d => d.id !== discId);
+    }
     if (_activeDiscId === discId) _activeDiscId = null;
+    rerender();
+  }
+
+  // ── Restore thread ──────────────────────────────────────────────────────
+
+  async function _restoreThread(discId) {
+    await sb.from('discussions').update({ deleted_at: null }).eq('id', discId);
+    const disc = deletedList.find(d => d.id === discId);
+    if (disc) {
+      disc.deleted_at = null;
+      deletedList = deletedList.filter(d => d.id !== discId);
+      list.unshift(disc);
+      list.sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        if (a.pinned && b.pinned) return (b.pinned_at || '').localeCompare(a.pinned_at || '');
+        return (b.updated_at || '').localeCompare(a.updated_at || '');
+      });
+    }
     rerender();
   }
 
