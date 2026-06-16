@@ -316,6 +316,7 @@ export function renderDashProjects() {
           <span style="font-size:13px;color:#1C2B3A;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
           ${item.dueDate ? `<span style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};flex-shrink:0;">${fmtDate(item.dueDate)}</span>` : ''}
         </div>`;
+    }
   }).join('');
 
   // Wire task checkboxes
