@@ -19,12 +19,13 @@ export async function loadUserProfile() {
   _profile = data || null;
   store.currentUserProfile = _profile;
 
-  const { data: gcal } = await sb.from('calendars')
+  const { data: gcal, error: gcalErr } = await sb.from('calendars')
     .select('id')
     .eq('user_id', user.id)
     .eq('type', 'google')
     .eq('scope', 'personal')
     .maybeSingle();
+  console.log('[userProfile] gcal query — user_id:', user.id, '| result:', gcal, '| error:', gcalErr);
   _googleCal = gcal || null;
 
   // Handle redirect back from Google OAuth
