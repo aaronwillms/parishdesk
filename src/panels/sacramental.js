@@ -251,10 +251,10 @@ function renderSacramentalCard(prog, item) {
         h += `<div class="prog-bar-wrap"><div class="prog-bar-fill" style="width:${progress}%;background:${progress===100?'#2D6A4F':'var(--gold)'};"></div></div>`;
         h += `<div style="font-size:11px;color:#888;margin-bottom:6px;">${progress}% complete</div>`;
       }
-      h += docs.map((d,i) => `<div class="doc-item" style="padding:4px 6px;border-radius:var(--radius-sm);transition:background .12s;" onmouseover="this.style.background='var(--parch)'" onmouseout="this.style.background='transparent'">
+      h += docs.map((d,i) => `<div class="doc-item">
         <span style="font-size:15px;cursor:pointer;" onclick="toggleSacDoc('${prog}','${item.id}',${i})">${d.done?'✅':'❌'}</span>
-        <span style="color:${d.done?'#2D6A4F':'#922B21'};flex:1;cursor:pointer;" onclick="toggleSacDoc('${prog}','${item.id}',${i})">${d.name}</span>
-        <button onclick="deleteSacDoc('${prog}','${item.id}',${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;padding:0 0 0 8px;flex-shrink:0;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">✕</button>
+        <span style="color:${d.done?'#2D6A4F':'#922B21'};cursor:pointer;" onclick="toggleSacDoc('${prog}','${item.id}',${i})">${d.name}</span>
+        <button class="doc-del-btn" onclick="deleteSacDoc('${prog}','${item.id}',${i})">✕</button>
       </div>`).join('');
     }
 

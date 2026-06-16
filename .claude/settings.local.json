@@ -29,7 +29,8 @@
       "Bash(grep -rn \"-- conversations\\\\|-- messages\\\\|-- conversation_participants\\\\|conversations table\\\\|messages table\" /Volumes/RemovableDrive/parishdesk/supabase --include=\"*.sql\")",
       "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/sacramental.js)",
       "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/ocia.js)",
-      "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/marriage.js)"
+      "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/marriage.js)",
+      "Bash(node --check /Volumes/RemovableDrive/parishdesk/src/panels/dashboard.js)"
     ]
   }
 }

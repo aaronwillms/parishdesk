@@ -38,14 +38,24 @@ export async function loadCalendar() {
   c.innerHTML = '<span class="pulse"></span>';
 
   try {
-    const { data: cals, error } = await sb
-      .from('calendars')
-      .select('id, name, type, url, color')
-      .eq('scope', 'parish')
-      .eq('active', true);
+    // Fetch parish-wide ICS/Google calendars AND the current user's personal Google Calendar
+    const [parishRes, personalRes] = await Promise.all([
+      sb.from('calendars').select('id, name, type, url, color').eq('scope', 'parish').eq('active', true),
+      currentUserId
+        ? sb.from('calendars').select('id, name, type, color').eq('scope', 'personal').eq('type', 'google').eq('user_id', currentUserId).eq('active', true).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
 
-    if (error) throw error;
-    if (!cals?.length) {
+    if (parishRes.error) throw parishRes.error;
+
+    // Merge: parish calendars first, then personal Google if present and not already covered
+    const parishCals = parishRes.data || [];
+    const hasParishGoogle = parishCals.some(c => c.type === 'google');
+    const cals = personalRes.data && !hasParishGoogle
+      ? [...parishCals, { ...personalRes.data, _personalGoogle: true }]
+      : parishCals;
+
+    if (!cals.length) {
       c.innerHTML = '<div style="font-size:13px;color:#6B7280;font-style:italic;">No calendars configured.</div>';
       return;
     }
@@ -59,6 +69,7 @@ export async function loadCalendar() {
     await Promise.allSettled(cals.map(async (cal) => {
       if (cal.type === 'google') {
         try {
+          console.log('[dashboard] fetching google calendar events for userId:', currentUserId);
           const proxyRes = await fetch('/functions/google-calendar-proxy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -290,8 +301,10 @@ let _birthdayAnnouncements = [];
 export async function loadAnnouncements() {
   const today = todayCST();
   const now = new Date().toISOString();
-  // Auto-publish any scheduled announcements whose publish_at has passed
-  await sb.from('announcements').update({ active: true }).eq('active', false).not('publish_at', 'is', null).lte('publish_at', now);
+  // Auto-publish any scheduled announcements whose publish_at has passed (column may not exist yet)
+  const autopubRes = await sb.from('announcements').update({ active: true }).eq('active', false).not('publish_at', 'is', null).lte('publish_at', now);
+  if (autopubRes.error) console.warn('[announcements] auto-publish skipped (publish_at column may not exist):', autopubRes.error.message);
+
   const [annRes, scheduledRes, dimRes] = await Promise.all([
     sb.from('announcements')
       .select('*')
@@ -299,11 +312,13 @@ export async function loadAnnouncements() {
       .or(`expires_at.is.null,expires_at.gte.${today}`)
       .order('pinned', { ascending: false })
       .order('created_at', { ascending: false }),
-    sb.from('announcements')
-      .select('*')
-      .eq('active', false)
-      .not('publish_at', 'is', null)
-      .order('publish_at', { ascending: true }),
+    autopubRes.error
+      ? Promise.resolve({ data: [] })
+      : sb.from('announcements')
+          .select('*')
+          .eq('active', false)
+          .not('publish_at', 'is', null)
+          .order('publish_at', { ascending: true }),
     currentUserId
       ? sb.from('announcement_dismissals').select('announcement_id').eq('user_id', currentUserId)
       : Promise.resolve({ data: [] }),
