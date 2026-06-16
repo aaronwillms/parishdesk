@@ -1,3 +1,5 @@
+import { store } from './store.js';
+
 const OPT_MEMORIALS = {
   '1-13':'Optional Memorial of St. Hilary, Bishop & Doctor','1-17':'Optional Memorial of St. Anthony, Abbot',
   '1-20':'Optional Memorial of St. Fabian, Pope & Martyr','1-21':'Optional Memorial of St. Agnes, Virgin & Martyr',
@@ -112,9 +114,10 @@ function getLiturgicalDay(d) {
 }
 
 export function initLiturgical() {
-  const today = new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
+  const parishTz = store.parishSettings?.timezone || 'America/Chicago';
+  const today = new Date(new Date().toLocaleString('en-US',{timeZone: parishTz}));
   const lit = getLiturgicalDay(today);
-  const dateStr = today.toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric',timeZone:'America/Chicago'});
+  const dateStr = today.toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric',timeZone: parishTz});
   document.getElementById('lit-date').textContent = dateStr;
   document.getElementById('lit-day').textContent = lit.name;
   document.getElementById('lit-rank').textContent = lit.rank;

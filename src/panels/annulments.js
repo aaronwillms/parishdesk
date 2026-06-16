@@ -221,7 +221,7 @@ function renderCaseCard(c) {
     }
     if(c.updated_at) {
       const upd = new Date(c.updated_at);
-      const now = new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
+      const now = new Date(new Date().toLocaleString('en-US',{timeZone: store.parishSettings?.timezone || 'America/Chicago'}));
       const daysSince = Math.floor((now-upd)/86400000);
       const updStr = upd.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
       let agingChip = '';
@@ -417,7 +417,7 @@ async function appendNote(caseId) {
   if(!cas) return;
   const addition = document.getElementById('note-text-'+caseId).value.trim();
   if(!addition){alert('Please enter a note.');return;}
-  const now = new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
+  const now = new Date(new Date().toLocaleString('en-US',{timeZone: store.parishSettings?.timezone || 'America/Chicago'}));
   const dateStr = `${now.getMonth()+1}/${now.getDate()}/${now.getFullYear()}`;
   const newNotes = cas.notes?`${cas.notes}\n\n[${dateStr}] ${addition}`:`[${dateStr}] ${addition}`;
   const {error} = await sb.from('annulment_cases').update({notes:newNotes,updated_at:new Date().toISOString()}).eq('id',caseId);
@@ -489,7 +489,7 @@ async function saveCase(id) {
     const r = await sb.from('annulment_cases').update(payload).eq('id',id);
     err = r.error;
   } else {
-    const today = new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
+    const today = new Date(new Date().toLocaleString('en-US',{timeZone: store.parishSettings?.timezone || 'America/Chicago'}));
     const dateStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
     payload.timeline = [{date:dateStr, event:'Case opened'}];
     const baseDocs = [

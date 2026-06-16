@@ -101,6 +101,8 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 .btn-delete:hover{background:#FCEBEB;}
 .pulse{display:inline-block;width:80px;height:11px;background:var(--stone);border-radius:4px;animation:shimmer 1.4s ease-in-out infinite;}
 @keyframes shimmer{0%,100%{opacity:.5;}50%{opacity:1;}}
+.event-now-dot{width:8px;height:8px;border-radius:50%;background:#2E7D32;animation:event-now-pulse 2s infinite;flex-shrink:0;}
+@keyframes event-now-pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
 .alert-strip{background:#FDF8EE;border:.5px solid rgba(201,168,76,.35);border-radius:var(--radius-sm);padding:.75rem 1rem;display:flex;align-items:flex-start;gap:10px;margin-bottom:1rem;}
 .alert-strip i{color:var(--gold);font-size:15px;flex-shrink:0;margin-top:1px;}
 .alert-text{font-size:13px;color:var(--navy);line-height:1.5;}

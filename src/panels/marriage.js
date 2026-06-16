@@ -224,7 +224,7 @@ function renderCoupleCard(c) {
     }
     if(c.updated_at) {
       const _upd = new Date(c.updated_at);
-      const _now = new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
+      const _now = new Date(new Date().toLocaleString('en-US',{timeZone: store.parishSettings?.timezone || 'America/Chicago'}));
       const _days = Math.floor((_now-_upd)/86400000);
       const _updStr = _upd.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
       let _aging = '';
@@ -282,7 +282,7 @@ async function appendCoupleNote(coupleId) {
   if(!couple) return;
   const addition = document.getElementById('couple-note-text-'+coupleId).value.trim();
   if(!addition){alert('Please enter a note.');return;}
-  const now = new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
+  const now = new Date(new Date().toLocaleString('en-US',{timeZone: store.parishSettings?.timezone || 'America/Chicago'}));
   const dateStr = (now.getMonth()+1)+'/'+now.getDate()+'/'+now.getFullYear();
   const newNotes = couple.notes?(couple.notes+'\n\n['+dateStr+'] '+addition):('['+dateStr+'] '+addition);
   const {error} = await sb.from('couples').update({notes:newNotes,updated_at:new Date().toISOString()}).eq('id',coupleId);

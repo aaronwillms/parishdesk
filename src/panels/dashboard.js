@@ -9,6 +9,8 @@ import { notifyUsers, getAllUserIds, getUserIdsForTeam } from '../notifications.
 
 let currentUserId     = null;
 let _dashPersonnelId  = null;
+let _nowInterval      = null;
+let _calendarEvents   = [];  // last-rendered event list for interval re-checks
 
 function dotClass(colorId) {
   return (colorId && CAL_COLOR_MAP[colorId]) ? CAL_COLOR_MAP[colorId] : 'personal';
@@ -30,6 +32,49 @@ async function _fetchICS(url) {
   const res = await fetch(proxyUrl);
   if (!res.ok) throw new Error('ICS fetch failed: ' + res.status);
   return res.text();
+}
+
+function _renderCalendarEvents() {
+  const c = document.getElementById('calendar-sched');
+  if (!c || !_calendarEvents.length) return;
+
+  const now = new Date();
+  const parishTz = store.parishSettings?.timezone || 'America/Chicago';
+
+  c.innerHTML = _calendarEvents.map(ev => {
+    if (ev._stub) {
+      return `<div class="sched-item" style="opacity:.55;font-style:italic;">
+        <span class="sched-dot" style="background:${ev._calColor};flex-shrink:0;"></span>
+        <div class="sched-desc" style="font-size:12.5px;color:#9CA3AF;">${ev.title}</div>
+      </div>`;
+    }
+
+    const start   = new Date(ev.start);
+    const end     = ev.end ? new Date(ev.end) : new Date(start.getTime() + 60 * 60 * 1000);
+    const isNow   = !ev.allDay && now >= start && now <= end;
+
+    const itemStyle = isNow
+      ? 'background:#F3F4F6;border-left:3px solid #2E7D32;padding-left:8px;margin-left:-8px;border-radius:0 4px 4px 0;'
+      : '';
+
+    const nowDot = isNow
+      ? `<span class="event-now-dot" style="margin-top:5px;"></span>`
+      : '';
+
+    return `<div class="sched-item" style="${itemStyle}">
+      <span class="sched-dot" style="background:${ev._calColor};flex-shrink:0;margin-top:3px;"></span>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          ${nowDot}
+          <div class="sched-desc">${ev.title}</div>
+        </div>
+        <div style="font-size:11.5px;color:#9CA3AF;margin-top:1px;">
+          ${_fmtEventDate(ev.start)}${ev.allDay ? '' : ' · ' + _fmtEventTime(ev.start, false)}
+          <span style="margin-left:4px;">${ev._calName}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 export async function loadCalendar() {
@@ -61,7 +106,8 @@ export async function loadCalendar() {
     }
 
     const now = new Date();
-    const todayStr = now.toDateString();
+    const parishTz = store.parishSettings?.timezone || 'America/Chicago';
+    const todayStr = now.toLocaleDateString('en-CA', { timeZone: parishTz }); // YYYY-MM-DD in parish tz
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
     const endOfDay   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString();
 
@@ -103,12 +149,21 @@ export async function loadCalendar() {
       const raw = await _fetchICS(cal.url);
       const events = parseICS(raw);
       console.log('[dashboard] ICS events parsed:', events);
+      console.log('[dashboard] ICS event dates:', events.map(e => ({
+        title: e.title, start: e.start, startStr: new Date(e.start).toString(), tzid: e._tzid,
+      })));
       for (const ev of events) {
         if (!ev.start) continue;
-        if (ev.start.toDateString() === todayStr) {
+        const evTz = ev._tzid || parishTz;
+        const evDateStr = ev.allDay
+          ? new Date(ev.start).toLocaleDateString('en-CA')            // date-only: no tz conversion needed
+          : new Date(ev.start).toLocaleDateString('en-CA', { timeZone: evTz });
+        console.log('[dashboard] ICS event filter:', ev.title, evDateStr, '===?', todayStr);
+        if (evDateStr === todayStr) {
           allEvents.push({ ...ev, _calName: cal.name, _calColor: cal.color, _priority: 3 });
         }
       }
+      console.log('[dashboard] ICS events for today:', allEvents.filter(e => e._priority === 3).length);
     }));
 
     // Sort by priority first so higher-priority sources win deduplication
@@ -137,24 +192,19 @@ export async function loadCalendar() {
       return;
     }
 
-    c.innerHTML = dedupedEvents.map(ev => {
-      if (ev._stub) {
-        return `<div class="sched-item" style="opacity:.55;font-style:italic;">
-          <span class="sched-dot" style="background:${ev._calColor};flex-shrink:0;"></span>
-          <div class="sched-desc" style="font-size:12.5px;color:#9CA3AF;">${ev.title}</div>
-        </div>`;
+    _calendarEvents = dedupedEvents;
+    _renderCalendarEvents();
+
+    // Re-evaluate "now" highlighting every 60 seconds; stop if dashboard is no longer active
+    if (_nowInterval) clearInterval(_nowInterval);
+    _nowInterval = setInterval(() => {
+      if (!document.getElementById('panel-dashboard')?.classList.contains('active')) {
+        clearInterval(_nowInterval);
+        _nowInterval = null;
+        return;
       }
-      return `<div class="sched-item">
-        <span class="sched-dot" style="background:${ev._calColor};flex-shrink:0;margin-top:3px;"></span>
-        <div style="flex:1;min-width:0;">
-          <div class="sched-desc">${ev.title}</div>
-          <div style="font-size:11.5px;color:#9CA3AF;margin-top:1px;">
-            ${_fmtEventDate(ev.start)}${ev.allDay ? '' : ' · ' + _fmtEventTime(ev.start, false)}
-            <span style="margin-left:4px;">${ev._calName}</span>
-          </div>
-        </div>
-      </div>`;
-    }).join('');
+      _renderCalendarEvents();
+    }, 60_000);
 
   } catch (e) {
     console.error('[calendar]', e);
@@ -943,8 +993,8 @@ async function _saveNewEvent() {
     const endDT   = new Date(startDT.getTime() + 60 * 60 * 1000);
     gcalEvent = {
       summary: title,
-      start:   { dateTime: startDT.toISOString(), timeZone: 'America/Chicago' },
-      end:     { dateTime: endDT.toISOString(),   timeZone: 'America/Chicago' },
+      start:   { dateTime: startDT.toISOString(), timeZone: store.parishSettings?.timezone || 'America/Chicago' },
+      end:     { dateTime: endDT.toISOString(),   timeZone: store.parishSettings?.timezone || 'America/Chicago' },
     };
   } else {
     gcalEvent = {

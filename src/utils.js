@@ -1,4 +1,5 @@
 import { sb } from './supabase.js';
+import { store } from './store.js';
 
 export async function logActivity({ action, entityType, entityName, contextType = 'general', contextId = null }) {
   try {
@@ -17,7 +18,8 @@ export async function logActivity({ action, entityType, entityName, contextType 
 }
 
 export function todayCST() {
-  const n = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  const tz = store.parishSettings?.timezone || 'America/Chicago';
+  const n = new Date(new Date().toLocaleString('en-US', { timeZone: tz }));
   return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0') + '-' + String(n.getDate()).padStart(2, '0');
 }
 
@@ -37,7 +39,7 @@ export function fmtDate(iso) {
 
 export function daysUntil(iso) {
   if (!iso) return null;
-  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: store.parishSettings?.timezone || 'America/Chicago' }));
   now.setHours(0, 0, 0, 0);
   return Math.round((new Date(iso + 'T00:00:00') - now) / 86400000);
 }

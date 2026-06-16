@@ -1,4 +1,5 @@
 import { sb } from '../supabase.js';
+import { store } from '../store.js';
 import { fmtDate, todayCST } from '../utils.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 
@@ -96,7 +97,7 @@ function updateSacramentalStats(prog) {
   const active = items.filter(i => !i.archived);
   const el = id => document.getElementById(id);
   el(cfg.statTotal).textContent = active.length;
-  const now = new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
+  const now = new Date(new Date().toLocaleString('en-US',{timeZone: store.parishSettings?.timezone || 'America/Chicago'}));
   const upcoming = active.filter(i => {
     if(!i.sacrament_date) return false;
     const d = new Date(i.sacrament_date+'T00:00:00');
@@ -180,7 +181,7 @@ function renderSacramentalCard(prog, item) {
   const dateVal = item.sacrament_date;
   let dateChip = '';
   if(dateVal) {
-    const days = Math.round((new Date(dateVal+'T00:00:00')-new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'})))/86400000);
+    const days = Math.round((new Date(dateVal+'T00:00:00')-new Date(new Date().toLocaleString('en-US',{timeZone: store.parishSettings?.timezone || 'America/Chicago'})))/86400000);
     const urgent = days>=0&&days<=7;
     dateChip = `<span style="font-size:11px;color:${urgent?'#C0392B':'#777'};background:${urgent?'#FDEDEC':'#EFEFEF'};border-radius:20px;padding:2px 8px;">${urgent?'⚠️ ':''}${fmtDate(dateVal)}${days>=0&&days<=60?` · ${days===0?'Today':days===1?'Tomorrow':days+' days'}`:''}</span>`;
   }
@@ -316,7 +317,7 @@ async function appendSacNote(prog, id) {
   if(!item) return;
   const txt = document.getElementById('sac-note-text-'+id).value.trim();
   if(!txt){alert('Please enter a note.');return;}
-  const now = new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
+  const now = new Date(new Date().toLocaleString('en-US',{timeZone: store.parishSettings?.timezone || 'America/Chicago'}));
   const ds = `${now.getMonth()+1}/${now.getDate()}/${now.getFullYear()}`;
   const newNotes = item.notes?`${item.notes}\n\n[${ds}] ${txt}`:`[${ds}] ${txt}`;
   const {error} = await sb.from(cfg.table).update({notes:newNotes,updated_at:new Date().toISOString()}).eq('id',id);

@@ -31,7 +31,7 @@ function easterDate(year) {
 }
 
 function nextEaster() {
-  const today = new Date(new Date().toLocaleString('en-US', {timeZone: 'America/Chicago'}));
+  const today = new Date(new Date().toLocaleString('en-US', {timeZone: store.parishSettings?.timezone || 'America/Chicago'}));
   const yr = today.getFullYear();
   const e = easterDate(yr);
   return today <= e ? e : easterDate(yr + 1);
@@ -71,7 +71,7 @@ function ociaAge(dob) {
   if(!dob) return null;
   const d = new Date(dob);
   if(isNaN(d)) return null;
-  const now = new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
+  const now = new Date(new Date().toLocaleString('en-US',{timeZone: store.parishSettings?.timezone || 'America/Chicago'}));
   let age = now.getFullYear()-d.getFullYear();
   const m = now.getMonth()-d.getMonth();
   if(m<0||(m===0&&now.getDate()<d.getDate())) age--;
@@ -381,7 +381,7 @@ function toggleOciaNoteForm(id) {const f=document.getElementById('ocia-note-form
 async function appendOciaNote(id) {
   const p = allOcia.find(x => x.id===id); if(!p) return;
   const txt = document.getElementById('ocia-note-text-'+id).value.trim(); if(!txt){alert('Please enter a note.');return;}
-  const now = new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
+  const now = new Date(new Date().toLocaleString('en-US',{timeZone: store.parishSettings?.timezone || 'America/Chicago'}));
   const ds = `${now.getMonth()+1}/${now.getDate()}/${now.getFullYear()}`;
   const newNotes = p.notes?`${p.notes}\n\n[${ds}] ${txt}`:`[${ds}] ${txt}`;
   const {error} = await sb.from('sacramental_ocia').update({notes:newNotes,updated_at:new Date().toISOString()}).eq('id',id);
