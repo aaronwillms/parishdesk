@@ -175,67 +175,100 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 /* DARK MODE — mobile only */
 @media(max-width:767px){
   body.dark-mode{background:#0F1923;color:#F8F7F4;}
-  /* Blanket text override — catches inline color styles on divs/spans */
+  /* Blanket text — catches inline color styles */
   body.dark-mode p,body.dark-mode span,body.dark-mode div,body.dark-mode li,
   body.dark-mode td,body.dark-mode th,body.dark-mode label{color:#F8F7F4;}
-  /* Muted/secondary text: stay grey but readable */
+  /* Muted text stays grey */
   body.dark-mode [style*="color:#6B7280"],body.dark-mode [style*="color: #6B7280"],
   body.dark-mode [style*="color:#9CA3AF"],body.dark-mode [style*="color: #9CA3AF"],
   body.dark-mode .text-muted,body.dark-mode .text-secondary{color:#9CA3AF !important;}
+  /* Inline navy text → parchment */
+  body.dark-mode [style*="color:#1C2B3A"],body.dark-mode [style*="color: #1C2B3A"]{color:#F8F7F4 !important;}
+  /* Inline white/light backgrounds → dark card */
+  body.dark-mode [style*="background:#fff"],body.dark-mode [style*="background: #fff"],
+  body.dark-mode [style*="background:#FFFFFF"],body.dark-mode [style*="background: #FFFFFF"],
+  body.dark-mode [style*="background:#FAFAF8"],body.dark-mode [style*="background:#F8F7F4"]{background:#1A2634 !important;}
+  /* Layout */
   body.dark-mode #sidebar{background:#0D1520;}
   body.dark-mode #main{background:#0F1923;}
   body.dark-mode #topbar{background:#1A2634;border-bottom-color:#2D3F50;}
   body.dark-mode #content{background:#0F1923;}
-  body.dark-mode .page-title,body.dark-mode .card-title{color:#F8F7F4 !important;}
-  body.dark-mode .card,body.dark-mode .stat-card{background:#1A2634;border-color:#2D3F50;}
-  body.dark-mode .stat-label{color:#9CA3AF !important;}
-  body.dark-mode .stat-num{color:#F8F7F4 !important;}
-  body.dark-mode .modal{background:#1A2634;border-color:#2D3F50;}
-  body.dark-mode .modal-header{border-bottom-color:#2D3F50;}
-  body.dark-mode input,body.dark-mode select,body.dark-mode textarea{background:#1A2634 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+  body.dark-mode .page-title{color:#F8F7F4 !important;}
   body.dark-mode .nav-item.active{background:rgba(201,168,76,.15);}
-  /* Inline white card backgrounds (user profile, panels) */
-  body.dark-mode [style*="background:#fff"],body.dark-mode [style*="background: #fff"],
-  body.dark-mode [style*="background:#FFFFFF"],body.dark-mode [style*="background: #FFFFFF"],
-  body.dark-mode [style*="background:#FAFAF8"],body.dark-mode [style*="background:#F8F7F4"]{background:#1A2634 !important;}
-  /* Inline navy text overrides */
-  body.dark-mode [style*="color:#1C2B3A"],body.dark-mode [style*="color: #1C2B3A"]{color:#F8F7F4 !important;}
-  body.dark-mode .sched-item{border-bottom-color:#2D3F50;}
-  body.dark-mode .notif-panel{background:#1A2634;border-color:#2D3F50;}
-  body.dark-mode .notif-item{border-bottom-color:#2D3F50;}
-  body.dark-mode .notif-unread{background:#243447;}
-  /* Cards — catch all remaining light card backgrounds */
+  /* Hamburger */
+  body.dark-mode #hamburger,body.dark-mode .hamburger,body.dark-mode [id*="hamburger"]{color:#F8F7F4 !important;}
+  /* Stat cards */
+  body.dark-mode .stat-card{background:#1A2634 !important;border-color:#2D3F50 !important;}
+  body.dark-mode .stat-num{color:#F8F7F4 !important;}
+  body.dark-mode .stat-label{color:#9CA3AF !important;}
+  /* Cards — generic + catch-all */
   body.dark-mode .card{background:#1A2634 !important;border-color:#2D3F50 !important;}
   body.dark-mode .card *{color:#F8F7F4 !important;}
   body.dark-mode .card-header,body.dark-mode .card-title{color:#F8F7F4 !important;}
+  /* Sacramental / record / named panel cards */
+  body.dark-mode .couple-card,body.dark-mode .record-card,body.dark-mode .marriage-card,
+  body.dark-mode .annulment-card,body.dark-mode .baptism-card,body.dark-mode .ocia-card,
+  body.dark-mode .confirmation-card,body.dark-mode .sacramental-card,
+  body.dark-mode [class*="-card"]{background:#1A2634 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+  body.dark-mode [class*="-card"] *{color:#F8F7F4 !important;}
+  /* Expanded card / detail areas */
+  body.dark-mode .card-expanded,body.dark-mode .card-detail,
+  body.dark-mode [class*="card-body"],body.dark-mode [class*="card-content"],body.dark-mode [class*="card-expand"]{background:#1A2634 !important;color:#F8F7F4 !important;}
+  body.dark-mode .card-expanded *,body.dark-mode .card-detail *{color:#F8F7F4 !important;}
+  /* Modal */
+  body.dark-mode .modal{background:#1A2634;border-color:#2D3F50;}
+  body.dark-mode .modal-header{border-bottom-color:#2D3F50;}
+  /* Inputs */
+  body.dark-mode input,body.dark-mode select{background:#1A2634 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+  body.dark-mode textarea,body.dark-mode .notes-field{background:#243447 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+  /* Filter buttons */
+  body.dark-mode .filter-btn,body.dark-mode .filter-button,
+  body.dark-mode [class*="filter-btn"],body.dark-mode [class*="status-filter"]{background:#243447 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+  body.dark-mode .filter-btn.active,body.dark-mode [class*="filter-btn"].active{background:#1C2B3A !important;border-color:#C9A84C !important;color:#C9A84C !important;}
+  /* Timeline */
+  body.dark-mode .timeline-entry,body.dark-mode [class*="timeline"]{background:#1A2634 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+  body.dark-mode [class*="timeline"] *{color:#F8F7F4 !important;}
+  /* Chips / badges / pills */
+  body.dark-mode .chip,body.dark-mode .badge,body.dark-mode [class*="chip"],body.dark-mode [class*="badge"],
+  body.dark-mode [class*="status-chip"],body.dark-mode [class*="tag"],
+  body.dark-mode .officiant-chip,body.dark-mode .location-chip,
+  body.dark-mode [class*="pill"]{background:#243447 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+  /* Status chip color overrides */
+  body.dark-mode [class*="in-progress"],body.dark-mode [class*="in_progress"]{background:#1E3A5F !important;color:#93C5FD !important;border-color:#1565C0 !important;}
+  body.dark-mode [class*="blocked"]{background:#3B1219 !important;color:#FCA5A5 !important;border-color:#8B1A2F !important;}
+  body.dark-mode [class*="task"]:not(button):not(a){background:#3B2F00 !important;color:#FCD34D !important;border-color:#C9A84C !important;}
+  body.dark-mode [class*="not-started"],body.dark-mode [class*="not_started"]{background:#2D1B4E !important;color:#C4B5FD !important;border-color:#6A1B9A !important;}
+  body.dark-mode [class*="complete"]{background:#14381F !important;color:#86EFAC !important;border-color:#2E7D32 !important;}
+  body.dark-mode [class*="inactive"],body.dark-mode [class*="external"]{background:#243447 !important;color:#9CA3AF !important;border-color:#4B5563 !important;}
   /* Announcements */
   body.dark-mode .annc-item,body.dark-mode .annc-item span,body.dark-mode .annc-item div{color:#F8F7F4 !important;}
   /* Activity feed */
   body.dark-mode .activity-entry,body.dark-mode .activity-entry span,body.dark-mode .activity-entry div,
   body.dark-mode [class*="activity"] span,body.dark-mode [class*="activity"] div{color:#F8F7F4 !important;}
+  /* Schedule */
+  body.dark-mode .sched-item{border-bottom-color:#2D3F50;}
+  /* Notification panel */
+  body.dark-mode .notif-panel{background:#1A2634;border-color:#2D3F50;}
+  body.dark-mode .notif-item{border-bottom-color:#2D3F50;}
+  body.dark-mode .notif-unread{background:#243447;}
+  body.dark-mode .notification-dropdown,body.dark-mode [id*="notif-dropdown"],body.dark-mode [class*="notif-drop"]{background:#1A2634 !important;border-color:#2D3F50 !important;}
+  body.dark-mode .notification-dropdown *{color:#F8F7F4 !important;}
   /* Message / chat dropdown */
   body.dark-mode .message-dropdown,body.dark-mode .chat-dropdown,
   body.dark-mode [id*="message-dropdown"],body.dark-mode [class*="message-drop"]{background:#1A2634 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
   body.dark-mode .message-dropdown *,body.dark-mode .chat-dropdown *{color:#F8F7F4 !important;}
-  /* Notification dropdown */
-  body.dark-mode .notification-dropdown,body.dark-mode [id*="notif-dropdown"],body.dark-mode [class*="notif-drop"]{background:#1A2634 !important;border-color:#2D3F50 !important;}
-  body.dark-mode .notification-dropdown *{color:#F8F7F4 !important;}
-  /* Sacramental / record cards */
-  body.dark-mode .sacramental-card,body.dark-mode .record-card,
-  body.dark-mode [class*="sacrament"] .card,body.dark-mode [class*="record"]{background:#1A2634 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
-  body.dark-mode .sacramental-card *,body.dark-mode .record-card *{color:#F8F7F4 !important;}
-  /* Incoming message bubbles */
+  /* Message bubbles */
   body.dark-mode .message-bubble-incoming,body.dark-mode .msg-bubble.incoming,
   body.dark-mode [class*="bubble"]:not([class*="outgoing"]):not([class*="sent"]){background:#243447 !important;color:#F8F7F4 !important;}
-  /* Outgoing message bubbles */
   body.dark-mode .message-bubble-outgoing,body.dark-mode .msg-bubble.outgoing,
   body.dark-mode [class*="bubble"][class*="outgoing"],body.dark-mode [class*="bubble"][class*="sent"]{background:#1C2B3A !important;color:#F8F7F4 !important;}
-  /* Message input area */
   body.dark-mode .message-input-area,body.dark-mode [class*="msg-input"],body.dark-mode [class*="message-input"]{background:#1A2634 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
-  /* Message timestamps */
   body.dark-mode .message-timestamp,body.dark-mode [class*="msg-time"],body.dark-mode [class*="message-time"]{color:#9CA3AF !important;}
-  /* Hamburger menu icon */
-  body.dark-mode #hamburger,body.dark-mode .hamburger,body.dark-mode [id*="hamburger"]{color:#F8F7F4 !important;}
+  /* Mobile Settings card */
+  body.dark-mode #up-mobile-settings,body.dark-mode .mobile-settings-card,
+  body.dark-mode [class*="mobile-settings"],body.dark-mode #mobile-settings{background:#1A2634 !important;border-color:#2D3F50 !important;}
+  body.dark-mode #up-mobile-settings *,body.dark-mode .mobile-settings-card *,
+  body.dark-mode [class*="mobile-settings"] *,body.dark-mode #mobile-settings *{color:#F8F7F4 !important;}
 }
 
 /* AUTH SCREEN */
