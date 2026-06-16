@@ -68,7 +68,6 @@ function _renderCalendarEvents() {
         <div class="sched-desc">${ev.title}</div>
         <div style="font-size:11.5px;color:#9CA3AF;margin-top:1px;">
           ${_fmtEventDate(ev.start)}${ev.allDay ? '' : ' · ' + _fmtEventTime(ev.start, false)}
-          <span style="margin-left:4px;">${ev._calName}</span>
         </div>
       </div>
     </div>`;
@@ -146,7 +145,7 @@ export async function loadCalendar() {
       // ICS — parser expands recurrences and filters to today in one pass
       try {
         const raw = await _fetchICS(cal.url);
-        const events = parseICS(raw, { targetDate: now, parishTz });
+        const events = parseICS(raw, { targetDate: now, timezone: parishTz });
         console.log('[dashboard] ICS events for today:', events.length, events.map(e => e.title));
         for (const ev of events) {
           allEvents.push({ ...ev, _calName: cal.name, _calColor: cal.color, _priority: 3 });
@@ -295,26 +294,30 @@ export function renderDashProjects() {
       const overdue = item.dueDate && item.dueDate < today;
       return `
         <div onclick="window.showProjectDashboard('${item.id}')" style="
-          display:flex;align-items:center;gap:8px;padding:.5rem .5rem;
-          border-bottom:.5px solid #F0EDE8;cursor:pointer;
+          display:flex;flex-direction:column;padding:.5rem .5rem;
+          border-bottom:.5px solid #F0EDE8;cursor:pointer;gap:2px;
         " onmouseover="this.style.background='#FAFAF8'" onmouseout="this.style.background=''">
-          <span style="font-size:9.5px;font-weight:700;background:${st.bg};color:${st.color};border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">${st.label}</span>
-          <i class="fa-solid ${item.icon}" style="font-size:12px;color:#8B1A2F;flex-shrink:0;"></i>
-          <span style="font-size:13px;font-weight:500;color:#1C2B3A;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
-          ${item.dueDate ? `<span style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};flex-shrink:0;">${fmtDate(item.dueDate)}</span>` : ''}
+          <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+            <i class="fa-solid ${item.icon}" style="font-size:12px;color:#8B1A2F;flex-shrink:0;"></i>
+            <span style="font-size:13px;font-weight:500;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
+            <span style="font-size:9.5px;font-weight:700;background:${st.bg};color:${st.color};border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">${st.label}</span>
+          </div>
+          ${item.dueDate ? `<div style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};padding-left:20px;">${fmtDate(item.dueDate)}</div>` : ''}
         </div>`;
     } else {
       const overdue = item.dueDate && item.dueDate < today;
       return `
         <div style="
-          display:flex;align-items:center;gap:8px;padding:.5rem .5rem;
-          border-bottom:.5px solid #F0EDE8;
+          display:flex;flex-direction:column;padding:.5rem .5rem;
+          border-bottom:.5px solid #F0EDE8;gap:2px;
         ">
-          <span style="font-size:9.5px;font-weight:700;background:#FDF3D0;color:#7A5C00;border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">Task</span>
-          <input type="checkbox" class="dash-task-cb" data-task-id="${item.id}"
-            style="flex-shrink:0;width:14px;height:14px;accent-color:#1C2B3A;cursor:pointer;" />
-          <span style="font-size:13px;color:#1C2B3A;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
-          ${item.dueDate ? `<span style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};flex-shrink:0;">${fmtDate(item.dueDate)}</span>` : ''}
+          <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+            <input type="checkbox" class="dash-task-cb" data-task-id="${item.id}"
+              style="flex-shrink:0;width:14px;height:14px;accent-color:#1C2B3A;cursor:pointer;" />
+            <span style="font-size:13px;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
+            <span style="font-size:9.5px;font-weight:700;background:#FDF3D0;color:#7A5C00;border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">Task</span>
+          </div>
+          ${item.dueDate ? `<div style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};padding-left:22px;">${fmtDate(item.dueDate)}</div>` : ''}
         </div>`;
     }
   }).join('');

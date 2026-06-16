@@ -4,39 +4,29 @@ function unfold(raw) {
   return raw.replace(/\r\n[ \t]/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
-// Returns the UTC offset of tzid at the given UTC instant, in milliseconds.
-// Negative for zones west of UTC (e.g. CDT = UTC-5 → -18_000_000).
-function _tzOffsetMs(utcMs, tzid) {
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: tzid,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
-  });
-  const p = Object.fromEntries(fmt.formatToParts(new Date(utcMs)).map(x => [x.type, x.value]));
-  const localMs = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second);
-  return localMs - utcMs;  // negative west of UTC
+// Returns the UTC offset of tzid at the given instant, in minutes.
+// Uses the locale-string cancellation trick: both strings are parsed by new Date()
+// in browser-local time, so the browser offset cancels and only the TZID offset remains.
+// Works correctly regardless of browser timezone setting.
+function getOffsetMinutes(date, tzid) {
+  const utc   = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
+  const local  = new Date(date.toLocaleString('en-US', { timeZone: tzid }));
+  return (utc - local) / 60000;
 }
 
-// Convert a wall-clock datetime in a named IANA timezone to a UTC Date.
-// Two-iteration approach: the first iteration gives an approximation; the second
-// resolves the correct UTC offset at the actual (post-correction) instant, which
-// handles DST transitions correctly in all cases.
-function tzidToDate(yr, mo, dy, hr, mn, sc, tzid) {
+// Convert a wall-clock datetime string ("YYYYMMDDTHHmmss") in a named IANA timezone to UTC.
+// Treats the datetime as UTC first, then applies the DST-aware offset for tzid at that instant.
+function parseTzidDate(dateStr, tzid) {
   try {
-    // Treat the wall-clock time as if it were UTC to get a starting probe.
-    const wallAsUTC = Date.UTC(+yr, +mo - 1, +dy, +hr, +mn, +sc);
-
-    // First approximation: apply the offset measured at the probe instant.
-    const offset1  = _tzOffsetMs(wallAsUTC, tzid);
-    const approx   = wallAsUTC - offset1;  // UTC = wallClock - offset (offset is negative west of UTC)
-
-    // Second pass: re-measure the offset at the corrected instant (resolves DST boundaries).
-    const offset2  = _tzOffsetMs(approx, tzid);
-    return new Date(wallAsUTC - offset2);
+    const y  = dateStr.substr(0, 4), mo = dateStr.substr(4, 2), d  = dateStr.substr(6, 2);
+    const h  = dateStr.substr(9, 2)  || '00';
+    const mi = dateStr.substr(11, 2) || '00';
+    const s  = dateStr.substr(13, 2) || '00';
+    const naiveDate    = new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}Z`); // treat wall-clock as UTC
+    const offsetMins   = getOffsetMinutes(naiveDate, tzid);             // DST-aware offset for tzid
+    return new Date(naiveDate.getTime() + offsetMins * 60000);          // shift to true UTC
   } catch {
-    // Unknown TZID — fall back to treating the time as browser local time.
-    return new Date(+yr, +mo - 1, +dy, +hr, +mn, +sc);
+    return null;
   }
 }
 
@@ -60,7 +50,7 @@ function parseDateTime(value, param) {
   if (utcFlag === 'Z') {
     date = new Date(Date.UTC(+yr, +mo - 1, +dy, +hr, +mn, +sc));
   } else if (tzid) {
-    date = tzidToDate(yr, mo, dy, hr, mn, sc, tzid);
+    date = parseTzidDate(value, tzid);
   } else {
     date = new Date(+yr, +mo - 1, +dy, +hr, +mn, +sc);
   }
@@ -117,7 +107,8 @@ function unescape(val) {
 // If targetDate is provided, recurring events are expanded to find occurrences
 // on that calendar date (in parishTz). Non-recurring events outside targetDate
 // are also filtered out when targetDate is provided.
-export function parseICS(raw, { targetDate, parishTz } = {}) {
+export function parseICS(raw, { targetDate, timezone } = {}) {
+  const parishTz = timezone || 'America/Chicago';
   const text = unfold(raw);
   const events = [];
   const blocks = text.split('BEGIN:VEVENT');
