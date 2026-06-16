@@ -29,6 +29,7 @@ let _tasks          = [];
 let _activeTab      = 'discussions';
 let _taskPicker     = null;
 let _memberPicker   = null;
+let _currentUserId  = null;
 // Multi-person assignees — normalized to array on load
 let _assigneeIds    = [];
 
@@ -47,11 +48,13 @@ export async function renderProjectDashboard(container, projectId) {
 // ── Data ───────────────────────────────────────────────────────────────────
 
 async function _load() {
-  const [projRes, tasksRes, scope] = await Promise.all([
+  const [{ data: { user } }, projRes, tasksRes, scope] = await Promise.all([
+    sb.auth.getUser(),
     sb.from('projects').select('*').eq('id', _projectId).single(),
     sb.from('tasks').select('*').eq('project_id', _projectId).order('created_at'),
     getUserScope(),
   ]);
+  _currentUserId = user?.id || null;
   if (projRes.error)  console.error('[projectDashboard] project:', projRes.error);
   if (tasksRes.error) console.error('[projectDashboard] tasks:',   tasksRes.error);
   _project = projRes.data || null;
@@ -77,6 +80,14 @@ function _statusBadge(code) {
 function _personnelName(id) {
   if (!id) return null;
   return (store.personnel || []).find(p => p.id === id)?.name || null;
+}
+
+function _canEditProject() {
+  const roles = store.currentUserRoles || {};
+  if (roles.isAdmin || roles.isSuperAdmin) return true;
+  if (_project?.created_by && _project.created_by === _currentUserId) return true;
+  const pid = roles.personnelId;
+  return !!(pid && _assigneeIds.includes(pid));
 }
 
 // ── Render shell ───────────────────────────────────────────────────────────
@@ -186,8 +197,10 @@ function _renderTasks(el) {
 }
 
 function _taskRow(t) {
-  const person = _personnelName(t.assigned_to);
+  const person  = _personnelName(t.assigned_to);
   const overdue = t.due_date && !t.completed && t.due_date < todayCST();
+  const canEdit = _canEditProject();
+  const RECUR_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' };
   return `
     <div class="pd-task-row" data-task-id="${t.id}" style="
       display:flex;align-items:center;gap:10px;
@@ -198,13 +211,21 @@ function _taskRow(t) {
       <div style="flex:1;min-width:0;">
         <div style="font-size:13.5px;color:${t.completed ? '#9CA3AF' : '#1C2B3A'};${t.completed ? 'text-decoration:line-through;' : ''}white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.title}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:2px;">
-          ${person ? `<span style="font-size:11px;color:#8FA8BF;">👤 ${person}</span>` : ''}
+          ${person   ? `<span style="font-size:11px;color:#8FA8BF;">👤 ${person}</span>` : ''}
           ${t.due_date ? `<span style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};">📅 ${fmtDate(t.due_date)}</span>` : ''}
+          ${t.recurring ? `<span style="font-size:11px;color:#9CA3AF;">🔁 ${RECUR_LABELS[t.recurrence_pattern] || 'Recurring'}</span>` : ''}
         </div>
       </div>
-      <button class="pd-task-delete" data-task-id="${t.id}"
-        style="background:none;border:none;cursor:pointer;color:transparent;font-size:13px;padding:2px 4px;flex-shrink:0;line-height:1;transition:color .1s;"
-        title="Delete task">🗑</button>
+      ${canEdit ? `
+      <div class="pd-task-actions" style="display:flex;align-items:center;gap:2px;flex-shrink:0;opacity:0;transition:opacity .12s;">
+        <button class="pd-task-edit" data-task-id="${t.id}" title="Edit task"
+          style="background:none;border:none;cursor:pointer;color:#9CA3AF;font-size:12px;padding:3px 5px;line-height:1;"
+          onmouseover="this.style.color='#1C2B3A'" onmouseout="this.style.color='#9CA3AF'">
+          <i class="fa-solid fa-pencil"></i></button>
+        <button class="pd-task-delete" data-task-id="${t.id}" title="Delete task"
+          style="background:none;border:none;cursor:pointer;color:#9CA3AF;font-size:13px;padding:3px 5px;line-height:1;"
+          onmouseover="this.style.color='#8B1A2F'" onmouseout="this.style.color='#9CA3AF'">✕</button>
+      </div>` : ''}
     </div>`;
 }
 
@@ -226,21 +247,95 @@ function _bindTaskEvents() {
   });
 
   document.querySelectorAll('.pd-task-row').forEach(row => {
-    const del = row.querySelector('.pd-task-delete');
-    row.addEventListener('mouseover', () => { if (del) del.style.color = '#C0392B'; });
-    row.addEventListener('mouseout',  () => { if (del) del.style.color = 'transparent'; });
+    const actions = row.querySelector('.pd-task-actions');
+    if (!actions) return;
+    row.addEventListener('mouseenter', () => { actions.style.opacity = '1'; });
+    row.addEventListener('mouseleave', () => { actions.style.opacity = '0'; });
+  });
+
+  document.querySelectorAll('.pd-task-edit').forEach(btn => {
+    btn.addEventListener('click', () => _openEditTaskModal(btn.dataset.taskId));
   });
 
   document.querySelectorAll('.pd-task-delete').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if (!confirm('Delete this task?')) return;
       const taskId = btn.dataset.taskId;
+      const t = _tasks.find(x => x.id === taskId);
+      if (!confirm(`Delete "${t?.title || 'this task'}"?`)) return;
       const { error } = await sb.from('tasks').delete().eq('id', taskId);
       if (error) { alert('Delete failed: ' + error.message); return; }
-      _tasks = _tasks.filter(t => t.id !== taskId);
+      _tasks = _tasks.filter(x => x.id !== taskId);
       const el = document.getElementById('pd-content');
       if (el) _renderTasks(el);
     });
+  });
+}
+
+function _openEditTaskModal(taskId) {
+  const t = _tasks.find(x => x.id === taskId);
+  if (!t) return;
+
+  let _editPicker = null;
+  const RECUR_OPTS = ['daily', 'weekly', 'monthly', 'yearly'];
+
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-title">Edit task</div>
+    <label>Title</label>
+    <input id="pet-title" value="${t.title || ''}" />
+    <label>Assigned to</label>
+    <div id="pet-cp"></div>
+    <label>Due date</label>
+    <input type="date" id="pet-due" value="${t.due_date || ''}" />
+    <div style="display:flex;align-items:center;gap:8px;margin:.5rem 0;">
+      <input type="checkbox" id="pet-recurring" ${t.recurring ? 'checked' : ''}
+        style="width:15px;height:15px;accent-color:var(--cardinal);" />
+      <label for="pet-recurring" style="margin:0;cursor:pointer;">Recurring</label>
+    </div>
+    <div id="pet-recur-wrap" style="display:${t.recurring ? 'block' : 'none'}">
+      <label>Recurrence</label>
+      <select id="pet-recur">
+        ${RECUR_OPTS.map(v => `<option value="${v}"${t.recurrence_pattern === v ? ' selected' : ''}>${v.charAt(0).toUpperCase() + v.slice(1)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="modal-actions" style="justify-content:space-between;">
+      <span></span>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+        <button id="pet-save" class="btn-primary">Save</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('modal-overlay').classList.add('open');
+
+  _editPicker = createContactPicker({
+    container: document.getElementById('pet-cp'),
+    placeholder: 'Search by name…',
+    onSelect: () => {},
+    initialValue: t.assigned_to || null,
+  });
+
+  document.getElementById('pet-recurring').addEventListener('change', e => {
+    document.getElementById('pet-recur-wrap').style.display = e.target.checked ? 'block' : 'none';
+  });
+
+  document.getElementById('pet-save').addEventListener('click', async () => {
+    const title = document.getElementById('pet-title').value.trim();
+    if (!title) { alert('Title is required.'); return; }
+    const recurring = document.getElementById('pet-recurring').checked;
+    const payload = {
+      title,
+      assigned_to:        _editPicker?.getId() || null,
+      due_date:           document.getElementById('pet-due').value || null,
+      recurring,
+      recurrence_pattern: recurring ? document.getElementById('pet-recur').value : null,
+      updated_at:         new Date().toISOString(),
+    };
+    const { error } = await sb.from('tasks').update(payload).eq('id', taskId);
+    if (error) { alert('Save failed: ' + error.message); return; }
+    Object.assign(t, payload);
+    closeModal();
+    const el = document.getElementById('pd-content');
+    if (el) _renderTasks(el);
   });
 }
 
@@ -265,6 +360,21 @@ function _appendAddTaskArea(el) {
         border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;
         font-family:'Inter',sans-serif;outline:none;margin-bottom:8px;background:#fff;
       " />
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <input type="checkbox" id="pd-task-recurring"
+          style="width:14px;height:14px;accent-color:#8B1A2F;cursor:pointer;flex-shrink:0;" />
+        <label for="pd-task-recurring" style="font-size:12.5px;color:#374151;margin:0;cursor:pointer;">Recurring</label>
+      </div>
+      <select id="pd-task-recur-freq" style="
+        display:none;width:100%;box-sizing:border-box;padding:.4rem .65rem;
+        border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;
+        font-family:'Inter',sans-serif;outline:none;margin-bottom:8px;background:#fff;
+      ">
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+        <option value="yearly">Yearly</option>
+      </select>
       <div style="display:flex;gap:8px;">
         <button id="pd-task-save" style="
           padding:.35rem .85rem;background:#1C2B3A;color:#fff;border:none;
@@ -289,6 +399,9 @@ function _appendAddTaskArea(el) {
       onSelect: () => {},
     });
     document.getElementById('pd-task-title').focus();
+    document.getElementById('pd-task-recurring').addEventListener('change', e => {
+      document.getElementById('pd-task-recur-freq').style.display = e.target.checked ? '' : 'none';
+    });
   });
 
   document.getElementById('pd-task-cancel').addEventListener('click', () => {
@@ -300,12 +413,18 @@ function _appendAddTaskArea(el) {
   document.getElementById('pd-task-save').addEventListener('click', async () => {
     const title = document.getElementById('pd-task-title').value.trim();
     if (!title) { document.getElementById('pd-task-title').focus(); return; }
+    const recurring = document.getElementById('pd-task-recurring').checked;
+    const { data: { user } } = await sb.auth.getUser();
     const { data, error } = await sb.from('tasks').insert({
       title,
-      project_id:  _projectId,
-      assigned_to: _taskPicker?.getId() || null,
-      due_date:    document.getElementById('pd-task-due').value || null,
-      completed:   false,
+      project_id:         _projectId,
+      assigned_to:        _taskPicker?.getId() || null,
+      due_date:           document.getElementById('pd-task-due').value || null,
+      recurring,
+      recurrence_pattern: recurring ? document.getElementById('pd-task-recur-freq').value : null,
+      completed:          false,
+      created_by:         user?.id || null,
+      visibility:         'team',
     }).select().single();
     if (error) { alert('Failed to add task: ' + error.message); return; }
     _tasks.push(data);

@@ -6,7 +6,8 @@ import { isSuperAdmin } from '../roles.js';
 import { parseICS } from '../utils/icsParser.js';
 import { createAvatar } from '../ui/avatar.js';
 
-let currentUserId = null;
+let currentUserId     = null;
+let _dashPersonnelId  = null;
 
 function dotClass(colorId) {
   return (colorId && CAL_COLOR_MAP[colorId]) ? CAL_COLOR_MAP[colorId] : 'personal';
@@ -119,47 +120,144 @@ export async function loadCalendar() {
 
 export function updateProjectStats() {
   const counts = { in_progress: 0, blocked: 0, complete: 0 };
-  store.allProjects.forEach(p => {
+  (store.allProjects || []).forEach(p => {
     if (counts[p.status_code] !== undefined) counts[p.status_code]++;
   });
+
+  // My Tasks = personal tasks I created + tasks directly assigned to me (not complete)
+  let taskCount = 0;
+  (store.allTasks || []).filter(t => !t.completed).forEach(t => {
+    const isPersonal = t.visibility === 'personal' && t.created_by === currentUserId;
+    const isAssigned = _dashPersonnelId && t.assigned_to === _dashPersonnelId;
+    if (isPersonal || isAssigned) taskCount++;
+  });
+
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
   set('stat-inprogress',  counts.in_progress);
   set('stat-blocked',     counts.blocked);
-  set('stat-complete',    counts.complete);
+  set('stat-tasks',       taskCount);
   set('pstat-inprogress', counts.in_progress);
   set('pstat-blocked',    counts.blocked);
   set('pstat-complete',   counts.complete);
 }
 
-// ── Active Projects ────────────────────────────────────────────────────────
+// ── Projects & Tasks ───────────────────────────────────────────────────────
+
+const _PROJ_STATUS = {
+  in_progress: { label: 'In Progress', color: '#7A5C00', bg: '#FDF3D0', border: '#1565C0' },
+  blocked:     { label: 'Blocked',     color: '#7A1020', bg: '#FDEAED', border: '#8B1A2F' },
+  not_started: { label: 'Not Started', color: '#4B5563', bg: '#F3F4F6', border: '#999999' },
+};
+const _TASK_BORDER = '#C9A84C';
 
 export function renderDashProjects() {
   const c = document.getElementById('dash-projects');
   if (!c) return;
-  const blocked    = store.allProjects.filter(p => p.status_code === 'blocked').slice(0, 3);
-  const inProgress = store.allProjects.filter(p => p.status_code === 'in_progress').slice(0, 5);
-  let html = '';
-  if (blocked.length) {
-    html += `<div class="sec-label" style="color:#922B21;margin-bottom:.4rem;">Blocked</div>`;
-    blocked.forEach(p => {
-      html += `<div class="proj-row">
-        <span class="sched-dot" style="background:#922B21;flex-shrink:0;margin-top:4px;"></span>
-        <span class="proj-title">${p.title}</span>
-        ${p.due_date ? `<span class="badge badge-urgent">${fmtDate(p.due_date)}</span>` : ''}
-      </div>`;
+
+  const today = todayCST();
+
+  // Projects: not complete, user has access (already scoped in store.allProjects)
+  const projItems = (store.allProjects || [])
+    .filter(p => p.status_code !== 'complete')
+    .map(p => ({
+      type:          'project',
+      id:            p.id,
+      title:         p.title,
+      dueDate:       p.due_date || null,
+      statusCode:    p.status_code || 'not_started',
+      assigneeCount: Array.isArray(p.assigned_to) ? p.assigned_to.length : (p.assigned_to ? 1 : 0),
+    }));
+
+  // Tasks: personal (created by me) OR directly assigned to me, not complete
+  const personnel = store.personnel || [];
+  const taskItems = (store.allTasks || [])
+    .filter(t => !t.completed)
+    .filter(t => {
+      const isPersonal = t.visibility === 'personal' && t.created_by === currentUserId;
+      const isAssigned = _dashPersonnelId && t.assigned_to === _dashPersonnelId;
+      return isPersonal || isAssigned;
+    })
+    .map(t => {
+      const assignee = t.assigned_to ? personnel.find(p => p.id === t.assigned_to) : null;
+      return {
+        type:         'task',
+        id:           t.id,
+        title:        t.title,
+        dueDate:      t.due_date || null,
+        isPersonal:   t.visibility === 'personal',
+        assigneeName: assignee?.name || null,
+      };
     });
+
+  // Combined: sort by due_date asc, nulls last
+  const combined = [...projItems, ...taskItems].sort((a, b) => {
+    if (!a.dueDate && !b.dueDate) return 0;
+    if (!a.dueDate) return 1;
+    if (!b.dueDate) return -1;
+    return a.dueDate.localeCompare(b.dueDate);
+  }).slice(0, 10);
+
+  if (!combined.length) {
+    c.innerHTML = `<div style="font-size:13px;color:#6B7280;font-style:italic;">No active projects or tasks.</div>`;
+    return;
   }
-  if (inProgress.length) {
-    html += `<div class="sec-label" style="${blocked.length ? 'margin-top:10px;' : ''}margin-bottom:.4rem;">In progress</div>`;
-    inProgress.forEach(p => {
-      html += `<div class="proj-row">
-        <span class="sched-dot dot-personal" style="flex-shrink:0;margin-top:4px;"></span>
-        <span class="proj-title">${p.title}</span>
-        ${p.due_date ? `<span class="badge badge-active">${fmtDate(p.due_date)}</span>` : ''}
-      </div>`;
+
+  c.innerHTML = combined.map(item => {
+    if (item.type === 'project') {
+      const st = _PROJ_STATUS[item.statusCode] || _PROJ_STATUS.not_started;
+      const overdue = item.dueDate && item.dueDate < today;
+      return `
+        <div onclick="window.showProjectDashboard('${item.id}')" style="
+          display:flex;align-items:flex-start;gap:8px;padding:.5rem .5rem .5rem .6rem;
+          border-bottom:.5px solid #F0EDE8;border-left:3px solid ${st.border};
+          cursor:pointer;margin-left:0;
+        " onmouseover="this.style.background='#FAFAF8'" onmouseout="this.style.background=''">
+          <span style="font-size:9.5px;font-weight:700;background:${st.bg};color:${st.color};border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;margin-top:3px;">${st.label}</span>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:500;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:1px;">
+              ${item.dueDate ? `<span style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};">📅 ${fmtDate(item.dueDate)}</span>` : ''}
+              ${item.assigneeCount > 0 ? `<span style="font-size:11px;color:#9CA3AF;">👤 ${item.assigneeCount}</span>` : ''}
+            </div>
+          </div>
+        </div>`;
+    } else {
+      const overdue = item.dueDate && item.dueDate < today;
+      const sublabel = item.isPersonal ? 'Personal' : (item.assigneeName || '');
+      return `
+        <div style="
+          display:flex;align-items:flex-start;gap:8px;padding:.5rem .5rem .5rem .6rem;
+          border-bottom:.5px solid #F0EDE8;border-left:3px solid ${_TASK_BORDER};
+        ">
+          <input type="checkbox" class="dash-task-cb" data-task-id="${item.id}"
+            style="flex-shrink:0;margin-top:2px;width:14px;height:14px;accent-color:#1C2B3A;cursor:pointer;" />
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:1px;">
+              ${item.dueDate ? `<span style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};">📅 ${fmtDate(item.dueDate)}</span>` : ''}
+              ${sublabel ? `<span style="font-size:11px;color:#9CA3AF;">${sublabel}</span>` : ''}
+            </div>
+          </div>
+        </div>`;
+    }
+  }).join('');
+
+  // Wire task checkboxes
+  c.querySelectorAll('.dash-task-cb').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      const id = cb.dataset.taskId;
+      const checked = cb.checked;
+      const { error } = await sb.from('tasks').update({
+        completed:    checked,
+        completed_at: checked ? new Date().toISOString() : null,
+      }).eq('id', id);
+      if (error) { cb.checked = !checked; console.error('[dash] task toggle:', error); return; }
+      const t = (store.allTasks || []).find(x => x.id === id);
+      if (t) { t.completed = checked; t.completed_at = checked ? new Date().toISOString() : null; }
+      renderDashProjects();
+      updateProjectStats();
     });
-  }
-  c.innerHTML = html || '<div style="font-size:13px;color:#6B7280;font-style:italic;">No active projects.</div>';
+  });
 }
 
 // ── Announcements ──────────────────────────────────────────────────────────
@@ -359,12 +457,32 @@ function timeAgo(ts) {
 }
 
 const FEED_ICONS = {
-  couple:   '💍',
-  case:     '⚖️',
-  ocia:     '✝',
-  project:  '📋',
-  task:     '☑',
+  project:      'fa-diagram-project',
+  task:         'fa-square-check',
+  team:         'fa-users',
+  baptism:      'fa-water',
+  firstcomm:    'fa-wine-glass',
+  confirmation: 'fa-fire',
+  ocia:         'fa-user-plus',
+  couple:       'fa-heart',
+  case:         'fa-scale-balanced',
+  announcement: 'fa-bullhorn',
+  personnel:    'fa-address-book',
+  messaging:    'fa-comments',
+  general:      'fa-gear',
 };
+
+function _contextIcon(contextType, contextId) {
+  if (contextType === 'team') {
+    const team = (store.teams || []).find(t => t.id === contextId);
+    return team?.icon || FEED_ICONS.team;
+  }
+  return FEED_ICONS[contextType] || FEED_ICONS.general;
+}
+
+function _faIcon(iconClass) {
+  return `<i class="fa-solid ${iconClass}" style="font-size:14px;color:#8B1A2F;flex-shrink:0;width:16px;text-align:center;"></i>`;
+}
 
 // Programs whose coordinator_ids include personnelId
 async function _coordinatorPrograms(personnelId) {
@@ -395,9 +513,8 @@ async function loadActivityFeed() {
   const queries = [
     sb.from('projects').select('id,title,updated_at').order('updated_at', { ascending: false }).limit(limit),
     sb.from('tasks').select('id,title,updated_at,created_by,assigned_to,team_id').order('updated_at', { ascending: false }).limit(limit),
-    // activity_log with user attribution — gracefully ignored if table doesn't exist
     sb.from('activity_log')
-      .select('id,action,entity_name,created_at,triggered_by,user_profiles(personnel_id,avatar_url,personnel(name))')
+      .select('id,action,entity_name,created_at,triggered_by,context_type,context_id')
       .order('created_at', { ascending: false })
       .limit(limit),
   ];
@@ -407,30 +524,49 @@ async function loadActivityFeed() {
 
   const [projRes, tasksRes, actRes, ...sacRes] = await Promise.all(queries);
 
+  // Build profile map for activity_log entries
+  const actData = actRes.data || [];
+  const triggerIds = [...new Set(actData.map(r => r.triggered_by).filter(Boolean))];
+  const actProfileMap = {};
+  if (triggerIds.length) {
+    const { data: profs } = await sb.from('user_profiles')
+      .select('user_id, avatar_url, personnel_id, personnel(name)')
+      .in('user_id', triggerIds);
+    (profs || []).forEach(p => {
+      actProfileMap[p.user_id] = {
+        name:       p.personnel?.name || null,
+        personnelId: p.personnel_id   || null,
+        avatarUrl:  p.avatar_url      || null,
+      };
+    });
+  }
+
   const items = [];
 
-  // activity_log entries — shown first, attributed to triggering user
-  (actRes.data || []).forEach(r => {
-    const profile = r.user_profiles;
+  // activity_log entries — attributed to triggering user
+  actData.forEach(r => {
+    const prof = r.triggered_by ? (actProfileMap[r.triggered_by] || {}) : null;
     items.push({
-      icon: '🔔',
-      label: r.action || 'Action',
-      name: r.entity_name || '',
-      ts: r.created_at,
-      actorName: profile?.personnel?.name || 'System',
-      actorUserId: r.triggered_by || null,
-      actorAvatarUrl: profile?.avatar_url || null,
+      icon:             _contextIcon(r.context_type || 'general', r.context_id),
+      label:            r.action || 'Action',
+      name:             r.entity_name || '',
+      ts:               r.created_at,
+      actorName:        prof ? (prof.name || 'Unknown User') : null,
+      actorUserId:      r.triggered_by || null,
+      actorPersonnelId: prof?.personnelId || null,
+      isSystem:         !r.triggered_by,
+      isFa:             true,
     });
   });
 
   // Projects
   (projRes.data || []).filter(r => superAdmin || accessibleProjectIds.has(r.id)).forEach(r => {
-    items.push({ icon: FEED_ICONS.project, label: 'Project updated', name: r.title || 'Unknown', ts: r.updated_at });
+    items.push({ icon: FEED_ICONS.project, label: 'Project updated', name: r.title || 'Unknown', ts: r.updated_at, isFa: true });
   });
 
   // Tasks
   (tasksRes.data || []).filter(r => superAdmin || isVisible(r, scope)).forEach(r => {
-    items.push({ icon: FEED_ICONS.task, label: 'Task updated', name: r.title || 'Unknown', ts: r.updated_at });
+    items.push({ icon: FEED_ICONS.task, label: 'Task updated', name: r.title || 'Unknown', ts: r.updated_at, isFa: true });
   });
 
   // Sacramental
@@ -438,18 +574,18 @@ async function loadActivityFeed() {
   if (superAdmin || coordPrograms.has('marriage')) {
     (sacRes[sacIdx++]?.data || []).forEach(r => {
       const name = [r.groom_name, r.bride_name].filter(Boolean).join(' & ') || 'Unknown couple';
-      items.push({ icon: FEED_ICONS.couple, label: 'Marriage prep updated', name, ts: r.updated_at });
+      items.push({ icon: FEED_ICONS.couple, label: 'Marriage prep updated', name, ts: r.updated_at, isFa: true });
     });
   }
   if (superAdmin || coordPrograms.has('annulments')) {
     (sacRes[sacIdx++]?.data || []).forEach(r => {
       const name = [r.petitioner, r.respondent].filter(Boolean).join(' v. ') || 'Unknown case';
-      items.push({ icon: FEED_ICONS.case, label: 'Annulment case updated', name, ts: r.updated_at });
+      items.push({ icon: FEED_ICONS.case, label: 'Annulment case updated', name, ts: r.updated_at, isFa: true });
     });
   }
   if (superAdmin || coordPrograms.has('ocia')) {
     (sacRes[sacIdx++]?.data || []).forEach(r => {
-      items.push({ icon: FEED_ICONS.ocia, label: 'OCIA record updated', name: r.name || 'Unknown', ts: r.updated_at });
+      items.push({ icon: FEED_ICONS.ocia, label: 'OCIA record updated', name: r.name || 'Unknown', ts: r.updated_at, isFa: true });
     });
   }
 
@@ -464,26 +600,34 @@ async function loadActivityFeed() {
   }
 
   c.innerHTML = top10.map((item, i) => {
-    const actorSlot = item.actorName
-      ? `<span class="feed-avatar-slot" data-idx="${i}" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#E2DDD6;flex-shrink:0;vertical-align:middle;margin-right:4px;"></span><span style="font-weight:500;color:var(--navy);font-size:12px;">${item.actorName}</span> `
-      : '';
+    const fullDate = item.ts ? new Date(item.ts).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+
+    let actorBlock;
+    if (item.isSystem) {
+      actorBlock = `<span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#F0EDE8;flex-shrink:0;font-size:12px;color:#9CA3AF;" title="System">⚙</span><span style="font-weight:600;color:#6B7280;font-size:12.5px;"> System</span> `;
+    } else if (item.actorName) {
+      actorBlock = `<span class="feed-avatar-slot" data-idx="${i}" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#E2DDD6;flex-shrink:0;overflow:hidden;"></span><span style="font-weight:600;color:var(--navy);font-size:12.5px;"> ${item.actorName}</span> `;
+    } else {
+      actorBlock = '';
+    }
+
     return `
-    <div style="display:flex;align-items:center;gap:10px;padding:.45rem 0;border-bottom:.5px solid var(--stone);">
-      <span style="font-size:15px;flex-shrink:0;">${item.icon}</span>
+    <div style="display:flex;align-items:center;gap:10px;padding:.5rem 0;border-bottom:.5px solid var(--stone);">
+      ${_faIcon(item.icon)}
       <div style="flex:1;min-width:0;">
-        <div style="font-size:12.5px;color:#6B7280;display:flex;align-items:center;flex-wrap:wrap;gap:2px;">
-          ${actorSlot}<span>${item.label}${item.name ? ` · <span style="font-weight:500;color:var(--navy);">${item.name}</span>` : ''}</span>
+        <div style="font-size:12.5px;color:#6B7280;display:flex;align-items:center;flex-wrap:wrap;gap:3px;line-height:1.4;">
+          ${actorBlock}<span style="color:#6B7280;">${item.label}${item.name ? ` · <span style="font-weight:500;color:var(--navy);">${item.name}</span>` : ''}</span>
         </div>
       </div>
-      <span style="font-size:11.5px;color:#9CA3AF;flex-shrink:0;white-space:nowrap;">${timeAgo(item.ts)}</span>
+      <span style="font-size:11px;color:#9CA3AF;flex-shrink:0;white-space:nowrap;cursor:default;" title="${fullDate}">${timeAgo(item.ts)}</span>
     </div>`;
   }).join('');
 
   // Hydrate avatar slots for attributed entries
   top10.forEach((item, i) => {
-    if (!item.actorName) return;
+    if (!item.actorName || item.isSystem) return;
     const slot = c.querySelector(`.feed-avatar-slot[data-idx="${i}"]`);
-    if (slot) createAvatar({ container: slot, userId: item.actorUserId || '', name: item.actorName, size: 20 });
+    if (slot) createAvatar({ container: slot, userId: item.actorUserId || '', name: item.actorName, size: 24 });
   });
 }
 
@@ -496,6 +640,7 @@ export async function loadInit() {
     currentUserId = authData?.user?.id || null;
 
     const scope = await getUserScope();
+    _dashPersonnelId = scope.personnelId || null;
 
     // Skip project/task fetches if already loaded (e.g. called a second time)
     const projectsAlreadyLoaded = store.allProjects?.length > 0 && store._projectScopeReady !== undefined;

@@ -190,8 +190,8 @@ function taskForm(data) {
   <label>Due date</label><input type="date" id="tf-due" value="${data?.due_date || ''}" />
   <label>Visibility</label>
   <select id="tf-vis">
-    <option value="team"${(data?.visibility || 'team') === 'team' ? ' selected' : ''}>Team</option>
-    <option value="personal"${data?.visibility === 'personal' ? ' selected' : ''}>Personal</option>
+    <option value="personal"${(data?.visibility || 'personal') === 'personal' ? ' selected' : ''}>Personal</option>
+    <option value="team"${data?.visibility === 'team' ? ' selected' : ''}>Team</option>
   </select>
   <div style="display:flex;align-items:center;gap:8px;margin:.5rem 0;">
     <input type="checkbox" id="tf-recurring" ${data?.recurring ? 'checked' : ''} onchange="toggleRecurUI()"
@@ -256,22 +256,30 @@ async function saveTask(id) {
     assigned_to:        _taskAssignedPicker?.getId() || null,
     team_id:            document.getElementById('tf-team').value      || null,
     due_date:           document.getElementById('tf-due').value       || null,
-    visibility:         document.getElementById('tf-vis').value,
+    visibility:         document.getElementById('tf-vis').value       || 'personal',
     recurring,
     recurrence_pattern: recurring ? document.getElementById('tf-recur').value : null,
     notes:              document.getElementById('tf-notes').value.trim() || null,
     updated_at:         new Date().toISOString(),
   };
-  let err;
+
   if (id) {
-    const r = await sb.from('tasks').update(payload).eq('id', id); err = r.error;
+    const { error } = await sb.from('tasks').update(payload).eq('id', id);
+    if (error) { alert('Save failed: ' + error.message); return; }
+    const t = (store.allTasks || []).find(x => x.id === id);
+    if (t) Object.assign(t, payload);
+    closeModal();
+    renderTasks();
   } else {
-    const r = await sb.from('tasks').insert(payload); err = r.error;
+    const { data: { user } } = await sb.auth.getUser();
+    payload.created_by = user?.id || null;
+    const { data: newTask, error } = await sb.from('tasks').insert(payload).select().single();
+    if (error) { alert('Save failed: ' + error.message); return; }
+    if (!store.allTasks) store.allTasks = [];
+    store.allTasks.push(newTask);
+    closeModal();
+    renderTasks();
   }
-  if (err) { alert('Save failed: ' + err.message); return; }
-  closeModal();
-  invalidateTasks();
-  loadTasks();
 }
 
 async function deleteTask(id) {
@@ -279,9 +287,9 @@ async function deleteTask(id) {
   if (!confirm(`Delete "${t?.title}"?`)) return;
   const { error } = await sb.from('tasks').delete().eq('id', id);
   if (error) { alert('Delete failed: ' + error.message); return; }
+  store.allTasks = (store.allTasks || []).filter(x => x.id !== id);
   closeModal();
-  invalidateTasks();
-  loadTasks();
+  renderTasks();
 }
 
 Object.assign(window, {
