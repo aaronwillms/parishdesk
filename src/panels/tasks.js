@@ -5,10 +5,13 @@ import { createContactPicker } from '../ui/contactPicker.js';
 import { getUserScope, isVisible, scopeNotice } from '../ui/userScope.js';
 
 let _taskAssignedPicker = null;
+let _newTaskTeamId = null;
 
 const RECURRENCE_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' };
 
-let activeFilter = 'all';
+let activeFilter  = 'all';
+let _taskSearch   = '';
+let _taskTeamFilter = null; // null = all
 
 // ── Data ───────────────────────────────────────────────────────────────────
 
@@ -61,15 +64,83 @@ function isToday(task) {
 
 // ── Render ─────────────────────────────────────────────────────────────────
 
+function _taskPill(label, active, onClick) {
+  return `<button class="task-filter-btn" data-filter="" style="
+    padding:.26rem .72rem;font-size:12px;font-family:'Inter',sans-serif;font-weight:500;
+    border-radius:20px;border:.5px solid ${active ? '#C9A84C' : '#D1C9BE'};
+    background:${active ? '#C9A84C' : '#fff'};color:${active ? '#fff' : '#1C2B3A'};
+    cursor:pointer;white-space:nowrap;" onclick="${onClick}">${label}</button>`;
+}
+
+function _renderTaskFilterBar() {
+  const bar = document.getElementById('task-filter-bar');
+  if (!bar) return;
+
+  // Compute teams that have tasks in store
+  const allTasks = store.allTasks || [];
+  const teamIds  = [...new Set(allTasks.map(t => t.team_id).filter(Boolean))];
+  const teams    = (store.teams || []).filter(t => teamIds.includes(t.id));
+
+  const statusPills = [
+    { key: 'all', label: 'All' }, { key: 'mine', label: 'Mine' },
+    { key: 'team', label: 'Team' }, { key: 'personal', label: 'Personal' },
+    { key: 'complete', label: 'Complete' },
+  ].map(({ key, label }) => {
+    const active = key === activeFilter;
+    return `<button class="task-filter-btn" data-filter="${key}" style="
+      padding:.26rem .72rem;font-size:12px;font-family:'Inter',sans-serif;font-weight:500;
+      border-radius:20px;border:.5px solid ${active ? '#C9A84C' : '#D1C9BE'};
+      background:${active ? '#C9A84C' : '#fff'};color:${active ? '#fff' : '#1C2B3A'};
+      cursor:pointer;white-space:nowrap;">${label}</button>`;
+  }).join('');
+
+  const teamRow = teams.length ? `
+    <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:.6rem;">
+      ${_taskPill('All Teams', !_taskTeamFilter, "window._taskTeamFilter(null)")}
+      ${teams.map(t => _taskPill(t.name, _taskTeamFilter === t.id, `window._taskTeamFilter('${t.id}')`)).join('')}
+    </div>` : '';
+
+  bar.innerHTML = `
+    <div style="margin-bottom:1rem;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:.6rem;">
+        <button class="btn-primary" onclick="openAddTask()">+ New task</button>
+        <div style="position:relative;flex:1;min-width:160px;max-width:260px;">
+          <i class="fa-solid fa-magnifying-glass" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:#9CA3AF;font-size:11px;pointer-events:none;"></i>
+          <input id="task-search-input" placeholder="Search tasks…" autocomplete="off" value="${_taskSearch.replace(/"/g,'&quot;')}" style="
+            width:100%;box-sizing:border-box;padding:.38rem .75rem .38rem 2rem;
+            border:.5px solid #D1C9BE;border-radius:6px;font-size:13px;
+            font-family:'Inter',sans-serif;outline:none;background:#fff;" />
+          <button id="task-search-clear" style="display:${_taskSearch ? '' : 'none'};position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#9CA3AF;font-size:13px;padding:0;line-height:1;">✕</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:${teams.length ? '.6rem' : '0'};">${statusPills}</div>
+      ${teamRow}
+    </div>`;
+
+  bar.querySelector('#task-search-input')?.addEventListener('input', e => {
+    _taskSearch = e.target.value;
+    bar.querySelector('#task-search-clear').style.display = _taskSearch ? '' : 'none';
+    renderTasks();
+  });
+  bar.querySelector('#task-search-clear')?.addEventListener('click', () => {
+    _taskSearch = '';
+    bar.querySelector('#task-search-input').value = '';
+    bar.querySelector('#task-search-clear').style.display = 'none';
+    renderTasks();
+  });
+  bar.querySelectorAll('.task-filter-btn[data-filter]').forEach(btn => {
+    if (!btn.dataset.filter) return;
+    btn.addEventListener('click', () => { activeFilter = btn.dataset.filter; renderTasks(); });
+  });
+}
+
+window._taskTeamFilter = (teamId) => { _taskTeamFilter = teamId; renderTasks(); };
+
 export function renderTasks() {
+  _renderTaskFilterBar();
+
   const el = document.getElementById('tasks-list');
   if (!el) return;
-
-  // Update filter button styles
-  document.querySelectorAll('.task-filter-btn').forEach(b => {
-    b.classList.toggle('btn-primary', b.dataset.filter === activeFilter);
-    b.classList.toggle('btn-secondary', b.dataset.filter !== activeFilter);
-  });
 
   // Update stats
   const today = todayCST();
@@ -82,12 +153,18 @@ export function renderTasks() {
   if (el_overdue) el_overdue.textContent = open.filter(t => t.due_date && t.due_date < today).length;
 
   let filtered = store.allTasks || [];
+
+  // Apply team filter
+  if (_taskTeamFilter) {
+    filtered = filtered.filter(t => t.team_id === _taskTeamFilter);
+  }
+
+  // Apply status filter
   if (activeFilter === 'complete') {
     filtered = filtered.filter(t => t.completed);
   } else {
     filtered = filtered.filter(t => !t.completed);
     if (activeFilter === 'mine') {
-      // "mine" = no team, or personal
       filtered = filtered.filter(t => !t.team_id || t.visibility === 'personal');
     } else if (activeFilter === 'team') {
       filtered = filtered.filter(t => !!t.team_id);
@@ -96,10 +173,19 @@ export function renderTasks() {
     }
   }
 
+  // Apply search
+  if (_taskSearch) {
+    const q = _taskSearch.toLowerCase();
+    filtered = filtered.filter(t => t.title?.toLowerCase().includes(q));
+  }
+
   const notice = store._taskScopeReady === false ? scopeNotice() : '';
 
   if (!filtered.length) {
-    el.innerHTML = notice + '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No tasks.</div>';
+    const msg = (_taskSearch || _taskTeamFilter || activeFilter !== 'all')
+      ? 'No tasks match your search.'
+      : 'No tasks.';
+    el.innerHTML = notice + `<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">${msg}</div>`;
     return;
   }
 
@@ -130,7 +216,7 @@ export function renderTasks() {
   el.innerHTML = notice + html;
 }
 
-function taskRow(t) {
+export function taskRow(t) {
   const person = personnelName(t.assigned_to);
   const team   = teamName(t.team_id);
   const chips = [
@@ -234,7 +320,8 @@ function initTaskPicker(assignedToId) {
   });
 }
 
-function openAddTask() {
+export function openAddTask({ teamId = null } = {}) {
+  _newTaskTeamId = teamId;
   document.getElementById('modal-content').innerHTML = taskForm(null);
   document.getElementById('modal-overlay').classList.add('open');
   initTaskPicker(null);
@@ -255,7 +342,7 @@ async function saveTask(id) {
   const payload = {
     title,
     assigned_to:        _taskAssignedPicker?.getId() || null,
-    team_id:            document.getElementById('tf-team').value      || null,
+    team_id:            _newTaskTeamId || document.getElementById('tf-team').value || null,
     due_date:           document.getElementById('tf-due').value       || null,
     visibility:         document.getElementById('tf-vis').value       || 'personal',
     recurring,
@@ -280,6 +367,7 @@ async function saveTask(id) {
     if (!store.allTasks) store.allTasks = [];
     store.allTasks.push(newTask);
     logActivity({ action: 'created task', entityType: 'task', entityName: newTask.title, contextType: 'task', contextId: newTask.id });
+    _newTaskTeamId = null;
     closeModal();
     renderTasks();
   }

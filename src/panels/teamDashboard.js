@@ -1,10 +1,12 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { createContactPicker } from '../ui/contactPicker.js';
-import { logActivity } from '../utils.js';
-import { isTeamAdmin, isSuperAdmin } from '../roles.js';
+import { logActivity, fmtDate, todayCST } from '../utils.js';
+import { isTeamAdmin, isSuperAdmin, isAdmin } from '../roles.js';
 import { createAvatar } from '../ui/avatar.js';
 import { renderDiscussionThread } from '../ui/discussionThread.js';
+import { STATUS, GROUP_ORDER, projectCard, openNewProjectModal } from './projects.js';
+import { taskRow, openAddTask as _openAddTask } from './tasks.js';
 
 let _currentTeamId = null;
 let _team = null;
@@ -12,12 +14,19 @@ let _members = [];
 let _activeTab = 'discussions';
 let _memberPicker = null;
 
+// Team-scoped filter state (reset when team changes)
+let _tpSearch = '';
+let _tpFilter = 'all';
+let _ttFilter = 'all';
+let _ttSearch = '';
+
 // ── Public entry point ─────────────────────────────────────────────────────
 
 export async function renderTeamDashboard(container, teamId) {
   _currentTeamId = teamId;
   _activeTab = 'discussions';
   _memberPicker = null;
+  _tpSearch = ''; _tpFilter = 'all'; _ttFilter = 'all'; _ttSearch = '';
   container.innerHTML = '<div style="padding:2rem;text-align:center;color:#9CA3AF;">Loading…</div>';
   await _loadData();
   _render(container);
@@ -203,6 +212,10 @@ function _renderTabContent() {
     _renderSettings(el);
   } else if (_activeTab === 'discussions') {
     renderDiscussionThread({ container: el, contextType: 'team', contextId: _currentTeamId });
+  } else if (_activeTab === 'projects') {
+    _renderTeamProjects(el);
+  } else if (_activeTab === 'tasks') {
+    _renderTeamTasks(el);
   } else {
     _renderStub(el, _activeTab);
   }
@@ -235,12 +248,29 @@ function _renderMembers(el) {
     <div id="td-picker-wrap" style="display:none;margin-top:.75rem;background:#F8F7F4;border:.5px solid #E2DDD6;border-radius:8px;padding:.85rem .9rem;">
       <div style="font-size:12px;font-weight:600;color:#555;margin-bottom:8px;">Add member to ${_team?.name}</div>
       <div id="td-cp-container" style="margin-bottom:8px;"></div>
-      <input id="td-member-role" placeholder="Role in team (optional, e.g. Chair)" style="
+      <select id="td-member-role" style="
         width:100%;box-sizing:border-box;
         padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;
         font-size:13px;font-family:'Inter',sans-serif;outline:none;
         margin-bottom:8px;background:#fff;
-      " />
+      " onchange="document.getElementById('td-role-other-wrap').style.display=this.value==='Other'?'':'none'">
+        <option value="">— Role (optional) —</option>
+        <option value="President">President</option>
+        <option value="Vice President">Vice President</option>
+        <option value="Secretary">Secretary</option>
+        <option value="Treasurer">Treasurer</option>
+        <option value="Coordinator">Coordinator</option>
+        <option value="Member" selected>Member</option>
+        <option value="Ad Hoc">Ad Hoc</option>
+        <option value="Other">Other…</option>
+      </select>
+      <div id="td-role-other-wrap" style="display:none;margin-bottom:8px;">
+        <input id="td-member-role-other" placeholder="Custom role title" style="
+          width:100%;box-sizing:border-box;
+          padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;
+          font-size:13px;font-family:'Inter',sans-serif;outline:none;background:#fff;
+        " />
+      </div>
       <div style="display:flex;gap:8px;">
         <button id="td-picker-confirm" style="
           padding:.35rem .85rem;background:#1C2B3A;color:#fff;border:none;
@@ -380,7 +410,10 @@ async function _confirmAddMember() {
   if (!_memberPicker) return;
   const person = _memberPicker.getValue();
   if (!person) { alert('Please select a person.'); return; }
-  const role = document.getElementById('td-member-role')?.value.trim() || null;
+  const sel = document.getElementById('td-member-role')?.value || '';
+  const role = sel === 'Other'
+    ? (document.getElementById('td-member-role-other')?.value.trim() || 'Other')
+    : (sel || null);
   const existing = _members.find(m => m.personnel_id === person.id);
   if (existing) { alert(`${person.name || 'This person'} is already a member.`); return; }
   const { error } = await sb.from('team_members').insert({
@@ -489,6 +522,204 @@ const STUB_ICONS = {
   tasks:       '✅',
   documents:   '📄',
 };
+
+// ── Team Projects tab ──────────────────────────────────────────────────────
+
+function _renderTeamProjects(el) {
+  const canCreate = isAdmin() || isTeamAdmin(_currentTeamId);
+  const allProjects = (store.allProjects || []).filter(p => p.team_id === _currentTeamId);
+
+  // Header row
+  const header = document.createElement('div');
+  header.style.cssText = 'margin-bottom:1rem;';
+  header.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:.75rem;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1;min-width:0;">
+        <div style="position:relative;flex:0 0 auto;width:clamp(160px,240px,100%);">
+          <i class="fa-solid fa-magnifying-glass" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:#9CA3AF;font-size:11px;pointer-events:none;"></i>
+          <input id="tdp-search" placeholder="Search projects…" autocomplete="off" value="${_tpSearch}" style="
+            width:100%;box-sizing:border-box;padding:.38rem .75rem .38rem 2rem;
+            border:.5px solid #D1C9BE;border-radius:6px;font-size:13px;
+            font-family:'Inter',sans-serif;outline:none;background:#fff;" />
+        </div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;">
+          ${['all','in_progress','blocked','not_started','complete'].map(k => {
+            const labels = { all:'All', in_progress:'In Progress', blocked:'Blocked', not_started:'Not Started', complete:'Complete' };
+            const active = k === _tpFilter;
+            return `<button class="tdp-filter-btn" data-filter="${k}" style="
+              padding:.26rem .7rem;font-size:12px;font-family:'Inter',sans-serif;font-weight:500;
+              border-radius:20px;border:.5px solid ${active ? '#C9A84C' : '#D1C9BE'};
+              background:${active ? '#C9A84C' : '#fff'};color:${active ? '#fff' : '#1C2B3A'};
+              cursor:pointer;white-space:nowrap;">${labels[k]}</button>`;
+          }).join('')}
+        </div>
+      </div>
+      ${canCreate ? `<button id="tdp-new-btn" style="
+        padding:.38rem .9rem;background:#1C2B3A;color:#fff;border:none;border-radius:6px;
+        font-size:13px;font-family:'Inter',sans-serif;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0;">
+        + New project</button>` : ''}
+    </div>
+  `;
+  el.innerHTML = '';
+  el.appendChild(header);
+
+  // Bind header events
+  el.querySelector('#tdp-search')?.addEventListener('input', e => {
+    _tpSearch = e.target.value;
+    _renderTeamProjects(el);
+  });
+  el.querySelectorAll('.tdp-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => { _tpFilter = btn.dataset.filter; _renderTeamProjects(el); });
+  });
+  el.querySelector('#tdp-new-btn')?.addEventListener('click', () => {
+    openNewProjectModal({ teamId: _currentTeamId });
+  });
+
+  // Filter items
+  let items = allProjects;
+  if (_tpSearch) {
+    const q = _tpSearch.toLowerCase();
+    items = items.filter(p => p.title?.toLowerCase().includes(q) || p.notes?.toLowerCase().includes(q));
+  }
+  if (_tpFilter !== 'all') {
+    items = items.filter(p => (p.status_code || 'not_started') === _tpFilter);
+  }
+
+  const list = document.createElement('div');
+  if (!items.length) {
+    list.innerHTML = `<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">${
+      (_tpSearch || _tpFilter !== 'all') ? 'No projects match your search.' : 'No projects for this team yet.'
+    }</div>`;
+  } else {
+    const grouped = {};
+    items.forEach(p => {
+      const key = p.status_code || 'not_started';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(p);
+    });
+    let html = '';
+    GROUP_ORDER.forEach(s => {
+      const group = grouped[s];
+      if (!group?.length) return;
+      const st = STATUS[s];
+      html += `<div style="margin-bottom:1.5rem;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.6rem;display:flex;align-items:center;gap:6px;">
+          <span style="width:7px;height:7px;border-radius:50%;background:${st.dot};flex-shrink:0;display:inline-block;"></span>
+          ${st.label} <span style="font-weight:400;color:#C4BDB3;">(${group.length})</span>
+        </div>
+        ${group.map(p => projectCard(p)).join('')}
+      </div>`;
+    });
+    list.innerHTML = html;
+  }
+  el.appendChild(list);
+}
+
+// ── Team Tasks tab ─────────────────────────────────────────────────────────
+
+function _renderTeamTasks(el) {
+  const today = todayCST();
+  let items = (store.allTasks || []).filter(t => t.team_id === _currentTeamId);
+
+  // Header
+  const header = document.createElement('div');
+  header.style.cssText = 'margin-bottom:1rem;';
+  const filterKeys = [
+    { key: 'all', label: 'All' }, { key: 'open', label: 'Open' },
+    { key: 'complete', label: 'Complete' },
+  ];
+  header.innerHTML = `
+    <div style="margin-bottom:.75rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:.6rem;">
+        <div style="display:flex;gap:4px;flex-wrap:wrap;">
+          ${filterKeys.map(({ key, label }) => {
+            const active = key === _ttFilter;
+            return `<button class="tdt-filter-btn" data-filter="${key}" style="
+              padding:.26rem .7rem;font-size:12px;font-family:'Inter',sans-serif;font-weight:500;
+              border-radius:20px;border:.5px solid ${active ? '#C9A84C' : '#D1C9BE'};
+              background:${active ? '#C9A84C' : '#fff'};color:${active ? '#fff' : '#1C2B3A'};
+              cursor:pointer;white-space:nowrap;">${label}</button>`;
+          }).join('')}
+        </div>
+        <button id="tdt-new-btn" style="
+          padding:.38rem .9rem;background:#1C2B3A;color:#fff;border:none;border-radius:6px;
+          font-size:13px;font-family:'Inter',sans-serif;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0;">
+          + New task</button>
+      </div>
+      <div style="position:relative;max-width:280px;">
+        <i class="fa-solid fa-magnifying-glass" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:#9CA3AF;font-size:11px;pointer-events:none;"></i>
+        <input id="tdt-search" placeholder="Search tasks…" autocomplete="off" value="${_ttSearch.replace(/"/g,'&quot;')}" style="
+          width:100%;box-sizing:border-box;padding:.38rem .75rem .38rem 2rem;
+          border:.5px solid #D1C9BE;border-radius:6px;font-size:13px;
+          font-family:'Inter',sans-serif;outline:none;background:#fff;" />
+        <button id="tdt-search-clear" style="display:${_ttSearch ? '' : 'none'};position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#9CA3AF;font-size:13px;padding:0;line-height:1;">✕</button>
+      </div>
+    </div>
+  `;
+  el.innerHTML = '';
+  el.appendChild(header);
+
+  el.querySelectorAll('.tdt-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => { _ttFilter = btn.dataset.filter; _renderTeamTasks(el); });
+  });
+  el.querySelector('#tdt-new-btn').addEventListener('click', () => {
+    _openAddTask({ teamId: _currentTeamId });
+  });
+  el.querySelector('#tdt-search')?.addEventListener('input', e => {
+    _ttSearch = e.target.value;
+    el.querySelector('#tdt-search-clear').style.display = _ttSearch ? '' : 'none';
+    _renderTeamTasks(el);
+  });
+  el.querySelector('#tdt-search-clear')?.addEventListener('click', () => {
+    _ttSearch = '';
+    el.querySelector('#tdt-search').value = '';
+    el.querySelector('#tdt-search-clear').style.display = 'none';
+    _renderTeamTasks(el);
+  });
+
+  // Apply filters
+  if (_ttFilter === 'complete') {
+    items = items.filter(t => t.completed);
+  } else if (_ttFilter === 'open') {
+    items = items.filter(t => !t.completed);
+  }
+  if (_ttSearch) {
+    const q = _ttSearch.toLowerCase();
+    items = items.filter(t => t.title?.toLowerCase().includes(q));
+  }
+
+  const list = document.createElement('div');
+  if (!items.length) {
+    list.innerHTML = `<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">${
+      (_ttFilter !== 'all' || _ttSearch) ? 'No tasks match your search.' : 'No tasks for this team yet.'
+    }</div>`;
+  } else {
+    const groups = {
+      overdue:  { label: 'Overdue',  color: '#922B21', items: [] },
+      today:    { label: 'Today',    color: '#1B4F72', items: [] },
+      upcoming: { label: 'Upcoming', color: '#6B7280', items: [] },
+      nodate:   { label: 'No date',  color: '#9CA3AF', items: [] },
+      complete: { label: 'Complete', color: '#1E8449', items: [] },
+    };
+    items.forEach(t => {
+      if (t.completed) { groups.complete.items.push(t); return; }
+      if (t.due_date && t.due_date < today)   groups.overdue.items.push(t);
+      else if (t.due_date === today)           groups.today.items.push(t);
+      else if (t.due_date)                     groups.upcoming.items.push(t);
+      else                                     groups.nodate.items.push(t);
+    });
+    let html = '';
+    Object.values(groups).forEach(g => {
+      if (!g.items.length) return;
+      html += `<div style="margin-bottom:1.25rem;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:${g.color};text-transform:uppercase;margin-bottom:.5rem;">${g.label}</div>`;
+      g.items.forEach(t => { html += taskRow(t); });
+      html += '</div>';
+    });
+    list.innerHTML = html;
+  }
+  el.appendChild(list);
+}
 
 function _renderStub(el, tab) {
   const label = _tabs().find(t => t.key === tab)?.label || tab;

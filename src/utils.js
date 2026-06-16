@@ -54,7 +54,7 @@ export const PANEL_TITLES = {
   school:       'Cathedral Catholic School',
   teams:        'Teams',
   projects:     'My Projects',
-  tasks:        'Tasks',
+  tasks:        'My Tasks',
   personnel:    'Directory',
   admin:        'Administration',
   userProfile:  'My Profile',

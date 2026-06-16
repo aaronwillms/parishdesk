@@ -2,7 +2,7 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity } from '../utils.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
-import { isSuperAdmin } from '../roles.js';
+import { isSuperAdmin, isAdmin } from '../roles.js';
 import { parseICS } from '../utils/icsParser.js';
 import { createAvatar } from '../ui/avatar.js';
 
@@ -499,8 +499,9 @@ async function _coordinatorPrograms(personnelId) {
 }
 
 async function loadActivityFeed() {
-  const limit = 15;
+  const limit = 5;
   const superAdmin = isSuperAdmin();
+  const admin = isAdmin();
 
   const scope = await getUserScope();
   const { personnelId } = scope;
@@ -517,7 +518,7 @@ async function loadActivityFeed() {
     sb.from('activity_log')
       .select('id,action,entity_name,created_at,triggered_by,context_type,context_id')
       .order('created_at', { ascending: false })
-      .limit(limit),
+      .limit(20),
   ];
   if (superAdmin || coordPrograms.has('marriage'))   queries.push(sb.from('couples').select('id,groom_name,bride_name,updated_at').order('updated_at', { ascending: false }).limit(limit));
   if (superAdmin || coordPrograms.has('annulments')) queries.push(sb.from('annulment_cases').select('id,petitioner,respondent,updated_at').order('updated_at', { ascending: false }).limit(limit));
@@ -527,7 +528,6 @@ async function loadActivityFeed() {
 
   // Build profile map for activity_log entries
   if (actRes.error) console.error('[activity_log] fetch error:', actRes.error);
-  console.log('[activity_log] raw rows:', actRes.data);
   const actData = actRes.data || [];
   const triggeredByIds = [...new Set(actData.map(r => r.triggered_by).filter(Boolean))];
   const userMap = {};
@@ -537,7 +537,6 @@ async function loadActivityFeed() {
       .select('user_id, avatar_url, initials_color, personnel(name)')
       .in('user_id', triggeredByIds);
     if (profErr) console.error('[activity_log] user_profiles fetch error:', profErr);
-    console.log('[activity_log] profiles for triggered_by ids:', profs);
     (profs || []).forEach(p => {
       userMap[p.user_id] = {
         name:           p.personnel?.name || 'Unknown',
@@ -549,8 +548,49 @@ async function loadActivityFeed() {
 
   const items = [];
 
+  // Filter activity_log entries by user's access context
+  const userTeamIds   = new Set(store.currentUserRoles?.teamIds || []);
+  const accessibleTaskIds = new Set((store.allTasks || []).map(t => t.id));
+
+  function _canSeeEntry(r) {
+    if (superAdmin) return true;
+    const ct = r.context_type || 'general';
+    const cid = r.context_id;
+    switch (ct) {
+      case 'project':
+        return !cid || accessibleProjectIds.has(cid);
+      case 'task':
+        return !cid || accessibleTaskIds.has(cid);
+      case 'team':
+        return !cid || admin || userTeamIds.has(cid);
+      case 'announcement':
+      case 'general':
+        return true;
+      case 'personnel':
+        return admin;
+      case 'ocia':
+        return admin || coordPrograms.has('ocia');
+      case 'marriage':
+      case 'couple':
+        return admin || coordPrograms.has('marriage');
+      case 'baptism':
+        return admin || coordPrograms.has('baptism');
+      case 'confirmation':
+        return admin || coordPrograms.has('confirmation');
+      case 'firstcomm':
+      case 'firstcommunion':
+        return admin || coordPrograms.has('firstcomm');
+      case 'annulments':
+        return admin || coordPrograms.has('annulments');
+      default:
+        return admin;
+    }
+  }
+
+  const visibleActData = actData.filter(_canSeeEntry);
+
   // activity_log entries — attributed to triggering user
-  actData.forEach(r => {
+  visibleActData.forEach(r => {
     const user = r.triggered_by ? (userMap[r.triggered_by] || { name: 'Unknown User' }) : null;
     items.push({
       icon:        _contextIcon(r.context_type || 'general', r.context_id),
@@ -562,6 +602,7 @@ async function loadActivityFeed() {
       avatarUrl:   user?.avatarUrl || null,
       isSystem:    !r.triggered_by,
       isFa:        true,
+      logId:       r.id,
     });
   });
 
@@ -599,7 +640,7 @@ async function loadActivityFeed() {
 
   const c = document.getElementById('dash-activity');
   if (!c) return;
-  const top10 = items.slice(0, 10);
+  const top10 = items.slice(0, 5);
   if (!top10.length) {
     c.innerHTML = '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No recent activity.</div>';
     return;
@@ -617,6 +658,10 @@ async function loadActivityFeed() {
       actorBlock = '';
     }
 
+    const deleteBtn = (superAdmin && item.logId)
+      ? `<button class="feed-delete-btn" data-log-id="${item.logId}" style="background:none;border:none;cursor:pointer;color:#999;font-size:12px;padding:0 2px;flex-shrink:0;line-height:1;" title="Remove entry" onmouseover="this.style.color='#8B1A2F'" onmouseout="this.style.color='#999'">✕</button>`
+      : '';
+
     return `
     <div style="display:flex;align-items:center;gap:10px;padding:.5rem 0;border-bottom:.5px solid var(--stone);">
       ${_faIcon(item.icon)}
@@ -626,6 +671,7 @@ async function loadActivityFeed() {
         </div>
       </div>
       <span style="font-size:11px;color:#9CA3AF;flex-shrink:0;white-space:nowrap;cursor:default;" title="${fullDate}">${timeAgo(item.ts)}</span>
+      ${deleteBtn}
     </div>`;
   }).join('');
 
@@ -635,6 +681,17 @@ async function loadActivityFeed() {
     const slot = c.querySelector(`.feed-avatar-slot[data-idx="${i}"]`);
     if (slot) createAvatar({ container: slot, userId: item.actorUserId || '', name: item.actorName, size: 24, avatarUrl: item.avatarUrl || null });
   });
+
+  // Wire super-admin delete buttons
+  if (superAdmin) {
+    c.querySelectorAll('.feed-delete-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const logId = btn.dataset.logId;
+        await sb.from('activity_log').delete().eq('id', logId);
+        btn.closest('div[style*="border-bottom"]')?.remove();
+      });
+    });
+  }
 }
 
 // ── loadInit ───────────────────────────────────────────────────────────────

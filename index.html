@@ -58,7 +58,7 @@
       <div class="nav-item" data-panel="teams"><i class="ti ti-users-group"></i> Teams</div>
       <div id="teams-subnav" style="display:none;"></div>
       <div class="nav-item" data-panel="projects"><i class="ti ti-clipboard-list"></i> My Projects</div>
-      <div class="nav-item" data-panel="tasks"><i class="ti ti-checkbox"></i> Tasks</div>
+      <div class="nav-item" data-panel="tasks"><i class="ti ti-checkbox"></i> My Tasks</div>
       <div class="nav-sec">Administration</div>
       <div class="nav-item" data-panel="personnel"><i class="ti ti-users"></i> Directory</div>
       <div class="nav-item" data-panel="admin" style="display:none;"><i class="ti ti-settings"></i> Admin</div>
@@ -404,6 +404,7 @@
         <div style="margin-bottom:1rem;">
           <button id="btn-new-project" class="btn-primary" onclick="openNewProjectModal()">+ New project</button>
         </div>
+        <div id="proj-team-bar"></div>
         <div id="proj-filter-bar"></div>
         <div id="projects-list"><span class="pulse"></span></div>
       </div>
@@ -429,14 +430,7 @@
           <div class="stat-card"><div class="stat-num" id="tstat-today">—</div><div class="stat-label">Due Today</div></div>
           <div class="stat-card"><div class="stat-num" id="tstat-overdue">—</div><div class="stat-label">Overdue</div></div>
         </div>
-        <div style="display:flex;gap:8px;margin-bottom:1rem;flex-wrap:wrap;align-items:center;">
-          <button class="btn-primary" onclick="openAddTask()">+ New task</button>
-          <button class="btn-primary task-filter-btn" data-filter="all" onclick="setTaskFilter('all')">All</button>
-          <button class="btn-secondary task-filter-btn" data-filter="mine" onclick="setTaskFilter('mine')">Mine</button>
-          <button class="btn-secondary task-filter-btn" data-filter="team" onclick="setTaskFilter('team')">Team</button>
-          <button class="btn-secondary task-filter-btn" data-filter="personal" onclick="setTaskFilter('personal')">Personal</button>
-          <button class="btn-secondary task-filter-btn" data-filter="complete" onclick="setTaskFilter('complete')">Complete</button>
-        </div>
+        <div id="task-filter-bar"></div>
         <div id="tasks-list"><span class="pulse"></span></div>
       </div>
 

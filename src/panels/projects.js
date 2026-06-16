@@ -8,21 +8,23 @@ import { isAdmin } from '../roles.js';
 
 // ── Status config ──────────────────────────────────────────────────────────
 
-const STATUS = {
+export const STATUS = {
   in_progress:  { label: 'In Progress',  color: '#7A5C00', bg: '#FDF3D0', dot: '#C9A84C' },
   blocked:      { label: 'Blocked',      color: '#7A1020', bg: '#FDEAED', dot: '#8B1A2F' },
   not_started:  { label: 'Not Started',  color: '#4B5563', bg: '#F3F4F6', dot: '#9CA3AF' },
   complete:     { label: 'Complete',     color: '#F5F1EB', bg: '#1C2B3A', dot: '#1C2B3A' },
 };
 
-const GROUP_ORDER = ['in_progress', 'blocked', 'not_started', 'complete'];
+export const GROUP_ORDER = ['in_progress', 'blocked', 'not_started', 'complete'];
 
 // ── Module state ───────────────────────────────────────────────────────────
 
 let _newProjPicker    = null;
 let _newProjAssignees = [];
+let _newProjTeamId    = null;
 let _searchQuery      = '';
 let _statusFilter     = 'all';
+let _teamFilter       = null; // null = all teams
 
 // ── Data ───────────────────────────────────────────────────────────────────
 
@@ -57,6 +59,7 @@ export async function loadProjects() {
 // ── Landing render ─────────────────────────────────────────────────────────
 
 export function renderProjects() {
+  _renderTeamBar();
   _initFilterBar();
 
   const el = document.getElementById('projects-list');
@@ -64,6 +67,11 @@ export function renderProjects() {
 
   const notice = store._projectScopeReady === false ? scopeNotice() : '';
   let items = store.allProjects || [];
+
+  // Apply team filter
+  if (_teamFilter) {
+    items = items.filter(p => p.team_id === _teamFilter);
+  }
 
   // Apply search
   if (_searchQuery) {
@@ -80,8 +88,8 @@ export function renderProjects() {
   }
 
   if (!items.length) {
-    const msg = (_searchQuery || _statusFilter !== 'all')
-      ? 'No projects match your search.'
+    const msg = (_searchQuery || _statusFilter !== 'all' || _teamFilter)
+      ? 'No projects match your filters.'
       : 'No projects yet. Use the button above to create one.';
     el.innerHTML = notice + `<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">${msg}</div>`;
     return;
@@ -196,6 +204,35 @@ function _initFilterBar() {
   });
 }
 
+function _pill(label, active, onClick) {
+  return `<button style="
+    padding:.26rem .72rem;font-size:12px;font-family:'Inter',sans-serif;font-weight:500;
+    border-radius:20px;border:.5px solid ${active ? '#1C2B3A' : '#D1C9BE'};
+    background:${active ? '#1C2B3A' : '#fff'};color:${active ? '#fff' : '#6B7280'};
+    cursor:pointer;white-space:nowrap;" onclick="${onClick}">${label}</button>`;
+}
+
+function _renderTeamBar() {
+  const bar = document.getElementById('proj-team-bar');
+  if (!bar) return;
+
+  // Teams that have at least one project in store
+  const allProjs = store.allProjects || [];
+  const teamIds  = [...new Set(allProjs.map(p => p.team_id).filter(Boolean))];
+  const teams    = (store.teams || []).filter(t => teamIds.includes(t.id));
+
+  if (!teams.length) { bar.innerHTML = ''; return; }
+
+  const pills = [
+    _pill('All Teams', !_teamFilter, "window._projTeamFilter(null)"),
+    ...teams.map(t => _pill(t.name, _teamFilter === t.id, `window._projTeamFilter('${t.id}')`)),
+  ].join('');
+
+  bar.innerHTML = `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:.75rem;">${pills}</div>`;
+}
+
+window._projTeamFilter = (teamId) => { _teamFilter = teamId; renderProjects(); };
+
 function assigneeLabel(ids) {
   if (!ids?.length) return null;
   const people = store.personnel || [];
@@ -210,7 +247,7 @@ function statusBadge(code) {
   return `<span style="font-size:10.5px;font-weight:700;background:${st.bg};color:${st.color};border-radius:20px;padding:2px 9px;white-space:nowrap;letter-spacing:.02em;">${st.label}</span>`;
 }
 
-function projectCard(p) {
+export function projectCard(p) {
   const assignees = assigneeLabel(p.assigned_to);
   return `
     <div onclick="window.showProjectDashboard('${p.id}')" style="
@@ -237,9 +274,10 @@ function projectCard(p) {
 
 // ── New project modal ──────────────────────────────────────────────────────
 
-export function openNewProjectModal() {
+export function openNewProjectModal({ teamId = null } = {}) {
   if (!isAdmin()) return;  // basic users cannot create projects
   _newProjAssignees = [];
+  _newProjTeamId = teamId;
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-title">New project</div>
     <label>Title</label>
@@ -316,6 +354,7 @@ async function saveNewProject() {
     due_date:    document.getElementById('pf-due').value || null,
     notes:       document.getElementById('pf-notes').value.trim() || null,
     created_by:  user?.id || null,
+    team_id:     _newProjTeamId || null,
     updated_at:  new Date().toISOString(),
   };
   const { data: newProj, error } = await sb.from('projects').insert(payload).select().single();
