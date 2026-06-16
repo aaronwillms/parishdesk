@@ -4,6 +4,7 @@ import { fmtDate, todayCST, logActivity } from '../utils.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
 import { renderDiscussionThread } from '../ui/discussionThread.js';
+import { renderProjectLog } from '../ui/projectLog.js';
 
 // ── Status config ──────────────────────────────────────────────────────────
 
@@ -15,10 +16,10 @@ const STATUS = {
 };
 
 const TABS = [
-  { key: 'discussions', label: 'Discussions' },
+  { key: 'log',         label: 'Project Log' },
   { key: 'tasks',       label: 'Tasks' },
-  { key: 'members',     label: 'Members' },
-  { key: 'project',     label: 'Project Information' },
+  { key: 'discussions', label: 'Discussions' },
+  { key: 'project',     label: 'Details' },
 ];
 
 // ── Module state ───────────────────────────────────────────────────────────
@@ -26,7 +27,7 @@ const TABS = [
 let _projectId      = null;
 let _project        = null;
 let _tasks          = [];
-let _activeTab      = 'discussions';
+let _activeTab      = 'log';
 let _taskPicker     = null;
 let _memberPicker   = null;
 let _currentUserId  = null;
@@ -37,7 +38,7 @@ let _assigneeIds    = [];
 
 export async function renderProjectDashboard(container, projectId) {
   _projectId    = projectId;
-  _activeTab    = 'discussions';
+  _activeTab    = 'log';
   _taskPicker   = null;
   _memberPicker = null;
   container.innerHTML = '<div style="padding:2rem;text-align:center;color:#9CA3AF;">Loading…</div>';
@@ -156,7 +157,8 @@ function _render(container) {
 function _renderTab() {
   const el = document.getElementById('pd-content');
   if (!el) return;
-  if      (_activeTab === 'tasks')       _renderTasks(el);
+  if      (_activeTab === 'log')         renderProjectLog({ container: el, projectId: _projectId, projectTitle: _project?.title || '', currentUserId: _currentUserId });
+  else if (_activeTab === 'tasks')       _renderTasks(el);
   else if (_activeTab === 'project')     _renderProjectDetails(el);
   else if (_activeTab === 'members')     _renderMembers(el);
   else if (_activeTab === 'discussions') renderDiscussionThread({ container: el, contextType: 'project', contextId: _projectId });

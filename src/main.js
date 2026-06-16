@@ -119,6 +119,8 @@ async function startApp(user) {
       .lt('deleted_at', _cutoff).not('deleted_at', 'is', null).then(() => {});
     sb.from('discussions').delete()
       .lt('deleted_at', _cutoff).not('deleted_at', 'is', null).then(() => {});
+    sb.from('project_log').delete()
+      .lt('deleted_at', _cutoff).not('deleted_at', 'is', null).then(() => {});
     try { await loadUserProfile(); } catch (e) { console.error('[startApp] loadUserProfile failed:', e); }
     clearUserScope(); // ensure scope re-fetches with now-loaded profile
     try { await loadUserRoles(); } catch (e) { console.error('[startApp] loadUserRoles failed:', e); }
