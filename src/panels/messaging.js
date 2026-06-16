@@ -15,12 +15,20 @@ let _userProfileMap = {}; // user_id → { name, personnelId }
 
 // ── Public entry points ────────────────────────────────────────────────────
 
-export async function loadMessaging() {
+export async function loadMessaging(opts) {
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return;
   _currentUserId = user.id;
-  _activeConvId  = null;
-  _messages      = [];
+
+  // Honour a specific conversation requested by the caller (e.g. dropdown click).
+  // If opts.conversationId is provided, open that thread directly.
+  // If _activeConvId was pre-set by window._openMessagingConv, keep it.
+  if (opts?.conversationId) {
+    _activeConvId = opts.conversationId;
+  } else if (!opts?.preserveThread) {
+    _activeConvId = null;
+  }
+  _messages = [];
 
   const el = document.getElementById('messaging-root');
   if (!el) return;
@@ -80,7 +88,7 @@ export function initChatBubble(userId) {
   window._openMessagingConv = (convId) => {
     _closeDrop();
     _activeConvId = convId;
-    window.switchPanel('messaging', { title: 'Messages' });
+    window.switchPanel('messaging', { title: 'Messages', preserveThread: true });
   };
 
   _loadInitialUnread();
@@ -184,7 +192,7 @@ async function _loadConversations() {
   if (!_currentUserId) return;
 
   const { data: myParts } = await sb.from('conversation_participants')
-    .select('conversation_id, last_read_at')
+    .select('conversation_id, last_read_at, pinned')
     .eq('user_id', _currentUserId);
 
   if (!myParts?.length) { _conversations = []; return; }
@@ -200,7 +208,7 @@ async function _loadConversations() {
       .in('conversation_id', convIds)
       .order('created_at', { ascending: false }),
     sb.from('conversations')
-      .select('id, deleted_at, pinned_message_id')
+      .select('id, deleted_at')
       .in('id', convIds),
   ]);
 
@@ -208,12 +216,11 @@ async function _loadConversations() {
   const allMsgs   = msgsRes.data     || [];
   const convMeta  = convsRes.data    || [];
 
-  const deletedAtMap  = {};
-  const pinnedMsgMap  = {};
-  convMeta.forEach(c => {
-    deletedAtMap[c.id] = c.deleted_at || null;
-    pinnedMsgMap[c.id] = c.pinned_message_id || null;
-  });
+  const deletedAtMap = {};
+  convMeta.forEach(c => { deletedAtMap[c.id] = c.deleted_at || null; });
+
+  const myPinnedMap = {};
+  myParts.forEach(p => { myPinnedMap[p.conversation_id] = !!p.pinned; });
 
   const otherUserIds = [...new Set(
     allParts.filter(p => p.user_id !== _currentUserId).map(p => p.user_id),
@@ -255,10 +262,17 @@ async function _loadConversations() {
       lastMsg,
       unreadCount,
       updatedAt:  lastMsg?.created_at || '',
-      deletedAt:       deletedAtMap[cid]  || null,
-      pinnedMessageId: pinnedMsgMap[cid]  || null,
+      deletedAt: deletedAtMap[cid] || null,
+      pinned:    myPinnedMap[cid]  || false,
     };
-  }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }).sort((a, b) => {
+    // Pinned active first, then by last message date
+    if (!a.deletedAt && !b.deletedAt) {
+      if (a.pinned && !b.pinned) return -1;
+      if (!a.pinned && b.pinned) return 1;
+    }
+    return b.updatedAt.localeCompare(a.updatedAt);
+  });
 }
 
 async function _loadInitialUnread() {
@@ -382,7 +396,10 @@ function _convRowHtml(c) {
       <div class="msg-avatar-slot" data-uid="${c.otherUserId || ''}" data-name="${_esc(c.otherName)}" style="flex-shrink:0;width:36px;height:36px;border-radius:50%;background:#E2DDD6;"></div>
       <div style="flex:1;min-width:0;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:2px;">
-          <div style="font-size:13.5px;font-weight:${hasBold ? '600' : '500'};color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(c.otherName)}</div>
+          <div style="display:flex;align-items:center;gap:5px;min-width:0;">
+            ${c.pinned ? `<i class="fa-solid fa-thumbtack" style="color:#C9A84C;font-size:10px;flex-shrink:0;transform:rotate(45deg);"></i>` : ''}
+            <div style="font-size:13.5px;font-weight:${hasBold ? '600' : '500'};color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(c.otherName)}</div>
+          </div>
           <div style="font-size:11px;color:#9CA3AF;flex-shrink:0;">${_esc(ts)}</div>
         </div>
         <div style="display:flex;align-items:center;gap:4px;">
@@ -390,67 +407,41 @@ function _convRowHtml(c) {
           ${c.unreadCount ? `<div style="flex-shrink:0;width:18px;height:18px;background:#1C2B3A;border-radius:50%;display:flex;align-items:center;justify-content:center;"><span style="font-size:9px;color:#fff;font-weight:700;">${c.unreadCount > 9 ? '9+' : c.unreadCount}</span></div>` : ''}
         </div>
       </div>
-      <button class="msg-delete-btn" data-conv-id="${c.id}" title="Delete conversation" style="
-        display:none;flex-shrink:0;background:none;border:none;cursor:pointer;
-        color:#C0BAB2;font-size:14px;padding:2px 4px;line-height:1;
-      ">✕</button>
-    </div>`;
-}
-
-function _renderPinnedBar() {
-  const bar  = document.getElementById('msg-pinned-bar');
-  if (!bar) return;
-  const conv = _conversations.find(c => c.id === _activeConvId);
-  if (!conv?.pinnedMessageId) { bar.innerHTML = ''; return; }
-
-  const msg    = _messages.find(m => m.id === conv.pinnedMessageId);
-  const sender = msg ? (_userProfileMap[msg.sender_id]?.name || 'You') : 'Unknown';
-  const preview = msg ? _truncate(msg.body, 60) : '…';
-
-  bar.innerHTML = `
-    <div style="
-      display:flex;align-items:center;gap:10px;
-      border-left:3px solid #C9A84C;background:#F8F7F4;
-      padding:8px 12px;border-radius:4px;margin:8px 0 0;
-      box-shadow:0 1px 3px rgba(0,0,0,.06);
-    ">
-      <i class="fa-solid fa-thumbtack" style="color:#C9A84C;font-size:12px;flex-shrink:0;"></i>
-      <div style="flex:1;min-width:0;">
-        <div style="font-size:11px;color:#9CA3AF;margin-bottom:1px;">${_esc(sender)}</div>
-        <div style="font-size:12.5px;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(preview)}</div>
+      <div class="msg-row-actions" style="display:none;flex-shrink:0;display:none;align-items:center;gap:2px;">
+        <button class="msg-pin-btn" data-conv-id="${c.id}" title="${c.pinned ? 'Unpin' : 'Pin conversation'}" style="
+          background:none;border:none;cursor:pointer;
+          color:${c.pinned ? '#C9A84C' : '#C0BAB2'};font-size:12px;padding:2px 4px;line-height:1;
+        "><i class="fa-solid fa-thumbtack"></i></button>
+        <button class="msg-delete-btn" data-conv-id="${c.id}" title="Delete conversation" style="
+          background:none;border:none;cursor:pointer;
+          color:#C0BAB2;font-size:13px;padding:2px 4px;line-height:1;
+        ">✕</button>
       </div>
-      <button id="msg-jump-pin" style="
-        background:none;border:none;cursor:pointer;font-size:12px;
-        color:#8B1A2F;font-family:'Inter',sans-serif;white-space:nowrap;flex-shrink:0;
-      ">Jump</button>
-      <button id="msg-unpin-btn" style="
-        background:none;border:.5px solid #D1C9BE;border-radius:4px;
-        cursor:pointer;font-size:11.5px;color:#6B7280;
-        padding:2px 8px;font-family:'Inter',sans-serif;flex-shrink:0;
-      ">Unpin</button>
     </div>`;
-
-  document.getElementById('msg-jump-pin')?.addEventListener('click', () => {
-    const target = document.getElementById('msg-bubble-' + conv.pinnedMessageId);
-    if (!target) return;
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    const orig = target.style.background;
-    target.style.transition = 'background .2s';
-    target.style.background = '#C9A84C44';
-    setTimeout(() => { target.style.background = orig; }, 1000);
-  });
-
-  document.getElementById('msg-unpin-btn')?.addEventListener('click', () => _togglePin(null));
 }
 
-async function _togglePin(msgId) {
-  const conv = _conversations.find(c => c.id === _activeConvId);
+async function _pinConversation(convId) {
+  const conv = _conversations.find(c => c.id === convId);
   if (!conv) return;
-  // If same message already pinned → unpin; otherwise pin the new one
-  const newPinId = (msgId && conv.pinnedMessageId !== msgId) ? msgId : null;
-  await sb.from('conversations').update({ pinned_message_id: newPinId }).eq('id', _activeConvId);
-  conv.pinnedMessageId = newPinId;
-  _renderMessages();
+  const newPinned = !conv.pinned;
+  await sb.from('conversation_participants')
+    .update({ pinned: newPinned })
+    .eq('conversation_id', convId)
+    .eq('user_id', _currentUserId);
+  conv.pinned = newPinned;
+  _conversations.sort((a, b) => {
+    if (!a.deletedAt && !b.deletedAt) {
+      if (a.pinned && !b.pinned) return -1;
+      if (!a.pinned && b.pinned) return 1;
+    }
+    return b.updatedAt.localeCompare(a.updatedAt);
+  });
+  const listCol = document.getElementById('msg-list-col');
+  if (listCol) { listCol.innerHTML = _convListHtml(); _hydrateConvList(); }
+  else {
+    const el = document.getElementById('messaging-root');
+    if (el) _render(el);
+  }
 }
 
 function _emptyThreadHtml() {
@@ -476,7 +467,6 @@ function _threadHtml(mobile) {
         <div id="msg-thread-avatar-slot" data-uid="${uid}" data-name="${_esc(name)}" data-pid="${pid}" style="width:32px;height:32px;border-radius:50%;background:#E2DDD6;flex-shrink:0;"></div>
         <div style="font-size:14px;font-weight:600;color:#1C2B3A;">${_esc(name)}</div>
       </div>
-      <div id="msg-pinned-bar" style="flex-shrink:0;padding:0 1rem;background:#fff;"></div>
       <div id="msg-messages" style="flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;background:#FAFAF8;"></div>
       <div style="padding:.75rem 1rem;border-top:.5px solid #E2DDD6;background:#fff;flex-shrink:0;display:flex;gap:8px;align-items:flex-end;">
         <textarea id="msg-input" placeholder="Type a message…" rows="1" style="
@@ -507,41 +497,27 @@ function _renderMessages() {
       return `<div style="text-align:center;font-size:11px;color:#9CA3AF;margin:10px 0 6px;font-weight:500;">${_esc(item.date)}</div>`;
     }
     const { msg, isFirst, isLast, isMine } = item;
-    const uid    = msg.sender_id || '';
-    const prof   = uid === _currentUserId ? null : (_userProfileMap[uid] || { name: 'User', personnelId: null });
-    const name   = prof?.name || '';
-    const pid    = prof?.personnelId || '';
-    const conv   = _conversations.find(c => c.id === _activeConvId);
-    const isPinned = conv?.pinnedMessageId === msg.id;
+    const uid  = msg.sender_id || '';
+    const prof = uid === _currentUserId ? null : (_userProfileMap[uid] || { name: 'User', personnelId: null });
+    const name = prof?.name || '';
+    const pid  = prof?.personnelId || '';
     const avatarSlot = !isMine
       ? `<div class="${isFirst ? 'msg-inline-avatar' : ''}" data-uid="${uid}" data-name="${_esc(name)}" data-pid="${pid}" style="width:24px;height:24px;border-radius:50%;${isFirst ? 'background:#E2DDD6;' : ''}flex-shrink:0;align-self:flex-end;"></div>`
       : '';
-    const pinBtn = `
-      <button class="msg-pin-btn" data-msg-id="${msg.id}" title="${isPinned ? 'Unpin' : 'Pin message'}" style="
-        display:none;background:none;border:none;cursor:pointer;padding:2px 4px;
-        color:${isPinned ? '#C9A84C' : '#999'};font-size:12px;line-height:1;flex-shrink:0;align-self:center;
-      "><i class="fa-solid fa-thumbtack"></i></button>`;
     return `
-      <div class="msg-row" data-msg-id="${msg.id}" style="
-        display:flex;align-items:flex-end;gap:6px;
-        justify-content:${isMine ? 'flex-end' : 'flex-start'};
-        margin-top:${isFirst ? '8px' : '2px'};
-      ">
+      <div style="display:flex;align-items:flex-end;gap:6px;justify-content:${isMine ? 'flex-end' : 'flex-start'};margin-top:${isFirst ? '8px' : '2px'};">
         ${!isMine ? avatarSlot : ''}
-        ${isMine ? pinBtn : ''}
         <div style="max-width:70%;display:flex;flex-direction:column;${isMine ? 'align-items:flex-end;' : 'align-items:flex-start;'}">
           ${!isMine && isFirst ? `<div style="font-size:11px;color:#9CA3AF;margin-bottom:2px;margin-left:4px;">${_esc(name)}</div>` : ''}
-          <div id="msg-bubble-${msg.id}" style="
+          <div style="
             background:${isMine ? '#1C2B3A' : '#F0F0F0'};
             color:${isMine ? '#fff' : '#1C2B3A'};
             border-radius:18px;
             ${isMine ? 'border-bottom-right-radius:5px;' : 'border-bottom-left-radius:5px;'}
             padding:10px 14px;font-size:13px;line-height:1.4;word-break:break-word;white-space:pre-wrap;
-            ${isPinned ? 'outline:2px solid #C9A84C;outline-offset:1px;' : ''}
           ">${_esc(msg.body)}</div>
           ${isLast ? `<div style="font-size:10.5px;color:#9CA3AF;margin-top:3px;${isMine ? 'margin-right:3px;' : 'margin-left:3px;'}">${_relTime(msg.created_at)}</div>` : ''}
         </div>
-        ${!isMine ? pinBtn : ''}
       </div>`;
   }).join('');
 
@@ -551,16 +527,7 @@ function _renderMessages() {
     createAvatar({ container: slot, userId: pid || uid, name: name || uid, size: 24 });
   });
 
-  el.querySelectorAll('.msg-row').forEach(row => {
-    const btn = row.querySelector('.msg-pin-btn');
-    if (!btn) return;
-    row.addEventListener('mouseenter', () => { btn.style.display = 'block'; });
-    row.addEventListener('mouseleave', () => { btn.style.display = 'none'; });
-    btn.addEventListener('click', () => _togglePin(btn.dataset.msgId));
-  });
-
   el.scrollTop = el.scrollHeight;
-  _renderPinnedBar();
 }
 
 function _groupMessages(msgs) {
@@ -590,19 +557,27 @@ function _hydrateConvList() {
   });
 
   document.querySelectorAll('.msg-conv-row').forEach(row => {
-    const delBtn = row.querySelector('.msg-delete-btn');
+    const actions = row.querySelector('.msg-row-actions');
+    const pinBtn  = row.querySelector('.msg-pin-btn');
+    const delBtn  = row.querySelector('.msg-delete-btn');
     row.addEventListener('mouseenter', () => {
       if (row.dataset.convId !== _activeConvId) row.style.background = '#F8F7F4';
-      if (delBtn) delBtn.style.display = 'block';
+      if (actions) actions.style.display = 'flex';
     });
     row.addEventListener('mouseleave', () => {
       if (row.dataset.convId !== _activeConvId) row.style.background = '#fff';
-      if (delBtn) delBtn.style.display = 'none';
+      if (actions) actions.style.display = 'none';
     });
     row.addEventListener('click', e => {
-      if (e.target.closest('.msg-delete-btn')) return;
+      if (e.target.closest('.msg-row-actions')) return;
       _openConversation(row.dataset.convId);
     });
+    if (pinBtn) {
+      pinBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        _pinConversation(pinBtn.dataset.convId);
+      });
+    }
     if (delBtn) {
       delBtn.addEventListener('click', e => {
         e.stopPropagation();
@@ -745,18 +720,6 @@ function _subscribeToThread(convId) {
         sb.from('conversation_participants')
           .update({ last_read_at: new Date().toISOString() })
           .eq('conversation_id', convId).eq('user_id', _currentUserId).then(() => {});
-      }
-    })
-    .on('postgres_changes', {
-      event: 'UPDATE', schema: 'public', table: 'conversations',
-      filter: `id=eq.${convId}`,
-    }, payload => {
-      const conv = _conversations.find(c => c.id === convId);
-      if (!conv) return;
-      const incoming = payload.new.pinned_message_id || null;
-      if (conv.pinnedMessageId !== incoming) {
-        conv.pinnedMessageId = incoming;
-        _renderMessages();
       }
     })
     .subscribe();

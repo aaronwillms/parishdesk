@@ -21,7 +21,8 @@
       "Bash(git push *)",
       "Bash(kill 76581)",
       "Bash(node --check src/panels/messaging.js)",
-      "Bash(node --check src/ui/discussionThread.js)"
+      "Bash(node --check src/ui/discussionThread.js)",
+      "Bash(node --check src/ui/contactPicker.js)"
     ]
   }
 }

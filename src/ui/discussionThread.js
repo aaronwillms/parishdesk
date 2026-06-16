@@ -2,8 +2,7 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { createAvatar } from './avatar.js';
 
-const _subs    = {}; // discussion_id → realtime channel
-const _pinSubs = {}; // discussion_id → pin realtime channel
+const _subs = {}; // discussion_id → realtime channel
 
 // ── Public ─────────────────────────────────────────────────────────────────
 
@@ -37,12 +36,17 @@ export async function renderDiscussionThread({ container, contextType, contextId
   }
 
   const { data: discussions } = await sb.from('discussions')
-    .select('id, title, created_by, created_at, updated_at, pinned_message_id')
+    .select('id, title, created_by, created_at, updated_at, pinned, pinned_at')
     .eq('context_type', contextType)
     .eq('context_id', contextId)
     .order('updated_at', { ascending: false });
 
-  let list = discussions || [];
+  let list = (discussions || []).sort((a, b) => {
+    if (a.pinned && !b.pinned) return -1;
+    if (!a.pinned && b.pinned) return 1;
+    if (a.pinned && b.pinned) return (b.pinned_at || '').localeCompare(a.pinned_at || '');
+    return (b.updated_at || '').localeCompare(a.updated_at || '');
+  });
 
   // Profile map for thread creators
   const profileMap = {};
@@ -143,9 +147,9 @@ export async function renderDiscussionThread({ container, contextType, contextId
   }
 
   function _threadRowHtml(d) {
-    const prof    = profileMap[d.created_by] || { name: 'Unknown', personnelId: null };
-    const count   = replyMap[d.id]   || 0;
-    const lastTs  = lastMsgMap[d.id] || d.updated_at;
+    const prof     = profileMap[d.created_by] || { name: 'Unknown', personnelId: null };
+    const count    = replyMap[d.id]   || 0;
+    const lastTs   = lastMsgMap[d.id] || d.updated_at;
     const isActive = d.id === _activeDiscId;
     return `
       <div class="disc-thread-row" data-disc-id="${d.id}" style="
@@ -157,17 +161,26 @@ export async function renderDiscussionThread({ container, contextType, contextId
           style="flex-shrink:0;width:34px;height:34px;border-radius:50%;background:#E2DDD6;"></div>
         <div style="flex:1;min-width:0;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:2px;">
-            <div style="font-size:13px;font-weight:500;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(d.title)}</div>
+            <div style="display:flex;align-items:center;gap:5px;min-width:0;">
+              ${d.pinned ? `<i class="fa-solid fa-thumbtack" style="color:#C9A84C;font-size:10px;flex-shrink:0;transform:rotate(45deg);"></i>` : ''}
+              <div style="font-size:13px;font-weight:500;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(d.title)}</div>
+            </div>
             <div style="font-size:11px;color:#9CA3AF;flex-shrink:0;">${_relTime(lastTs)}</div>
           </div>
           <div style="font-size:12px;color:#9CA3AF;">
             ${_esc(prof.name)}${count ? ` · ${count} repl${count === 1 ? 'y' : 'ies'}` : ''}
           </div>
         </div>
-        <button class="disc-delete-btn" data-disc-id="${d.id}" title="Delete thread" style="
-          display:none;flex-shrink:0;background:none;border:none;cursor:pointer;
-          color:#8B1A2F;font-size:13px;padding:2px 4px;line-height:1;
-        "><i class="fa-solid fa-trash"></i></button>
+        <div class="disc-row-actions" style="display:none;flex-shrink:0;align-items:center;gap:2px;">
+          ${canPin ? `<button class="disc-pin-btn" data-disc-id="${d.id}" title="${d.pinned ? 'Unpin thread' : 'Pin thread'}" style="
+            background:none;border:none;cursor:pointer;
+            color:${d.pinned ? '#C9A84C' : '#C0BAB2'};font-size:11px;padding:2px 4px;line-height:1;
+          "><i class="fa-solid fa-thumbtack"></i></button>` : ''}
+          <button class="disc-delete-btn" data-disc-id="${d.id}" title="Delete thread" style="
+            background:none;border:none;cursor:pointer;
+            color:#C0BAB2;font-size:13px;padding:2px 4px;line-height:1;
+          ">✕</button>
+        </div>
       </div>`;
   }
 
@@ -180,25 +193,33 @@ export async function renderDiscussionThread({ container, contextType, contextId
     });
 
     container.querySelectorAll('.disc-thread-row').forEach(row => {
-      const delBtn = row.querySelector('.disc-delete-btn');
+      const actions = row.querySelector('.disc-row-actions');
+      const pinBtn  = row.querySelector('.disc-pin-btn');
+      const delBtn  = row.querySelector('.disc-delete-btn');
       row.addEventListener('mouseenter', () => {
         if (row.dataset.discId !== _activeDiscId) row.style.background = '#F8F7F4';
-        if (delBtn) delBtn.style.display = 'block';
+        if (actions) actions.style.display = 'flex';
       });
       row.addEventListener('mouseleave', () => {
         if (row.dataset.discId !== _activeDiscId) row.style.background = '#FAFAF8';
-        if (delBtn) delBtn.style.display = 'none';
+        if (actions) actions.style.display = 'none';
       });
       row.addEventListener('click', e => {
-        if (e.target.closest('.disc-delete-btn')) return;
+        if (e.target.closest('.disc-row-actions')) return;
         const id = row.dataset.discId;
         if (_activeDiscId && _activeDiscId !== id && _subs[_activeDiscId]) {
           sb.removeChannel(_subs[_activeDiscId]); delete _subs[_activeDiscId];
         }
         _activeDiscId = (_activeDiscId === id && !isMobile()) ? null : id;
         rerender();
-        if (_activeDiscId && isMobile()) _loadThread(_activeDiscId, currentUserId, profileMap, onBack, list.find(d => d.id === _activeDiscId), true, canPin);
+        if (_activeDiscId && isMobile()) _loadThread(_activeDiscId, currentUserId, profileMap, onBack, list.find(d => d.id === _activeDiscId), true);
       });
+      if (pinBtn) {
+        pinBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          _toggleDiscPin(pinBtn.dataset.discId);
+        });
+      }
       if (delBtn) {
         delBtn.addEventListener('click', e => {
           e.stopPropagation();
@@ -216,14 +237,35 @@ export async function renderDiscussionThread({ container, contextType, contextId
     });
   }
 
+  // ── Pin thread ──────────────────────────────────────────────────────────
+
+  async function _toggleDiscPin(discId) {
+    const disc = list.find(d => d.id === discId);
+    if (!disc) return;
+    const newPinned = !disc.pinned;
+    const now = new Date().toISOString();
+    await sb.from('discussions').update({
+      pinned: newPinned,
+      pinned_at: newPinned ? now : null,
+    }).eq('id', discId);
+    disc.pinned    = newPinned;
+    disc.pinned_at = newPinned ? now : null;
+    list.sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1;
+      if (!a.pinned && b.pinned) return 1;
+      if (a.pinned && b.pinned) return (b.pinned_at || '').localeCompare(a.pinned_at || '');
+      return (b.updated_at || '').localeCompare(a.updated_at || '');
+    });
+    rerender();
+  }
+
   // ── Delete thread ───────────────────────────────────────────────────────
 
   async function _deleteThread(discId) {
     if (!confirm('Delete this thread and all its replies? This cannot be undone.')) return;
     await sb.from('discussion_messages').delete().eq('discussion_id', discId);
     await sb.from('discussions').delete().eq('id', discId);
-    if (_subs[discId])    { sb.removeChannel(_subs[discId]);    delete _subs[discId]; }
-    if (_pinSubs[discId]) { sb.removeChannel(_pinSubs[discId]); delete _pinSubs[discId]; }
+    if (_subs[discId]) { sb.removeChannel(_subs[discId]); delete _subs[discId]; }
     list = list.filter(d => d.id !== discId);
     delete replyMap[discId];
     delete lastMsgMap[discId];
@@ -257,7 +299,7 @@ async function _fillProfiles(ids, profileMap) {
 
 // ── Thread pane (shared between desktop right column and mobile) ────────────
 
-async function _loadThread(discId, currentUserId, profileMap, rerender, discOverride, showBack = false, canPin = false) {
+async function _loadThread(discId, currentUserId, profileMap, rerender, discOverride, showBack = false) {
   const pane = document.getElementById('disc-thread-pane');
   if (!pane) return;
 
@@ -270,7 +312,6 @@ async function _loadThread(discId, currentUserId, profileMap, rerender, discOver
       ${showBack ? `<button id="disc-back-btn" style="background:none;border:none;cursor:pointer;color:#1C2B3A;font-size:16px;padding:0 4px 0 0;line-height:1;"><i class="fa-solid fa-arrow-left"></i></button>` : ''}
       <div style="flex:1;font-size:14px;font-weight:600;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(title)}</div>
     </div>
-    <div id="disc-pinned-bar-${discId}" style="flex-shrink:0;padding:0 1rem;background:#fff;"></div>
     <div id="disc-msgs-${discId}" style="flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:0;background:#fff;">
       <div style="font-size:12px;color:#9CA3AF;text-align:center;">Loading…</div>
     </div>
@@ -288,7 +329,6 @@ async function _loadThread(discId, currentUserId, profileMap, rerender, discOver
 
   document.getElementById('disc-back-btn')?.addEventListener('click', () => {
     if (_subs[discId]) { sb.removeChannel(_subs[discId]); delete _subs[discId]; }
-    if (_pinSubs[discId]) { sb.removeChannel(_pinSubs[discId]); delete _pinSubs[discId]; }
     rerender?.();
   });
 
@@ -300,29 +340,12 @@ async function _loadThread(discId, currentUserId, profileMap, rerender, discOver
   const msgs = rawMsgs || [];
   await _fillProfiles([...new Set(msgs.map(m => m.sender_id).filter(Boolean))], profileMap);
 
-  const { data: discData } = await sb.from('discussions').select('pinned_message_id').eq('id', discId).single();
-  let pinnedMsgId = discData?.pinned_message_id || null;
-
-  const reRenderPin = (newId) => {
-    pinnedMsgId = newId;
-    _renderMsgs(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPin);
-    _renderDiscPinnedBar(discId, msgs, profileMap, pinnedMsgId, canPin, doPin);
-    _wireInput(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPin, doPin);
-  };
-
-  const doPin = async (newId) => {
-    await sb.from('discussions').update({ pinned_message_id: newId }).eq('id', discId);
-    reRenderPin(newId);
-  };
-
-  _renderMsgs(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPin);
-  _renderDiscPinnedBar(discId, msgs, profileMap, pinnedMsgId, canPin, doPin);
-  _wireInput(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPin, doPin);
-  _subscribeThread(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPin, doPin);
-  _subscribePinUpdates(discId, msgs, profileMap, currentUserId, canPin, reRenderPin);
+  _renderMsgs(discId, msgs, currentUserId, profileMap);
+  _wireInput(discId, msgs, currentUserId, profileMap);
+  _subscribeThread(discId, msgs, currentUserId, profileMap);
 }
 
-function _renderMsgs(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPin) {
+function _renderMsgs(discId, msgs, currentUserId, profileMap) {
   const el = document.getElementById('disc-msgs-' + discId);
   if (!el) return;
 
@@ -332,36 +355,24 @@ function _renderMsgs(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPi
   }
 
   el.innerHTML = msgs.map(m => {
-    const isMine   = m.sender_id === currentUserId;
-    const prof     = profileMap[m.sender_id] || { name: 'User', personnelId: null };
-    const isPinned = m.id === pinnedMsgId;
-    const pinBtn   = canPin ? `
-      <button class="disc-pin-btn" data-msg-id="${m.id}" title="${isPinned ? 'Unpin' : 'Pin message'}" style="
-        display:none;background:none;border:none;cursor:pointer;padding:2px 4px;
-        color:${isPinned ? '#C9A84C' : '#999'};font-size:11px;line-height:1;flex-shrink:0;align-self:center;
-      "><i class="fa-solid fa-thumbtack"></i></button>` : '';
+    const isMine = m.sender_id === currentUserId;
+    const prof   = profileMap[m.sender_id] || { name: 'User', personnelId: null };
     return `
-      <div class="disc-msg-row" data-msg-id="${m.id}" style="
-        display:flex;align-items:flex-end;gap:8px;margin-bottom:.6rem;
-        justify-content:${isMine ? 'flex-end' : 'flex-start'};
-      ">
+      <div style="display:flex;align-items:flex-end;gap:8px;margin-bottom:.6rem;justify-content:${isMine ? 'flex-end' : 'flex-start'};">
         ${!isMine ? `<div class="disc-msg-avatar" data-uid="${m.sender_id || ''}" data-name="${_esc(prof.name)}" data-pid="${prof.personnelId || ''}"
           style="width:26px;height:26px;border-radius:50%;background:#E2DDD6;flex-shrink:0;margin-bottom:2px;"></div>` : ''}
-        ${isMine ? pinBtn : ''}
         <div style="max-width:72%;display:flex;flex-direction:column;${isMine ? 'align-items:flex-end;' : 'align-items:flex-start;'}">
           <div style="font-size:11px;color:#9CA3AF;margin-bottom:2px;">
             ${isMine ? '' : `${_esc(prof.name)} · `}${_relTime(m.created_at)}
           </div>
-          <div id="disc-bubble-${m.id}" style="
+          <div style="
             background:${isMine ? '#1C2B3A' : '#F0F0F0'};
             color:${isMine ? '#fff' : '#1C2B3A'};
             border-radius:18px;
             ${isMine ? 'border-bottom-right-radius:4px;' : 'border-bottom-left-radius:4px;'}
             padding:9px 14px;font-size:13px;line-height:1.45;word-break:break-word;white-space:pre-wrap;
-            ${isPinned ? 'outline:2px solid #C9A84C;outline-offset:1px;' : ''}
           ">${_esc(m.body)}</div>
         </div>
-        ${!isMine ? pinBtn : ''}
       </div>`;
   }).join('');
 
@@ -370,67 +381,10 @@ function _renderMsgs(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPi
     createAvatar({ container: slot, userId: pid || uid, name: name || uid, size: 26 });
   });
 
-  if (canPin) {
-    el.querySelectorAll('.disc-msg-row').forEach(row => {
-      const btn = row.querySelector('.disc-pin-btn');
-      if (!btn) return;
-      row.addEventListener('mouseenter', () => { btn.style.display = 'block'; });
-      row.addEventListener('mouseleave', () => { btn.style.display = 'none'; });
-    });
-  }
-
   el.scrollTop = el.scrollHeight;
 }
 
-function _renderDiscPinnedBar(discId, msgs, profileMap, pinnedMsgId, canPin, onToggle) {
-  const bar = document.getElementById('disc-pinned-bar-' + discId);
-  if (!bar) return;
-  if (!pinnedMsgId) { bar.innerHTML = ''; return; }
-
-  const msg    = msgs.find(m => m.id === pinnedMsgId);
-  const sender = msg ? (profileMap[msg.sender_id]?.name || 'User') : 'Unknown';
-  const preview = msg ? _truncate(msg.body, 60) : '…';
-
-  bar.innerHTML = `
-    <div style="
-      display:flex;align-items:center;gap:10px;
-      border-left:3px solid #C9A84C;background:#F8F7F4;
-      padding:8px 12px;border-radius:4px;margin:8px 0 0;
-      box-shadow:0 1px 3px rgba(0,0,0,.06);
-    ">
-      <i class="fa-solid fa-thumbtack" style="color:#C9A84C;font-size:12px;flex-shrink:0;"></i>
-      <div style="flex:1;min-width:0;">
-        <div style="font-size:11px;color:#9CA3AF;margin-bottom:1px;">${_esc(sender)}</div>
-        <div style="font-size:12.5px;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(preview)}</div>
-      </div>
-      <button id="disc-jump-pin-${discId}" style="background:none;border:none;cursor:pointer;font-size:12px;color:#8B1A2F;font-family:'Inter',sans-serif;white-space:nowrap;flex-shrink:0;">Jump</button>
-      ${canPin ? `<button id="disc-unpin-${discId}" style="background:none;border:.5px solid #D1C9BE;border-radius:4px;cursor:pointer;font-size:11.5px;color:#6B7280;padding:2px 8px;font-family:'Inter',sans-serif;flex-shrink:0;">Unpin</button>` : ''}
-    </div>`;
-
-  document.getElementById(`disc-jump-pin-${discId}`)?.addEventListener('click', () => {
-    const target = document.getElementById('disc-bubble-' + pinnedMsgId);
-    if (!target) return;
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    const orig = target.style.background;
-    target.style.transition = 'background .2s';
-    target.style.background = '#C9A84C44';
-    setTimeout(() => { target.style.background = orig; }, 1000);
-  });
-
-  if (canPin) {
-    document.getElementById(`disc-unpin-${discId}`)?.addEventListener('click', () => onToggle(null));
-  }
-
-  // Wire pin buttons now that bar is rendered
-  document.getElementById('disc-msgs-' + discId)?.querySelectorAll('.disc-pin-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const newId = btn.dataset.msgId === pinnedMsgId ? null : btn.dataset.msgId;
-      onToggle(newId);
-    });
-  });
-}
-
-function _wireInput(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPin, doPin) {
+function _wireInput(discId, msgs, currentUserId, profileMap) {
   const input   = document.getElementById('disc-reply-' + discId);
   const sendBtn = document.getElementById('disc-send-' + discId);
   if (!input || !sendBtn) return;
@@ -446,9 +400,8 @@ function _wireInput(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPin
     if (error) { console.error('[discussionThread] send failed:', error); return; }
     if (!msgs.find(m => m.id === newMsg.id)) msgs.push(newMsg);
     await sb.from('discussions').update({ updated_at: new Date().toISOString() }).eq('id', discId);
-    _renderMsgs(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPin);
-    _renderDiscPinnedBar(discId, msgs, profileMap, pinnedMsgId, canPin, doPin);
-    _wireInput(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPin, doPin);
+    _renderMsgs(discId, msgs, currentUserId, profileMap);
+    _wireInput(discId, msgs, currentUserId, profileMap);
   };
 
   sendBtn.addEventListener('click', doSend);
@@ -460,7 +413,7 @@ function _wireInput(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPin
   input.focus();
 }
 
-function _subscribeThread(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPin, doPin) {
+function _subscribeThread(discId, msgs, currentUserId, profileMap) {
   if (_subs[discId]) sb.removeChannel(_subs[discId]);
   _subs[discId] = sb.channel('disc-' + discId)
     .on('postgres_changes', {
@@ -471,22 +424,8 @@ function _subscribeThread(discId, msgs, currentUserId, profileMap, pinnedMsgId, 
       if (msgs.find(m => m.id === msg.id)) return;
       await _fillProfiles([msg.sender_id].filter(Boolean), profileMap);
       msgs.push(msg);
-      _renderMsgs(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPin);
-      _renderDiscPinnedBar(discId, msgs, profileMap, pinnedMsgId, canPin, doPin);
-      _wireInput(discId, msgs, currentUserId, profileMap, pinnedMsgId, canPin, doPin);
-    })
-    .subscribe();
-}
-
-function _subscribePinUpdates(discId, msgs, profileMap, currentUserId, canPin, doPin) {
-  if (_pinSubs[discId]) sb.removeChannel(_pinSubs[discId]);
-  _pinSubs[discId] = sb.channel('disc-pin-' + discId)
-    .on('postgres_changes', {
-      event: 'UPDATE', schema: 'public', table: 'discussions',
-      filter: `id=eq.${discId}`,
-    }, payload => {
-      const newPinId = payload.new.pinned_message_id || null;
-      doPin && doPin(newPinId);
+      _renderMsgs(discId, msgs, currentUserId, profileMap);
+      _wireInput(discId, msgs, currentUserId, profileMap);
     })
     .subscribe();
 }
