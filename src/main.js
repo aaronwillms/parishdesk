@@ -101,7 +101,6 @@ async function startApp(user) {
 
   initModal();
   initLiturgical();
-  loadCalendar();
 
   // Phase 1 — non-user-dependent data (parallel)
   try {
@@ -133,6 +132,9 @@ async function startApp(user) {
   } catch (e) {
     console.error('[startApp] loadInit failed:', e);
   }
+
+  // Load calendar after loadInit so currentUserId is set before the personal Google Calendar query
+  loadCalendar();
 
   console.log('[startApp] switching to dashboard');
   window.switchPanel('dashboard');
