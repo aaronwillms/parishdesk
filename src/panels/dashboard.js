@@ -61,8 +61,9 @@ export async function loadCalendar() {
     }
 
     const now = new Date();
-    const cutoff = new Date(now);
-    cutoff.setDate(cutoff.getDate() + 14);
+    const todayStr = now.toDateString();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const endOfDay   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString();
 
     const allEvents = [];
 
@@ -70,10 +71,10 @@ export async function loadCalendar() {
       if (cal.type === 'google') {
         try {
           console.log('[dashboard] fetching google calendar events for userId:', currentUserId);
-          const proxyRes = await fetch('/google-calendar-proxy',{
+          const proxyRes = await fetch('/google-calendar-proxy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: currentUserId, action: 'list' }),
+            body: JSON.stringify({ user_id: currentUserId, action: 'list', timeMin: startOfDay, timeMax: endOfDay }),
           });
           if (!proxyRes.ok) throw new Error(await proxyRes.text());
           const gcalData = await proxyRes.json();
@@ -82,16 +83,14 @@ export async function loadCalendar() {
             if (!startRaw) continue;
             const start = new Date(startRaw);
             const allDay = !item.start?.dateTime;
-            if (start >= now && start <= cutoff) {
-              allEvents.push({
-                title:     item.summary || '(No title)',
-                start,
-                allDay,
-                _calName:  cal.name,
-                _calColor: cal.color || '#1565C0',
-                _gcalId:   item.id,
-              });
-            }
+            allEvents.push({
+              title:     item.summary || '(No title)',
+              start,
+              allDay,
+              _calName:  cal.name,
+              _calColor: cal.color || '#1565C0',
+              _gcalId:   item.id,
+            });
           }
         } catch (e) {
           console.warn('[calendar] Google Calendar fetch failed:', e);
@@ -99,12 +98,12 @@ export async function loadCalendar() {
         return;
       }
 
-      // ICS
+      // ICS — filter to today only
       const raw = await _fetchICS(cal.url);
       const events = parseICS(raw);
       for (const ev of events) {
         if (!ev.start) continue;
-        if (ev.start >= now && ev.start <= cutoff) {
+        if (ev.start.toDateString() === todayStr) {
           allEvents.push({ ...ev, _calName: cal.name, _calColor: cal.color });
         }
       }

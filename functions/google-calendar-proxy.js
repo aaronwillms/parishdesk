@@ -57,7 +57,7 @@ export async function onRequestPost(context) {
     });
   }
 
-  const { user_id, action, calendarId = 'primary', event } = body;
+  const { user_id, action, calendarId = 'primary', event, timeMin, timeMax } = body;
   if (!user_id || !action) {
     return new Response(JSON.stringify({ error: 'Missing user_id or action', received: { user_id, action } }), {
       status: 400,
@@ -85,11 +85,11 @@ export async function onRequestPost(context) {
   }
 
   if (action === 'list') {
-    const now = new Date().toISOString();
-    const cutoff = new Date(Date.now() + 14 * 86400_000).toISOString();
+    const timeMinParam = timeMin || new Date().toISOString();
+    const timeMaxParam = timeMax || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const gcalRes = await fetch(
       `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events` +
-      `?timeMin=${encodeURIComponent(now)}&timeMax=${encodeURIComponent(cutoff)}&singleEvents=true&orderBy=startTime&maxResults=50`,
+      `?timeMin=${encodeURIComponent(timeMinParam)}&timeMax=${encodeURIComponent(timeMaxParam)}&singleEvents=true&orderBy=startTime&maxResults=50`,
       { headers: { 'Authorization': `Bearer ${accessToken}` } }
     );
     if (!gcalRes.ok) return new Response(await gcalRes.text(), { status: gcalRes.status });
