@@ -242,7 +242,8 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     const addRow = document.createElement('div');
     addRow.className = 'cp-add-row';
     addRow.innerHTML = '<span>ï¼‹</span><span>Add new contact</span>';
-    addRow.addEventListener('mousedown', e => { e.preventDefault(); showNewForm(query); });
+    addRow.addEventListener('mousedown', e => e.preventDefault());
+    addRow.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); showNewForm(query); });
     dropdown.appendChild(addRow);
 
     openDropdown();
@@ -258,7 +259,6 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
       <div style="font-size:12px;font-weight:600;color:#555;margin-bottom:2px;">New contact</div>
       <input id="cp-new-name"  placeholder="Full name *"  value="${prefillName}" />
       <input id="cp-new-title" placeholder="Title / role (optional)" />
-      <input id="cp-new-email" type="email" placeholder="Email (optional)" value="${prefillEmail}" />
       <div id="cp-new-error" style="font-size:11px;color:#8B1A2F;min-height:14px;margin-top:2px;"></div>
       <div class="cp-new-form-actions">
         <button type="button" class="cp-btn-save"   id="cp-new-save">Add &amp; select</button>
@@ -268,15 +268,19 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     dropdown.appendChild(form);
     openDropdown();
 
+    // Stop ALL click and mousedown events inside the form from reaching parent handlers
+    form.addEventListener('mousedown', e => e.stopPropagation());
+    form.addEventListener('click',     e => e.stopPropagation());
+
     form.querySelector('#cp-new-name').focus();
 
     const saveBtn = form.querySelector('#cp-new-save');
     const errEl   = form.querySelector('#cp-new-error');
 
-    saveBtn.addEventListener('click', async () => {
+    saveBtn.addEventListener('click', async e => {
+      e.stopPropagation();
       const nameVal  = form.querySelector('#cp-new-name').value.trim();
       const titleVal = form.querySelector('#cp-new-title').value.trim() || null;
-      const emailVal = form.querySelector('#cp-new-email').value.trim() || null;
 
       if (!nameVal) {
         errEl.textContent = 'Name is required.';
@@ -292,7 +296,6 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
         const { data, error } = await sb.from('personnel').insert({
           name:        nameVal,
           title:       titleVal,
-          email:       emailVal,
           type:        'staff',
           active:      true,
           institution: 'The Basilica of Saint Mary',
@@ -318,7 +321,8 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
       }
     });
 
-    form.querySelector('#cp-new-cancel').addEventListener('mousedown', e => {
+    form.querySelector('#cp-new-cancel').addEventListener('click', e => {
+      e.stopPropagation();
       e.preventDefault();
       closeDropdown();
     });
