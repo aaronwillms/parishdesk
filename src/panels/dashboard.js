@@ -26,7 +26,7 @@ function _fmtEventDate(date) {
 }
 
 async function _fetchICS(url) {
-  const proxyUrl = '/functions/calendar?url=' + encodeURIComponent(url);
+  const proxyUrl = '/calendar?url=' + encodeURIComponent(url);
   const res = await fetch(proxyUrl);
   if (!res.ok) throw new Error('ICS fetch failed: ' + res.status);
   return res.text();
@@ -88,8 +88,9 @@ export async function loadCalendar() {
               start,
               allDay,
               _calName:  cal.name,
-              _calColor: cal.color || '#1565C0',
+              _calColor: cal._personalGoogle ? (store.currentUserProfile?.calendar_color || cal.color || '#C9A84C') : (cal.color || '#1565C0'),
               _gcalId:   item.id,
+              _priority: cal._personalGoogle ? 1 : 2,
             });
           }
         } catch (e) {
@@ -101,27 +102,42 @@ export async function loadCalendar() {
       // ICS — filter to today only
       const raw = await _fetchICS(cal.url);
       const events = parseICS(raw);
+      console.log('[dashboard] ICS events parsed:', events);
       for (const ev of events) {
         if (!ev.start) continue;
         if (ev.start.toDateString() === todayStr) {
-          allEvents.push({ ...ev, _calName: cal.name, _calColor: cal.color });
+          allEvents.push({ ...ev, _calName: cal.name, _calColor: cal.color, _priority: 3 });
         }
       }
     }));
 
-    // Sort by start date; stubs last
-    allEvents.sort((a, b) => {
+    // Sort by priority first so higher-priority sources win deduplication
+    allEvents.sort((a, b) => (a._priority || 9) - (b._priority || 9));
+
+    // Deduplicate: same title (case-insensitive) within a 15-minute window
+    const seen = [];
+    const dedupedEvents = allEvents.filter(ev => {
+      const dup = seen.some(s =>
+        s.title.toLowerCase().trim() === ev.title.toLowerCase().trim() &&
+        Math.abs(new Date(s.start) - new Date(ev.start)) < 15 * 60 * 1000
+      );
+      if (!dup) { seen.push(ev); return true; }
+      return false;
+    });
+
+    // Sort by start time ascending; stubs last
+    dedupedEvents.sort((a, b) => {
       if (a._stub && !b._stub) return 1;
       if (!a._stub && b._stub) return -1;
       return a.start - b.start;
     });
 
-    if (!allEvents.length) {
+    if (!dedupedEvents.length) {
       c.innerHTML = '<div style="font-size:13px;color:#6B7280;font-style:italic;">No upcoming events.</div>';
       return;
     }
 
-    c.innerHTML = allEvents.map(ev => {
+    c.innerHTML = dedupedEvents.map(ev => {
       if (ev._stub) {
         return `<div class="sched-item" style="opacity:.55;font-style:italic;">
           <span class="sched-dot" style="background:${ev._calColor};flex-shrink:0;"></span>

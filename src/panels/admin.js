@@ -18,7 +18,7 @@ let _users = [];
 let _expandedUserId = null;
 let _currentAuthUserId = null;
 
-const CAL_PRESETS = ['#1C2B3A', '#8B1A2F', '#2E7D32', '#1565C0', '#6A1B9A', '#E65100'];
+const CAL_PRESETS = ['#1C2B3A', '#8B1A2F', '#C9A84C', '#1565C0', '#2E7D32', '#6A1B9A', '#00695C', '#E65100'];
 
 // ── Public entry point ─────────────────────────────────────────────────────
 
@@ -536,24 +536,42 @@ async function _saveUser(userId) {
 
 // ── Calendars tab ──────────────────────────────────────────────────────────
 
+function _calColorPickers(selectedColor) {
+  const sel = selectedColor || CAL_PRESETS[0];
+  return CAL_PRESETS.map(c => `
+    <label style="display:inline-flex;align-items:center;margin:0;cursor:pointer;" title="${c}">
+      <input type="radio" name="cal-color" value="${c}" ${sel === c ? 'checked' : ''} style="display:none;" />
+      <span style="
+        display:block;width:20px;height:20px;border-radius:50%;background:${c};
+        outline:${sel === c ? '2.5px solid #C9A84C' : '2.5px solid transparent'};
+        outline-offset:2px;cursor:pointer;transition:outline .1s;
+      " onclick="this.previousElementSibling.click();
+        document.querySelectorAll('[name=cal-color]').forEach(r=>{
+          r.nextElementSibling.style.outline=r.checked?'2.5px solid #C9A84C':'2.5px solid transparent';
+        })"></span>
+    </label>`).join('');
+}
+
 async function _renderCalendarsTab() {
   const el = document.getElementById('admin-tab-content');
   if (!el) return;
   el.innerHTML = '<div style="font-size:13px;color:#9CA3AF;">Loading…</div>';
 
-  const { data: cals, error } = await sb
-    .from('calendars')
-    .select('*')
-    .eq('scope', 'parish')
-    .order('created_at');
-  if (error) { el.innerHTML = `<div style="color:#E74C3C;font-size:13px;">Error: ${error.message}</div>`; return; }
+  const [calsRes, settingsRes] = await Promise.all([
+    sb.from('calendars').select('*').eq('scope', 'parish').order('created_at'),
+    sb.from('parish_settings').select('*').limit(1).maybeSingle(),
+  ]);
+  if (calsRes.error) { el.innerHTML = `<div style="color:#E74C3C;font-size:13px;">Error: ${calsRes.error.message}</div>`; return; }
 
-  const rows = (cals || []).map(c => `
+  const cals = calsRes.data || [];
+  const ps   = settingsRes.data || {};
+
+  const rows = cals.map(c => `
     <div style="display:flex;align-items:center;gap:10px;padding:.65rem 0;border-bottom:.5px solid #F0EDE8;">
-      <div style="width:12px;height:12px;border-radius:50%;background:${c.color};flex-shrink:0;"></div>
+      <div style="width:12px;height:12px;border-radius:50%;background:${c.color || '#1C2B3A'};flex-shrink:0;"></div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:13.5px;font-weight:500;color:#1C2B3A;">${c.name}</div>
-        <div style="font-size:11.5px;color:#9CA3AF;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.url}</div>
+        <div style="font-size:11.5px;color:#9CA3AF;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.url || ''}</div>
       </div>
       <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:${c.type === 'google' ? '#E8F5E9' : '#EEF2FF'};color:${c.type === 'google' ? '#2E7D32' : '#3730A3'};">${c.type === 'google' ? 'Google' : 'ICS'}</span>
       <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#6B7280;margin:0;cursor:pointer;letter-spacing:normal;">
@@ -561,31 +579,116 @@ async function _renderCalendarsTab() {
           style="width:auto;accent-color:#8B1A2F;cursor:pointer;" />
         Active
       </label>
+      <button class="cal-edit-btn" data-cal-id="${c.id}" style="
+        background:none;border:none;cursor:pointer;color:#6B7280;font-size:13px;padding:0;flex-shrink:0;
+      " title="Edit" onmouseover="this.style.color='#1C2B3A'" onmouseout="this.style.color='#6B7280'">
+        <i class="fa-solid fa-pencil"></i>
+      </button>
       <button class="cal-delete-btn" data-cal-id="${c.id}" data-cal-name="${c.name}" style="
         background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:15px;padding:0;flex-shrink:0;
       " title="Delete" onmouseover="this.style.color='#8B1A2F'" onmouseout="this.style.color='#D1D5DB'">✕</button>
     </div>`).join('');
 
+  // Parish calendar assignment section
+  const calOptions = cals.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+  const noneOpt    = `<option value="">— None —</option>`;
+
+  const postTeams      = ps.calendar_post_teams      !== false;
+  const postProjects   = ps.calendar_post_projects   !== false;
+  const postSacrament  = ps.calendar_post_sacramental !== false;
+  const hasInternal    = !!ps.internal_calendar_id;
+
+  const _calSelect = (id, selectedId, placeholder = true) =>
+    `<select id="${id}" style="width:100%;padding:.35rem .6rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:12.5px;font-family:'Inter',sans-serif;color:#1C2B3A;background:#fff;cursor:pointer;">
+      ${placeholder ? noneOpt : ''}
+      ${cals.map(c => `<option value="${c.id}" ${c.id === selectedId ? 'selected' : ''}>${c.name}</option>`).join('')}
+    </select>`;
+
   el.innerHTML = `
-    <div style="max-width:600px;">
+    <div style="max-width:620px;">
       <div style="display:flex;justify-content:flex-end;margin-bottom:1rem;">
         <button id="cal-add-btn" style="
           padding:.4rem 1rem;background:#1C2B3A;color:#fff;border:none;border-radius:5px;
           font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
         ">+ Add Calendar</button>
       </div>
-      <div id="cal-list">
-        ${rows || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No parish calendars yet.</div>'}
+
+      <div id="cal-list" style="margin-bottom:1.5rem;">
+        ${rows || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;padding:.5rem 0;">No parish calendars yet.</div>'}
       </div>
+
+      ${cals.length ? `
+      <div style="border-top:.5px solid #E2DDD6;padding-top:1.25rem;margin-bottom:.5rem;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:1rem;">Calendar Assignments</div>
+
+        <!-- Public parish calendar -->
+        <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:7px;padding:1rem 1.1rem;margin-bottom:.85rem;">
+          <div style="font-size:13px;font-weight:600;color:#1C2B3A;margin-bottom:.4rem;">Public Parish Calendar</div>
+          <div style="font-size:12px;color:#6B7280;margin-bottom:.7rem;">Events from this calendar are displayed on the dashboard for all users.</div>
+          ${_calSelect('ps-public-cal', ps.public_calendar_id)}
+        </div>
+
+        <!-- Internal parish calendar -->
+        <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:7px;padding:1rem 1.1rem;margin-bottom:.85rem;">
+          <div style="font-size:13px;font-weight:600;color:#1C2B3A;margin-bottom:.4rem;">Internal Parish Calendar</div>
+          <div style="font-size:12px;color:#6B7280;margin-bottom:.7rem;">ParishDesk posts team, project, and sacramental events to this calendar.</div>
+          ${_calSelect('ps-internal-cal', ps.internal_calendar_id)}
+          <div id="ps-internal-sub" style="margin-top:.85rem;display:${hasInternal ? 'block' : 'none'};">
+            <div style="font-size:11.5px;font-weight:600;color:#6B7280;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.05em;">Post to this calendar</div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-bottom:.4rem;cursor:pointer;">
+              <input type="checkbox" id="ps-post-teams" ${postTeams ? 'checked' : ''} style="accent-color:#8B1A2F;" onchange="window._calSubToggle()">
+              Team events
+            </label>
+            <div id="ps-teams-alt" style="display:${!postTeams ? 'flex' : 'none'};align-items:center;gap:8px;margin-bottom:.5rem;padding-left:1.5rem;">
+              <span style="font-size:12px;color:#6B7280;white-space:nowrap;">Use separate calendar:</span>
+              ${_calSelect('ps-teams-cal', ps.teams_calendar_id)}
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-bottom:.4rem;cursor:pointer;">
+              <input type="checkbox" id="ps-post-projects" ${postProjects ? 'checked' : ''} style="accent-color:#8B1A2F;" onchange="window._calSubToggle()">
+              Project events
+            </label>
+            <div id="ps-projects-alt" style="display:${!postProjects ? 'flex' : 'none'};align-items:center;gap:8px;margin-bottom:.5rem;padding-left:1.5rem;">
+              <span style="font-size:12px;color:#6B7280;white-space:nowrap;">Use separate calendar:</span>
+              ${_calSelect('ps-projects-cal', ps.projects_calendar_id)}
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-bottom:.4rem;cursor:pointer;">
+              <input type="checkbox" id="ps-post-sacramental" ${postSacrament ? 'checked' : ''} style="accent-color:#8B1A2F;" onchange="window._calSubToggle()">
+              Sacramental events
+            </label>
+            <div id="ps-sacramental-alt" style="display:${!postSacrament ? 'flex' : 'none'};align-items:center;gap:8px;margin-bottom:.5rem;padding-left:1.5rem;">
+              <span style="font-size:12px;color:#6B7280;white-space:nowrap;">Use separate calendar:</span>
+              ${_calSelect('ps-sacramental-cal', ps.sacramental_calendar_id)}
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;">
+          <button id="ps-cal-save-btn" style="
+            padding:.4rem 1.1rem;background:#8B1A2F;color:#fff;border:none;border-radius:5px;
+            font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
+          ">Save Assignments</button>
+          <span id="ps-cal-save-status" style="font-size:12px;color:#6B7280;align-self:center;margin-left:10px;"></span>
+        </div>
+      </div>` : ''}
     </div>
   `;
 
+  // Active toggles
   el.querySelectorAll('.cal-active-cb').forEach(cb => {
     cb.addEventListener('change', async () => {
       await sb.from('calendars').update({ active: cb.checked }).eq('id', cb.dataset.calId);
     });
   });
 
+  // Edit buttons — fetch cal data then open modal
+  el.querySelectorAll('.cal-edit-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const { data: cal } = await sb.from('calendars').select('*').eq('id', btn.dataset.calId).maybeSingle();
+      if (cal) _openCalendarModal(cal);
+    });
+  });
+
+  // Delete buttons
   el.querySelectorAll('.cal-delete-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       if (!confirm(`Delete "${btn.dataset.calName}"?`)) return;
@@ -595,43 +698,103 @@ async function _renderCalendarsTab() {
     });
   });
 
+  // Show/hide internal sub-section when internal calendar changes
+  document.getElementById('ps-internal-cal')?.addEventListener('change', function () {
+    const sub = document.getElementById('ps-internal-sub');
+    if (sub) sub.style.display = this.value ? 'block' : 'none';
+  });
+
+  // Sub-toggle visibility
+  window._calSubToggle = () => {
+    ['teams', 'projects', 'sacramental'].forEach(key => {
+      const cb  = document.getElementById(`ps-post-${key}`);
+      const alt = document.getElementById(`ps-${key}-alt`);
+      if (cb && alt) alt.style.display = cb.checked ? 'none' : 'flex';
+    });
+  };
+
+  // Save assignments
+  document.getElementById('ps-cal-save-btn')?.addEventListener('click', async () => {
+    const statusEl = document.getElementById('ps-cal-save-status');
+    statusEl.textContent = 'Saving…'; statusEl.style.color = '#6B7280';
+
+    const publicId     = document.getElementById('ps-public-cal')?.value   || null;
+    const internalId   = document.getElementById('ps-internal-cal')?.value || null;
+    const postTeamsV   = document.getElementById('ps-post-teams')?.checked ?? true;
+    const postProjV    = document.getElementById('ps-post-projects')?.checked ?? true;
+    const postSacV     = document.getElementById('ps-post-sacramental')?.checked ?? true;
+    const teamsCal     = document.getElementById('ps-teams-cal')?.value     || null;
+    const projectsCal  = document.getElementById('ps-projects-cal')?.value  || null;
+    const sacramentalCal = document.getElementById('ps-sacramental-cal')?.value || null;
+
+    const payload = {
+      public_calendar_id:       publicId   || null,
+      internal_calendar_id:     internalId || null,
+      calendar_post_teams:      postTeamsV,
+      calendar_post_projects:   postProjV,
+      calendar_post_sacramental: postSacV,
+      teams_calendar_id:        postTeamsV    ? null : (teamsCal    || null),
+      projects_calendar_id:     postProjV     ? null : (projectsCal || null),
+      sacramental_calendar_id:  postSacV      ? null : (sacramentalCal || null),
+    };
+
+    const { error } = ps.id
+      ? await sb.from('parish_settings').update(payload).eq('id', ps.id)
+      : await sb.from('parish_settings').insert(payload);
+
+    if (error) { statusEl.textContent = 'Failed.'; statusEl.style.color = '#E74C3C'; return; }
+    store.parishSettings = { ...store.parishSettings, ...payload };
+    statusEl.textContent = 'Saved.'; statusEl.style.color = '#2D6A4F';
+    setTimeout(() => { statusEl.textContent = ''; }, 2500);
+  });
+
   document.getElementById('cal-add-btn').addEventListener('click', () => _openCalendarModal());
 }
 
 function _openCalendarModal(data) {
-  const colorPickers = CAL_PRESETS.map((c, i) => `
-    <label style="display:inline-flex;align-items:center;margin:0;cursor:pointer;" title="${c}">
-      <input type="radio" name="cal-color" value="${c}" ${(data?.color || CAL_PRESETS[0]) === c ? 'checked' : ''}
-        style="display:none;" />
-      <span style="
-        display:block;width:20px;height:20px;border-radius:50%;background:${c};
-        outline:${(data?.color || CAL_PRESETS[0]) === c ? '2.5px solid #1C2B3A' : '2.5px solid transparent'};
-        outline-offset:2px;cursor:pointer;transition:outline .1s;
-      " onclick="this.previousElementSibling.click();
-        document.querySelectorAll('[name=cal-color]').forEach(r=>{
-          r.nextElementSibling.style.outline=r.checked?'2.5px solid #1C2B3A':'2.5px solid transparent';
-        })"></span>
-    </label>`).join('');
+  const colorPickers = _calColorPickers(data?.color);
+  const isGoogle = data?.type === 'google';
 
   document.getElementById('modal-content').innerHTML = `
-    <div class="modal-title">${data ? 'Edit Calendar' : 'Add Calendar'}</div>
+    <div class="modal-title">${data?.id ? 'Edit Calendar' : 'Add Calendar'}</div>
     <label>Name</label>
     <input id="cal-name" value="${data?.name || ''}" placeholder="e.g. Parish Events" />
     <label>Type</label>
     <select id="cal-type" onchange="
       const lbl = document.getElementById('cal-url-label');
-      lbl.textContent = this.value === 'google' ? 'Calendar ID' : 'Feed URL';
+      const ph  = document.getElementById('cal-url');
+      const icsNote = document.getElementById('cal-note-ics');
+      const gNote   = document.getElementById('cal-note-google');
+      if (this.value === 'google') {
+        lbl.textContent = 'Calendar ID';
+        ph.placeholder  = 'example@group.calendar.google.com';
+        icsNote.style.display = 'none';
+        gNote.style.display   = 'flex';
+      } else {
+        lbl.textContent = 'Feed URL';
+        ph.placeholder  = 'https://…';
+        icsNote.style.display = 'flex';
+        gNote.style.display   = 'none';
+      }
     ">
-      <option value="ics"    ${(!data || data.type === 'ics')    ? 'selected' : ''}>ICS Feed</option>
-      <option value="google" ${data?.type === 'google' ? 'selected' : ''}>Google Calendar</option>
+      <option value="ics"    ${!isGoogle ? 'selected' : ''}>ICS Feed</option>
+      <option value="google" ${isGoogle  ? 'selected' : ''}>Google Calendar</option>
     </select>
-    <label id="cal-url-label">${(!data || data.type === 'ics') ? 'Feed URL' : 'Calendar ID'}</label>
-    <input id="cal-url" value="${data?.url || ''}" placeholder="${(!data || data.type === 'ics') ? 'https://…' : 'example@group.calendar.google.com'}" />
-    <label>Color</label>
+    <label id="cal-url-label">${isGoogle ? 'Calendar ID' : 'Feed URL'}</label>
+    <input id="cal-url" value="${data?.url || ''}" placeholder="${isGoogle ? 'example@group.calendar.google.com' : 'https://…'}" />
+    <div id="cal-note-ics" style="display:${isGoogle ? 'none' : 'flex'};align-items:flex-start;gap:8px;background:#F8F7F4;border:.5px solid #E2DDD6;border-radius:6px;padding:.55rem .75rem;margin-top:4px;">
+      <i class="fa-solid fa-circle-info" style="font-size:12px;color:#6B7280;flex-shrink:0;margin-top:2px;"></i>
+      <span style="font-size:12px;color:#6B7280;line-height:1.45;"><strong style="color:#374151;">ICS calendars are read-only.</strong> Events are pulled from the feed URL. To edit events, update them in the source application.</span>
+    </div>
+    <div id="cal-note-google" style="display:${isGoogle ? 'flex' : 'none'};align-items:flex-start;gap:8px;background:#F8F7F4;border:.5px solid #E2DDD6;border-radius:6px;padding:.55rem .75rem;margin-top:4px;">
+      <i class="fa-solid fa-circle-info" style="font-size:12px;color:#6B7280;flex-shrink:0;margin-top:2px;"></i>
+      <span style="font-size:12px;color:#6B7280;line-height:1.45;"><strong style="color:#374151;">Google Calendar:</strong> ParishDesk can create events here on behalf of connected users. Make sure the service account has write access to this calendar.</span>
+    </div>
+    <label style="margin-top:.75rem;">Color</label>
     <div style="display:flex;gap:10px;align-items:center;margin-top:4px;">${colorPickers}</div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn-primary" onclick="saveCalendar(${data ? `'${data.id}'` : null})">Save</button>
+      <button class="btn-primary" onclick="saveCalendar(${data?.id ? `'${data.id}'` : null})">Save</button>
     </div>
   `;
   document.getElementById('modal-overlay').classList.add('open');

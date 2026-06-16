@@ -171,6 +171,34 @@ function _render() {
         <div id="up-gcal-status" style="font-size:12px;color:#6B7280;margin-top:6px;min-height:16px;"></div>
       </div>
 
+      <!-- Calendar Color -->
+      <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.1rem 1.2rem;margin-bottom:1.5rem;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.75rem;">Calendar Color</div>
+        <div style="font-size:12.5px;color:#6B7280;margin-bottom:.65rem;">Color used for your personal Google Calendar events on the dashboard.</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:.65rem;">
+          ${['#C9A84C','#8B1A2F','#1C2B3A','#2D6A4F','#1D4ED8','#7C3AED','#DB2777','#6B7280'].map(col => `
+            <label style="margin:0;cursor:pointer;" title="${col}">
+              <input type="radio" name="cal-color-pick" value="${col}" ${(_profile?.calendar_color || '#C9A84C') === col ? 'checked' : ''}
+                style="display:none;" />
+              <span class="cal-color-swatch" style="
+                display:block;width:22px;height:22px;border-radius:50%;background:${col};
+                outline:${(_profile?.calendar_color || '#C9A84C') === col ? '2.5px solid #1C2B3A' : '2.5px solid transparent'};
+                outline-offset:2px;cursor:pointer;transition:outline .12s;
+              " onclick="
+                this.previousElementSibling.click();
+                document.querySelectorAll('.cal-color-swatch').forEach(s=>{
+                  s.style.outline=s.previousElementSibling.checked?'2.5px solid #1C2B3A':'2.5px solid transparent';
+                });
+              "></span>
+            </label>`).join('')}
+        </div>
+        <button id="up-cal-color-save" style="
+          font-size:12.5px;color:#fff;background:#1C2B3A;border:none;
+          border-radius:5px;padding:.35rem .85rem;cursor:pointer;font-family:'Inter',sans-serif;font-weight:500;
+        ">Save Color</button>
+        <span id="up-cal-color-status" style="font-size:12px;color:#6B7280;margin-left:10px;"></span>
+      </div>
+
     </div>
   `;
 
@@ -199,6 +227,22 @@ function _bindEvents() {
   // Google Calendar
   document.getElementById('up-gcal-connect')?.addEventListener('click', _connectGoogle);
   document.getElementById('up-gcal-disconnect')?.addEventListener('click', _disconnectGoogle);
+
+  // Calendar color
+  document.getElementById('up-cal-color-save')?.addEventListener('click', async () => {
+    const statusEl = document.getElementById('up-cal-color-status');
+    const selected = document.querySelector('input[name="cal-color-pick"]:checked')?.value;
+    if (!selected) return;
+    statusEl.textContent = 'Saving…';
+    statusEl.style.color = '#6B7280';
+    const { error } = await _upsertProfile({ calendar_color: selected });
+    if (error) { statusEl.textContent = 'Failed.'; statusEl.style.color = '#E74C3C'; return; }
+    _profile = { ..._profile, calendar_color: selected };
+    store.currentUserProfile = _profile;
+    statusEl.textContent = 'Saved.';
+    statusEl.style.color = '#2D6A4F';
+    setTimeout(() => { statusEl.textContent = ''; }, 2000);
+  });
 }
 
 async function _handleUpload(e) {
