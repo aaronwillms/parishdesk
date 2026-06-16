@@ -157,9 +157,9 @@ async function syncParishStaff() {
   if (!team) return;
 
   const [{ data: staff }, { data: existing }] = await Promise.all([
-    sb.from('personnel').select('id')
-      .in('employment', ['full-time', 'part-time'])
-      .eq('institution', primaryInstitution),
+    sb.from('personnel').select('id,type')
+      .eq('institution', primaryInstitution)
+      .or('employment.in.(full-time,part-time),type.in.(pastor,parochial-vicar,priest-in-residence,deacon,religious)'),
     sb.from('team_members').select('personnel_id').eq('team_id', team.id),
   ]);
   if (!staff?.length) return;

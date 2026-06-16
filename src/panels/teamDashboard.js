@@ -224,6 +224,7 @@ function _renderTabContent() {
 // ── Members tab ────────────────────────────────────────────────────────────
 
 function _renderMembers(el) {
+  _members.sort((a, b) => (a.personnel?.name || '').localeCompare(b.personnel?.name || ''));
   if (!_members.length) {
     el.innerHTML = `<div style="font-size:13px;color:#9CA3AF;font-style:italic;margin-bottom:1rem;">No members yet.</div>`;
   } else {

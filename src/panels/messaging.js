@@ -112,7 +112,23 @@ async function _renderDrop(drop) {
     return;
   }
 
-  const convIds = myParts.map(p => p.conversation_id);
+  const allConvIds = myParts.map(p => p.conversation_id);
+  const { data: convMeta } = await sb.from('conversations')
+    .select('id, deleted_at').in('id', allConvIds);
+  const activeConvIds = (convMeta || []).filter(c => !c.deleted_at).map(c => c.id);
+  if (!activeConvIds.length) {
+    drop.innerHTML = `
+      <div style="padding:.6rem 1rem;border-bottom:.5px solid #F0EDE8;display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:13px;font-weight:600;color:#1C2B3A;">Messages</span>
+        <button onclick="window._openMessagingConv(null)" style="font-size:12px;color:#8B1A2F;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;padding:0;font-weight:500;">+ New</button>
+      </div>
+      <div style="padding:2rem 1rem;text-align:center;font-size:13px;color:#9CA3AF;font-style:italic;">No conversations yet.</div>
+      <div style="padding:.6rem 1rem;border-top:.5px solid #F0EDE8;text-align:center;">
+        <button onclick="window.switchPanel('messaging',{title:'Messages'});document.getElementById('chat-drop').style.display='none';" style="font-size:12.5px;color:#8B1A2F;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;font-weight:500;">Show all messages →</button>
+      </div>`;
+    return;
+  }
+  const convIds = activeConvIds;
   const [allPartsRes, msgsRes] = await Promise.all([
     sb.from('conversation_participants').select('conversation_id, user_id').in('conversation_id', convIds),
     sb.from('messages').select('*').in('conversation_id', convIds).order('created_at', { ascending: false }),
@@ -494,15 +510,23 @@ function _renderMessages() {
   const items = _groupMessages(_messages);
   el.innerHTML = items.map(item => {
     if (item.type === 'date') {
-      return `<div style="text-align:center;font-size:11px;color:#9CA3AF;margin:10px 0 6px;font-weight:500;">${_esc(item.date)}</div>`;
+      return `
+        <div style="display:flex;align-items:center;gap:10px;margin:16px 0 12px;">
+          <div style="flex:1;height:.5px;background:#E2DDD6;"></div>
+          <div style="font-size:11px;color:#9CA3AF;font-weight:500;letter-spacing:.5px;white-space:nowrap;text-transform:uppercase;">${_esc(item.date)}</div>
+          <div style="flex:1;height:.5px;background:#E2DDD6;"></div>
+        </div>`;
     }
     const { msg, isFirst, isLast, isMine } = item;
     const uid  = msg.sender_id || '';
     const prof = uid === _currentUserId ? null : (_userProfileMap[uid] || { name: 'User', personnelId: null });
     const name = prof?.name || '';
     const pid  = prof?.personnelId || '';
+    // Avatar anchored to last message in group (iMessage style); spacer keeps alignment for earlier bubbles
     const avatarSlot = !isMine
-      ? `<div class="${isFirst ? 'msg-inline-avatar' : ''}" data-uid="${uid}" data-name="${_esc(name)}" style="width:28px;height:28px;border-radius:50%;${isFirst ? 'background:#E2DDD6;' : ''}flex-shrink:0;align-self:flex-end;"></div>`
+      ? (isLast
+          ? `<div class="msg-inline-avatar" data-uid="${uid}" data-name="${_esc(name)}" data-pid="${pid}" style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;align-self:flex-end;"></div>`
+          : `<div style="width:28px;flex-shrink:0;"></div>`)
       : '';
     return `
       <div style="display:flex;align-items:flex-end;gap:6px;justify-content:${isMine ? 'flex-end' : 'flex-start'};margin-top:${isFirst ? '8px' : '2px'};">
@@ -523,7 +547,6 @@ function _renderMessages() {
 
   el.querySelectorAll('.msg-inline-avatar').forEach(slot => {
     const { uid, name } = slot.dataset;
-    slot.style.background = '#E2DDD6';
     createAvatar({ container: slot, userId: uid, name: name || uid, size: 28 });
   });
 
@@ -532,20 +555,26 @@ function _renderMessages() {
 
 function _groupMessages(msgs) {
   const out = [];
-  let lastDate = null;
+  let lastDate   = null;
   let lastSender = null;
+  let lastTime   = null;
   for (let i = 0; i < msgs.length; i++) {
-    const m = msgs[i];
-    const d = _dateLabel(m.created_at);
+    const m     = msgs[i];
+    const d     = _dateLabel(m.created_at);
+    const mTime = new Date(m.created_at).getTime();
     if (d !== lastDate) {
       out.push({ type: 'date', date: d });
-      lastDate = d;
-      lastSender = null;
+      lastDate = d; lastSender = null; lastTime = null;
     }
-    const isFirst = m.sender_id !== lastSender;
-    const isLast  = i === msgs.length - 1 || msgs[i + 1].sender_id !== m.sender_id || _dateLabel(msgs[i + 1].created_at) !== d;
+    const gapMins  = lastTime ? (mTime - lastTime) / 60000 : Infinity;
+    const isFirst  = m.sender_id !== lastSender || gapMins > 2;
+    const next     = msgs[i + 1];
+    const nextTime = next ? new Date(next.created_at).getTime() : null;
+    const nextGap  = nextTime ? (nextTime - mTime) / 60000 : Infinity;
+    const isLast   = !next || next.sender_id !== m.sender_id || _dateLabel(next.created_at) !== d || nextGap > 2;
     out.push({ type: 'msg', msg: m, isFirst, isLast, isMine: m.sender_id === _currentUserId });
     lastSender = isLast ? null : m.sender_id;
+    lastTime   = isLast ? null : mTime;
   }
   return out;
 }

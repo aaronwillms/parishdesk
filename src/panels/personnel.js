@@ -340,18 +340,24 @@ async function deleteInstitution(id, name) {
 
 function personnelForm(data) {
   const type = data?.type || 'staff';
-  const inst = data?.institution || (store.institutions[0]?.name ?? '');
+  const inst = data?.institution || '';
   const instOptions = (store.institutions || [])
     .map(i => `<option value="${i.name}"${inst === i.name ? ' selected' : ''}>${i.name}</option>`)
     .join('');
+  const isNa = !inst;
   return `<div class="modal-title">${data ? 'Edit person' : 'Add person'}</div>
   <label>Name</label><input id="pf-name" value="${data?.name || ''}" />
-  <label>Title / role</label><input id="pf-title" value="${data?.title || ''}" />
+  <div id="pf-title-row"${isNa ? ' style="display:none;"' : ''}>
+    <label>Title / role</label><input id="pf-title" value="${data?.title || ''}" />
+  </div>
   <label>Date of Birth</label><input type="date" id="pf-dob" value="${data?.date_of_birth || ''}" />
   <label>Phone</label><input id="pf-phone" value="${data?.phone || ''}" placeholder="e.g. (601) 555-0100" />
   <label>Email</label><input id="pf-email" value="${data?.email || ''}" />
   <label>Institution</label>
-  <select id="pf-inst">${instOptions}</select>
+  <select id="pf-inst" onchange="personnelInstToggle()">
+    <option value=""${isNa ? ' selected' : ''}>N/A</option>
+    ${instOptions}
+  </select>
   <label>Type</label>
   <select id="pf-type" onchange="personnelTypeToggle()">
     <optgroup label="Clergy &amp; Religious">
@@ -388,6 +394,16 @@ function personnelTypeToggle() {
   document.getElementById('pf-emp-row').style.display = showsEmployment(type) ? '' : 'none';
 }
 
+window.personnelInstToggle = function() {
+  const isNa = !document.getElementById('pf-inst').value;
+  document.getElementById('pf-title-row').style.display = isNa ? 'none' : '';
+  if (isNa) {
+    const typeEl = document.getElementById('pf-type');
+    if (typeEl) typeEl.value = 'volunteer';
+    personnelTypeToggle();
+  }
+};
+
 async function savePersonnel(id) {
   const type = document.getElementById('pf-type').value;
   const payload = {
@@ -395,7 +411,7 @@ async function savePersonnel(id) {
     title:       document.getElementById('pf-title').value.trim() || null,
     phone:       document.getElementById('pf-phone').value.trim() || null,
     email:       document.getElementById('pf-email').value.trim() || null,
-    institution: document.getElementById('pf-inst').value,
+    institution: document.getElementById('pf-inst').value || null,
     type,
     employment:  showsEmployment(type) ? document.getElementById('pf-emp').value : null,
     date_of_birth: document.getElementById('pf-dob').value || null,

@@ -606,8 +606,18 @@ async function _saveProjectDetails() {
     notes:       document.getElementById('det-notes').value.trim() || null,
     updated_at:  new Date().toISOString(),
   };
-  const { error } = await sb.from('projects').update(payload).eq('id', _projectId);
-  if (error) { alert('Save failed: ' + error.message); return; }
+  try {
+    const { error } = await sb.from('projects').update(payload).eq('id', _projectId);
+    if (error) {
+      console.error('[projectDashboard] _saveProjectDetails error:', error);
+      alert('Save failed: ' + (error.message || error.details || JSON.stringify(error)));
+      return;
+    }
+  } catch (e) {
+    console.error('[projectDashboard] _saveProjectDetails unexpected error:', e);
+    alert('Save failed: ' + (e?.message ?? String(e)));
+    return;
+  }
   Object.assign(_project, payload);
   logActivity({ action: 'updated project', entityType: 'project', entityName: payload.title, contextType: 'project', contextId: _projectId });
   const container = document.getElementById('project-dashboard-root');

@@ -429,6 +429,40 @@ async function _loadThread(discId, currentUserId, profileMap, rerender, discOver
   _subscribeThread(discId, msgs, currentUserId, profileMap);
 }
 
+function _dayLabel(ts) {
+  const d   = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return 'Today';
+  if (d.toDateString() === new Date(Date.now() - 86400000).toDateString()) return 'Yesterday';
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+function _groupMsgs(msgs, currentUserId) {
+  const out = [];
+  let lastSender = null;
+  let lastTime   = null;
+  let lastDate   = null;
+  for (let i = 0; i < msgs.length; i++) {
+    const m     = msgs[i];
+    const mTime = new Date(m.created_at).getTime();
+    const d     = _dayLabel(m.created_at);
+    if (d !== lastDate) {
+      out.push({ type: 'date', date: d });
+      lastDate = d; lastSender = null; lastTime = null;
+    }
+    const gap   = lastTime ? (mTime - lastTime) / 60000 : Infinity;
+    const isFirst = m.sender_id !== lastSender || gap > 2;
+    const next    = msgs[i + 1];
+    const nextTime = next ? new Date(next.created_at).getTime() : null;
+    const nextGap  = nextTime ? (nextTime - mTime) / 60000 : Infinity;
+    const isLast   = !next || next.sender_id !== m.sender_id || nextGap > 2;
+    out.push({ type: 'msg', msg: m, isFirst, isLast, isMine: m.sender_id === currentUserId });
+    lastSender = isLast ? null : m.sender_id;
+    lastTime   = isLast ? null : mTime;
+  }
+  return out;
+}
+
 function _renderMsgs(discId, msgs, currentUserId, profileMap) {
   const el = document.getElementById('disc-msgs-' + discId);
   if (!el) return;
@@ -438,17 +472,30 @@ function _renderMsgs(discId, msgs, currentUserId, profileMap) {
     return;
   }
 
-  el.innerHTML = msgs.map(m => {
-    const isMine = m.sender_id === currentUserId;
-    const prof   = profileMap[m.sender_id] || { name: 'User', personnelId: null };
+  const grouped = _groupMsgs(msgs, currentUserId);
+  el.innerHTML = grouped.map(item => {
+    if (item.type === 'date') {
+      return `
+        <div style="display:flex;align-items:center;gap:10px;margin:16px 0 12px;">
+          <div style="flex:1;height:.5px;background:#E2DDD6;"></div>
+          <div style="font-size:11px;color:#9CA3AF;font-weight:500;letter-spacing:.5px;white-space:nowrap;text-transform:uppercase;">${_esc(item.date)}</div>
+          <div style="flex:1;height:.5px;background:#E2DDD6;"></div>
+        </div>`;
+    }
+    const { msg: m, isFirst, isLast, isMine } = item;
+    const prof = profileMap[m.sender_id] || { name: 'User', personnelId: null };
+    const name = prof.name || '';
+    const uid  = m.sender_id || '';
+    const avatarSlot = !isMine
+      ? (isLast
+          ? `<div class="disc-msg-avatar" data-uid="${uid}" data-name="${_esc(name)}" style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;align-self:flex-end;"></div>`
+          : `<div style="width:28px;flex-shrink:0;"></div>`)
+      : '';
     return `
-      <div style="display:flex;align-items:flex-end;gap:8px;margin-bottom:.6rem;justify-content:${isMine ? 'flex-end' : 'flex-start'};">
-        ${!isMine ? `<div class="disc-msg-avatar" data-uid="${m.sender_id || ''}" data-name="${_esc(prof.name)}"
-          style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;margin-bottom:2px;"></div>` : ''}
+      <div style="display:flex;align-items:flex-end;gap:8px;margin-top:${isFirst ? '8px' : '2px'};justify-content:${isMine ? 'flex-end' : 'flex-start'};">
+        ${!isMine ? avatarSlot : ''}
         <div style="max-width:72%;display:flex;flex-direction:column;${isMine ? 'align-items:flex-end;' : 'align-items:flex-start;'}">
-          <div style="font-size:11px;color:#9CA3AF;margin-bottom:2px;">
-            ${isMine ? '' : `${_esc(prof.name)} · `}${_relTime(m.created_at)}
-          </div>
+          ${!isMine && isFirst ? `<div style="font-size:11px;color:#9CA3AF;margin-bottom:2px;margin-left:4px;">${_esc(name)}</div>` : ''}
           <div style="
             background:${isMine ? '#1C2B3A' : '#F0F0F0'};
             color:${isMine ? '#fff' : '#1C2B3A'};
@@ -456,6 +503,7 @@ function _renderMsgs(discId, msgs, currentUserId, profileMap) {
             ${isMine ? 'border-bottom-right-radius:4px;' : 'border-bottom-left-radius:4px;'}
             padding:9px 14px;font-size:13px;line-height:1.45;word-break:break-word;white-space:pre-wrap;
           ">${_esc(m.body)}</div>
+          ${isLast ? `<div style="font-size:10.5px;color:#9CA3AF;margin-top:3px;${isMine ? 'margin-right:3px;' : 'margin-left:3px;'}">${_relTime(m.created_at)}</div>` : ''}
         </div>
       </div>`;
   }).join('');

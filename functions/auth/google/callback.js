@@ -54,6 +54,7 @@ export async function onRequestGet({ request, env }) {
         user_id:    state,
         type:       'google',
         name:       'Google Calendar',
+        url:        'primary',
         scope:      'personal',
         active:     true,
         color:      '#1565C0',

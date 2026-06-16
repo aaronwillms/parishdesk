@@ -268,7 +268,9 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     form.innerHTML = `
       <div style="font-size:12px;font-weight:600;color:#555;margin-bottom:2px;">New contact</div>
       <input id="cp-new-name"  placeholder="Full name *" value="${prefillName.replace(/"/g, '&quot;')}" />
-      <input id="cp-new-title" placeholder="Title / role (optional)" />
+      <div id="cp-new-title-row">
+        <input id="cp-new-title" placeholder="Title / role (optional)" />
+      </div>
       <div style="font-size:11px;color:#6B7280;margin-bottom:-2px;">Date of Birth (optional)</div>
       <input type="date" id="cp-new-dob" />
       <select id="cp-new-inst" style="
@@ -277,8 +279,8 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
         font-size:12.5px;font-family:'Inter',sans-serif;
         background:#fff;color:#1C2B3A;outline:none;
       ">
+        <option value="volunteer" selected>N/A</option>
         ${instOptions}
-        <option value="volunteer">Volunteer</option>
       </select>
       <select id="cp-new-employment" style="
         width:100%;box-sizing:border-box;padding:.35rem .55rem;
@@ -308,12 +310,16 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     const saveBtn  = form.querySelector('#cp-new-save');
     const errEl    = form.querySelector('#cp-new-error');
 
-    // Show/hide employment based on institution selection
-    function updateEmploymentVisibility() {
-      empSel.style.display = instSel.value === 'volunteer' ? 'none' : '';
+    const titleRow = form.querySelector('#cp-new-title-row');
+
+    // Show/hide employment and title based on institution selection
+    function updateInstVisibility() {
+      const isNa = instSel.value === 'volunteer';
+      empSel.style.display   = isNa ? 'none' : '';
+      titleRow.style.display = isNa ? 'none' : '';
     }
-    instSel.addEventListener('change', updateEmploymentVisibility);
-    updateEmploymentVisibility();
+    instSel.addEventListener('change', updateInstVisibility);
+    updateInstVisibility();
 
     form.querySelector('#cp-new-name').focus();
 
