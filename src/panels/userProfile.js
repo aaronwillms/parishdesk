@@ -290,15 +290,15 @@ async function _connectGoogle() {
   const statusEl = document.getElementById('up-gcal-status');
   statusEl.textContent = 'Loading…';
   try {
-    const res = await fetch('/functions/config');
+    const res = await fetch('/config');
     if (!res.ok) {
-      throw new Error(`/functions/config returned ${res.status} ${res.statusText} — is it deployed?`);
+      throw new Error(`/config returned ${res.status} ${res.statusText} — is it deployed?`);
     }
     let cfg;
     try {
       cfg = await res.json();
     } catch (jsonErr) {
-      throw new Error(`/functions/config response is not valid JSON (status ${res.status}) — body may be an HTML error page`);
+      throw new Error(`/config response is not valid JSON (status ${res.status}) — body may be an HTML error page`);
     }
     const { googleClientId } = cfg;
     if (!googleClientId) { statusEl.textContent = 'Google Calendar is not configured — set GOOGLE_CLIENT_ID in Cloudflare env vars.'; return; }
