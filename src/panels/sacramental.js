@@ -91,6 +91,15 @@ export async function loadSacramental(prog) {
   renderSacramental(prog);
 }
 
+// Called from other surfaces (e.g. message links) to navigate to & expand a record
+export async function expandSacramental(prog, id) {
+  if (!SACRAMENTAL_CFG[prog]) return;
+  sacExpanded[prog] = id;
+  window.switchPanel(prog);
+  await loadSacramental(prog);
+  document.getElementById('sac-card-' + prog + '-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function updateSacramentalStats(prog) {
   const cfg = SACRAMENTAL_CFG[prog];
   const items = sacData[prog];
@@ -187,7 +196,7 @@ function renderSacramentalCard(prog, item) {
   }
 
   const isSelChecked = sacSelected[prog].has(item.id);
-  let h = `<div class="couple-card" style="border-left:4px solid var(--gold);">
+  let h = `<div class="couple-card" id="sac-card-${prog}-${item.id}" style="border-left:4px solid var(--gold);">
     <div class="couple-header" style="gap:10px;">
       <input type="checkbox" class="sac-sel-cb" data-prog="${prog}" data-id="${item.id}" ${isSelChecked?'checked':''} onchange="sacToggleOne('${prog}','${item.id}',this.checked)" onclick="event.stopPropagation()" style="width:14px;height:14px;accent-color:var(--cardinal);cursor:pointer;flex-shrink:0;" />
       <div style="flex:1;" onclick="toggleSacramental('${prog}','${item.id}')">
@@ -531,7 +540,7 @@ async function sacApplyBulk(prog) {
 }
 
 Object.assign(window, {
-  renderSacramental, setSacramentalFilter, toggleSacramental, quickSacramentalStatus,
+  renderSacramental, setSacramentalFilter, toggleSacramental, quickSacramentalStatus, expandSacramental,
   toggleSacNoteForm, appendSacNote, deleteSacNote,
   toggleSacDocForm, addSacDoc, toggleSacDoc, deleteSacDoc,
   toggleSacTlForm, addSacTlEntry, deleteSacTlEntry,

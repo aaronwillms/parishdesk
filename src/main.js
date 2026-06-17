@@ -14,6 +14,8 @@ import { projectForm, loadProjects, openNewProjectModal } from './panels/project
 import { renderProjectDashboard } from './panels/projectDashboard.js';
 import { loadSacramental } from './panels/sacramental.js';
 import { loadOcia } from './panels/ocia.js';
+import { loadDiscernment } from './panels/discernment.js';
+import { loadHomebound } from './panels/homebound.js';
 import { loadCoordData } from './ui/coordinator.js';
 import { loadSchool } from './panels/school.js';
 import { loadPersonnel } from './panels/personnel.js';
@@ -82,6 +84,8 @@ async function startApp(user) {
   initNavigation({
     marriage:      () => { loadCouples(); loadCoordData('marriage'); },
     annulments:    loadCases,
+    discernment:   loadDiscernment,
+    homebound:     loadHomebound,
     projects:      loadProjects,
     personnel:     loadPersonnel,
     school:        loadSchool,

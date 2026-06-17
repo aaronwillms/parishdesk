@@ -180,11 +180,13 @@ export function applyNavVisibility() {
     });
   };
 
-  const SACRAMENTAL_PANELS = ['baptism', 'firstcomm', 'confirmation', 'ocia', 'marriage', 'annulments'];
-
+  const SACRAMENTAL_PANELS = ['baptism', 'firstcomm', 'confirmation', 'ocia', 'marriage'];
   SACRAMENTAL_PANELS.forEach(p => show(p, canAccessPanel(p)));
-  const anySacramental = SACRAMENTAL_PANELS.some(p => canAccessPanel(p));
-  showSec('Sacramental', anySacramental);
+  showSec('Sacramental', SACRAMENTAL_PANELS.some(p => canAccessPanel(p)));
+
+  const PASTORAL_PANELS = ['annulments', 'discernment', 'homebound'];
+  PASTORAL_PANELS.forEach(p => show(p, canAccessPanel(p)));
+  showSec('Pastoral Care', PASTORAL_PANELS.some(p => canAccessPanel(p)));
 
   show('school', isAdmin());
   show('teams', canAccessPanel('teams'));

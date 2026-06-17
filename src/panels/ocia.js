@@ -163,7 +163,7 @@ function renderOciaCard(person) {
   const notActiveLabel = person.status_code==='inquirer'||person.status_code==='inactive';
   const roleLabel = !notActiveLabel?(person.baptismal_status==='unbaptized'?'Catechumen':'Candidate for Full Communion'):null;
 
-  let h = `<div class="couple-card${flagged?' urgent':''}" style="border-left:4px solid ${sm.dot};">
+  let h = `<div class="couple-card${flagged?' urgent':''}" id="ocia-card-${person.id}" style="border-left:4px solid ${sm.dot};">
     <div class="couple-header" onclick="toggleOcia('${person.id}')">
       <div style="flex:1;">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -348,6 +348,14 @@ function renderOciaCard(person) {
 }
 
 function toggleOcia(id) {ociaExpanded=ociaExpanded===id?null:id;renderOcia();}
+
+// Called from other surfaces (e.g. message links) to navigate to & expand a candidate
+export async function expandOcia(id) {
+  ociaExpanded = id;
+  window.switchPanel('ocia');
+  await loadOcia();
+  document.getElementById('ocia-card-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 
 async function linkOciaPriorCase(personId, pmIndex) {
   const person = allOcia.find(p => p.id===personId);
@@ -737,7 +745,7 @@ async function deleteOciaPerson(id) {
 }
 
 Object.assign(window, {
-  renderOcia, setOciaFilter, toggleOcia, expandCase,
+  renderOcia, setOciaFilter, toggleOcia, expandCase, expandOcia,
   linkOciaPriorCase, unlinkOciaPriorCase,
   toggleOciaNoteForm, appendOciaNote, deleteOciaNote,
   toggleOciaDocForm, addOciaDoc, toggleOciaDoc, deleteOciaDoc,

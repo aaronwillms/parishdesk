@@ -2,6 +2,9 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { createAvatar } from '../ui/avatar.js';
 import { createContactPicker } from '../ui/contactPicker.js';
+import { createMentionPicker, renderLinkChips } from '../ui/mentionPicker.js';
+
+let _msgMentionPicker = null;
 
 // ── Group bubble palette ───────────────────────────────────────────────────
 
@@ -585,8 +588,9 @@ function _threadHtml(mobile) {
         ${groupBtn}
       </div>
       <div id="msg-messages" style="flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;background:#FAFAF8;"></div>
+      <div id="msg-link-tray" style="display:none;flex-wrap:wrap;gap:6px;padding:.5rem 1rem 0;background:#fff;flex-shrink:0;"></div>
       <div style="padding:.75rem 1rem;border-top:.5px solid #E2DDD6;background:#fff;flex-shrink:0;display:flex;gap:8px;align-items:flex-end;">
-        <textarea id="msg-input" placeholder="Type a message…" rows="1" style="
+        <textarea id="msg-input" placeholder="Type a message…  (# to link a case or file)" rows="1" style="
           flex:1;resize:none;border:.5px solid #D1C9BE;border-radius:18px;
           padding:8px 14px;font-size:13px;font-family:'Inter',sans-serif;
           outline:none;background:#fff;max-height:120px;overflow-y:auto;line-height:1.4;
@@ -648,7 +652,7 @@ function _renderMessages() {
             border-radius:18px;
             ${isMine ? 'border-bottom-right-radius:5px;' : 'border-bottom-left-radius:5px;'}
             padding:10px 14px;font-size:13px;line-height:1.4;word-break:break-word;white-space:pre-wrap;
-          ">${_esc(msg.body)}</div>
+          ">${_esc(msg.body)}${renderLinkChips(msg.metadata, { mine: isMine })}</div>
           ${isLast ? `<div style="font-size:10.5px;color:#9CA3AF;margin-top:3px;${isMine ? 'margin-right:3px;' : 'margin-left:3px;'}">${_relTime(msg.created_at)}</div>` : ''}
         </div>
       </div>`;
@@ -804,12 +808,14 @@ function _hydrateThread() {
   const input = document.getElementById('msg-input');
   if (input) {
     input.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); _sendMessage(); }
+      if (e.key === 'Enter' && !e.shiftKey && !_msgMentionPicker?.isOpen()) { e.preventDefault(); _sendMessage(); }
     });
     input.addEventListener('input', () => {
       input.style.height = 'auto';
       input.style.height = Math.min(input.scrollHeight, 120) + 'px';
     });
+    if (_msgMentionPicker) { _msgMentionPicker.destroy(); _msgMentionPicker = null; }
+    _msgMentionPicker = createMentionPicker({ textarea: input, tray: document.getElementById('msg-link-tray') });
     input.focus();
   }
 }
@@ -913,7 +919,8 @@ async function _sendMessage() {
   const input = document.getElementById('msg-input');
   if (!input) return;
   const body = input.value.trim();
-  if (!body || !_activeConvId) return;
+  const _links = _msgMentionPicker?.getLinks() || [];
+  if ((!body && !_links.length) || !_activeConvId) return;
 
   // Fix 3: if the active conversation is deleted, create a new one with same participants
   const activeConv = _conversations.find(c => c.id === _activeConvId);
@@ -938,11 +945,13 @@ async function _sendMessage() {
 
   input.value = '';
   input.style.height = 'auto';
+  _msgMentionPicker?.clear();
 
   const { data: msg, error } = await sb.from('messages').insert({
     conversation_id: targetConvId,
     sender_id: _currentUserId,
     body,
+    metadata: _links.length ? { links: _links } : null,
   }).select().single();
 
   if (error) { console.error('[messaging] send failed:', error); return; }

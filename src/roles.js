@@ -13,13 +13,14 @@ export async function loadUserRoles() {
   // Always fetch the role row first — it determines what else we need
   const { data: roleRows } = await sb.from('user_roles').select('role').eq('user_id', user.id);
   const roles       = roleRows || [];
+  const roleNames   = roles.map(r => r.role);
   const isSuperAdm  = roles.some(r => r.role === 'super_admin');
   const isAdm       = roles.some(r => r.role === 'admin' || r.role === 'super_admin');
 
   // Super admins: access is entirely rule-based — no DB records needed
   if (isSuperAdm) {
     store.currentUserRoles = {
-      isSuperAdmin: true, isAdmin: true,
+      isSuperAdmin: true, isAdmin: true, roles: roleNames,
       sacraments: [], panelGrants: [], teamIds: [], teamPersonnelIds: [],
     };
     return;
@@ -36,7 +37,7 @@ export async function loadUserRoles() {
     const sacSacraments   = (sacRes.data   || []).map(r => r.sacrament);
     const coordSacraments = (coordRes.data || []).map(r => r.program);
     store.currentUserRoles = {
-      isSuperAdmin: false, isAdmin: true,
+      isSuperAdmin: false, isAdmin: true, roles: roleNames,
       sacraments:   [...new Set([...sacSacraments, ...coordSacraments])],
       panelGrants:  [],
       teamIds:      [],
@@ -73,7 +74,7 @@ export async function loadUserRoles() {
   const coordSacraments = (coordRes.data    || []).map(r => r.program);
 
   store.currentUserRoles = {
-    isSuperAdmin: false, isAdmin: false,
+    isSuperAdmin: false, isAdmin: false, roles: roleNames,
     sacraments:   [...new Set([...sacSacraments, ...coordSacraments])],
     panelGrants:  (grantsRes.data || []).map(r => r.panel),
     teamIds,
@@ -89,6 +90,10 @@ export function isSuperAdmin() {
 
 export function isAdmin() {
   return !!store.currentUserRoles?.isAdmin;  // true for admin AND super_admin
+}
+
+export function hasRole(role) {
+  return (store.currentUserRoles?.roles || []).includes(role);
 }
 
 export function canAccessSacrament(sacrament) {
@@ -116,6 +121,12 @@ export function canAccessPanel(panel) {
 
   // School: admin+
   if (panel === 'school') return isAdmin();
+
+  // Pastoral Care stubs
+  // Discernment: vocation director or super admin
+  if (panel === 'discernment') return isSuperAdmin() || hasRole('vocation_director');
+  // Homebound: admin + super admin for now (dedicated role to come later)
+  if (panel === 'homebound') return isAdmin();
 
   // Sacramental panels
   const SACRAMENTAL = {

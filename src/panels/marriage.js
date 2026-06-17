@@ -242,6 +242,14 @@ function renderCoupleCard(c) {
 
 function toggleCouple(id) {expandedCoupleId=expandedCoupleId===id?null:id;renderCouples();}
 
+// Called from other surfaces (e.g. message links) to navigate to & expand a couple
+export async function expandCouple(id) {
+  expandedCoupleId = id;
+  window.switchPanel('marriage');
+  await loadCouples();
+  document.getElementById('couple-card-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 async function toggleDoc(coupleId, docIndex) {
   const couple = allCouples.find(c => c.id===coupleId);
   if(!couple) return;
@@ -526,5 +534,5 @@ Object.assign(window, {
   toggleCoupleTlForm, addCoupleTlEntry, deleteCoupleTlEntry,
   setCoupleFilter, saveCouple, deleteCouple,
   addPm, removePm,
-  expandCase,
+  expandCase, expandCouple,
 });

@@ -1,6 +1,9 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { createAvatar } from './avatar.js';
+import { createMentionPicker, renderLinkChips } from './mentionPicker.js';
+
+const _discMentionPickers = {};  // discId → picker
 
 const GROUP_BUBBLE_COLORS = [
   '#E3F2FD', '#F3E5F5', '#E8F5E9', '#FFF3E0',
@@ -420,8 +423,9 @@ async function _loadThread(discId, currentUserId, profileMap, rerender, discOver
     <div id="disc-msgs-${discId}" style="flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:0;background:#fff;">
       <div style="font-size:12px;color:#9CA3AF;text-align:center;">Loading…</div>
     </div>
+    <div id="disc-link-tray-${discId}" style="display:none;flex-wrap:wrap;gap:6px;padding:.5rem 1rem 0;background:#fff;flex-shrink:0;"></div>
     <div style="padding:.75rem 1rem;border-top:.5px solid #E2DDD6;background:#fff;flex-shrink:0;display:flex;gap:8px;align-items:flex-end;">
-      <textarea id="disc-reply-${discId}" placeholder="Write a reply…" rows="1" style="
+      <textarea id="disc-reply-${discId}" placeholder="Write a reply…  (# to link a case or file)" rows="1" style="
         flex:1;resize:none;border:.5px solid #D1C9BE;border-radius:18px;
         padding:8px 14px;font-size:13px;font-family:'Inter',sans-serif;
         outline:none;background:#fff;max-height:120px;overflow-y:auto;line-height:1.4;
@@ -528,7 +532,7 @@ function _renderMsgs(discId, msgs, currentUserId, profileMap) {
             border-radius:18px;
             ${isMine ? 'border-bottom-right-radius:4px;' : 'border-bottom-left-radius:4px;'}
             padding:9px 14px;font-size:13px;line-height:1.45;word-break:break-word;white-space:pre-wrap;
-          ">${_esc(m.body)}</div>
+          ">${_esc(m.body)}${renderLinkChips(m.metadata, { mine: isMine })}</div>
           ${isLast ? `<div style="font-size:10.5px;color:#9CA3AF;margin-top:3px;${isMine ? 'margin-right:3px;' : 'margin-left:3px;'}">${_relTime(m.created_at)}</div>` : ''}
         </div>
       </div>`;
@@ -549,11 +553,13 @@ function _wireInput(discId, msgs, currentUserId, profileMap) {
 
   const doSend = async () => {
     const body = input.value.trim();
-    if (!body) return;
+    const _links = _discMentionPickers[discId]?.getLinks() || [];
+    if (!body && !_links.length) return;
     input.value = '';
     input.style.height = 'auto';
+    _discMentionPickers[discId]?.clear();
     const { data: newMsg, error } = await sb.from('discussion_messages')
-      .insert({ discussion_id: discId, sender_id: currentUserId, body })
+      .insert({ discussion_id: discId, sender_id: currentUserId, body, metadata: _links.length ? { links: _links } : null })
       .select().single();
     if (error) { console.error('[discussionThread] send failed:', error); return; }
     if (!msgs.find(m => m.id === newMsg.id)) msgs.push(newMsg);
@@ -563,11 +569,13 @@ function _wireInput(discId, msgs, currentUserId, profileMap) {
   };
 
   sendBtn.addEventListener('click', doSend);
-  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !_discMentionPickers[discId]?.isOpen()) { e.preventDefault(); doSend(); } });
   input.addEventListener('input', () => {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 120) + 'px';
   });
+  if (_discMentionPickers[discId]) { _discMentionPickers[discId].destroy(); }
+  _discMentionPickers[discId] = createMentionPicker({ textarea: input, tray: document.getElementById('disc-link-tray-' + discId) });
   input.focus();
 }
 

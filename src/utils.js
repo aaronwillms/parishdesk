@@ -48,6 +48,8 @@ export const PANEL_TITLES = {
   dashboard:    "Parish Dashboard",
   marriage:     'Marriage preparation',
   annulments:   'Annulments',
+  discernment:  'Discernment Tracker',
+  homebound:    'Homebound & Pastoral Care',
   baptism:      'Baptismal Preparation',
   firstcomm:    'First Communion',
   confirmation: 'Confirmation',
