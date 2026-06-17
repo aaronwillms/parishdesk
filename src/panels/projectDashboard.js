@@ -5,6 +5,7 @@ import { createContactPicker } from '../ui/contactPicker.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
 import { renderDiscussionThread } from '../ui/discussionThread.js';
 import { renderProjectLog } from '../ui/projectLog.js';
+import { showToast } from '../ui/toast.js';
 
 // ── Status config ──────────────────────────────────────────────────────────
 
@@ -601,7 +602,8 @@ function _renderProjectDetails(el) {
   document.getElementById('det-delete').addEventListener('click', _deleteProject);
 }
 
-async function _saveProjectDetails() {
+async function _saveProjectDetails(e) {
+  const btn = e?.target?.closest('#det-save') || document.getElementById('det-save');
   const title = document.getElementById('det-title').value.trim();
   if (!title) { document.getElementById('det-title').focus(); return; }
   const payload = {
@@ -611,23 +613,33 @@ async function _saveProjectDetails() {
     notes:       document.getElementById('det-notes').value.trim() || null,
     updated_at:  new Date().toISOString(),
   };
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
-    const { error } = await sb.from('projects').update(payload).eq('id', _projectId);
+    // .select() returns the updated rows — an empty array means the write
+    // matched 0 rows (e.g. RLS or a stale id), which otherwise fails silently.
+    const { data, error } = await sb.from('projects').update(payload).eq('id', _projectId).select();
     if (error) {
-      console.error('[projectDashboard] _saveProjectDetails error:', error);
-      alert('Save failed: ' + (error.message || error.details || JSON.stringify(error)));
+      console.error('[projectDashboard] save error:', error);
+      showToast('Save failed: ' + (error.message || error.details || JSON.stringify(error)), { type: 'error' });
       return;
     }
-  } catch (e) {
-    console.error('[projectDashboard] _saveProjectDetails unexpected error:', e);
-    alert('Save failed: ' + (e?.message ?? String(e)));
-    return;
+    if (!data || !data.length) {
+      console.error('[projectDashboard] save error: update affected 0 rows', { projectId: _projectId, payload });
+      showToast('Save failed: no matching project (check permissions).', { type: 'error' });
+      return;
+    }
+    Object.assign(_project, data[0]);
+    logActivity({ action: 'updated project', entityType: 'project', entityName: payload.title, contextType: 'project', contextId: _projectId });
+    showToast('Project saved', { type: 'success' });
+    const container = document.getElementById('project-dashboard-root');
+    if (container) _render(container);
+    document.getElementById('topbar-title').textContent = title;
+  } catch (err) {
+    console.error('[projectDashboard] save error (unexpected):', err);
+    showToast('Save failed: ' + (err?.message ?? String(err)), { type: 'error' });
+  } finally {
+    if (btn && document.body.contains(btn)) { btn.disabled = false; btn.textContent = 'Save changes'; }
   }
-  Object.assign(_project, payload);
-  logActivity({ action: 'updated project', entityType: 'project', entityName: payload.title, contextType: 'project', contextId: _projectId });
-  const container = document.getElementById('project-dashboard-root');
-  if (container) _render(container);
-  document.getElementById('topbar-title').textContent = title;
 }
 
 async function _deleteProject() {

@@ -214,14 +214,19 @@ function renderCoupleBody(c) {
       <div style="font-size:11px;color:#888;margin-top:3px;">${pct}% complete</div></div>`;
   }
 
-  // Contact (existing fields)
-  const hc = c.bride_email || c.bride_phone || c.groom_email || c.groom_phone;
-  if (hc) {
+  // Contact — two labeled sections (spouse 1 = groom fields, spouse 2 = bride fields)
+  const groomLabel = (s1Name(c) || c.groom || 'Groom');
+  const brideLabel = (s2Name(c) || c.bride || 'Bride');
+  const contactBlock = (label, phone, email) => {
+    if (!phone && !email) return '';
+    return `<div style="font-size:11px;color:#AAA;text-transform:uppercase;letter-spacing:.05em;margin:6px 0 4px;">${_esc(label)}</div>`
+      + (phone ? `<a href="tel:${phone}" class="contact-chip">📞 ${_esc(phone)}</a>` : '')
+      + (email ? `<a href="mailto:${email}" class="contact-chip">✉️ ${_esc(email)}</a>` : '');
+  };
+  if (c.groom_phone || c.groom_email || c.bride_phone || c.bride_email) {
     h += `<div class="couple-section-label">Contact</div>`;
-    if (c.groom_phone) h += `<a href="tel:${c.groom_phone}" class="contact-chip">📞 ${c.groom_phone}</a>`;
-    if (c.groom_email) h += `<a href="mailto:${c.groom_email}" class="contact-chip">✉️ ${c.groom_email}</a>`;
-    if (c.bride_phone) h += `<a href="tel:${c.bride_phone}" class="contact-chip">📞 ${c.bride_phone}</a>`;
-    if (c.bride_email) h += `<a href="mailto:${c.bride_email}" class="contact-chip">✉️ ${c.bride_email}</a>`;
+    h += contactBlock(groomLabel, c.groom_phone, c.groom_email);
+    h += contactBlock(brideLabel, c.bride_phone, c.bride_email);
   }
 
   // Documents (skip for external)

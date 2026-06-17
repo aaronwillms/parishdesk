@@ -134,12 +134,20 @@ function renderAll() {
     ['affirm', 'Affirmative Judgement'], ['negative', 'Negative Judgement'], ['archived', 'Inactive'],
   ].map(([k, l]) => `<button class="cf-btn${caseFilter === k ? ' active' : ''}" onclick="setCaseFilter('${k}',this)">${l}</button>`).join('');
 
+  const nPrep = allCases.filter(c => c.status_code === 'prep' && !c.archived).length;
+  const nTrib = allCases.filter(c => c.status_code === 'tribunal' && !c.archived).length;
+  const nJudg = allCases.filter(c => ['affirm', 'negative'].includes(c.status_code) && !c.archived).length;
+
   root.innerHTML = `
+    <div class="stat-row">
+      <div class="stat-card" style="border-left:3px solid #1B4F72;"><div class="stat-num">${nPrep}</div><div class="stat-label">Preparing</div></div>
+      <div class="stat-card" style="border-left:3px solid #D4AC0D;"><div class="stat-num">${nTrib}</div><div class="stat-label">In Tribunal</div></div>
+      <div class="stat-card" style="border-left:3px solid #2D6A4F;"><div class="stat-num">${nJudg}</div><div class="stat-label">Judgement</div></div>
+    </div>
     <div class="confid-notice">
       <i class="fa-solid fa-lock" style="margin-right:7px;"></i>Annulment records are strictly confidential. Access is limited to assigned advocates and authorized personnel only.${advNote}
     </div>
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem;flex-wrap:wrap;">
-      <h2 style="font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:600;color:#1C2B3A;margin:0;flex:1;">Annulments</h2>
+    <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-bottom:1rem;flex-wrap:wrap;">
       ${isSacramentCoordinator('annulments') ? `<button class="anl-icon-btn" title="Document templates" onclick="openTemplateSettings()"><i class="fa-solid fa-gear"></i></button>` : ''}
       ${manage ? `<button class="btn-primary" onclick="openCaseCreate()">+ Add Case</button>` : ''}
     </div>

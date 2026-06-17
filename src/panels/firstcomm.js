@@ -168,12 +168,10 @@ function renderFcBody(p, docs, progress, done) {
   h += `</div>`;
   const phone = p.parent1_phone || p.phone, email = p.parent1_email || p.email;
   if (phone || email) { h += `<div style="margin-top:8px;">`; if (phone) h += `<a href="tel:${phone}" class="contact-chip">📞 ${_esc(phone)}</a>`; if (email) h += `<a href="mailto:${email}" class="contact-chip">✉️ ${_esc(email)}</a>`; h += `</div>`; }
-  const par1 = (p.parent1_first || p.parent1_last) ? `${p.parent1_first || ''} ${p.parent1_last || ''}`.trim() : p.parent1;
-  if (par1 || p.parent2_first || p.parent2) {
-    h += `<div class="couple-section-label">Parents / Guardians</div>`;
-    if (par1) h += `<div style="font-size:13px;">${_esc(par1)}${p.parent1_catholic === false ? ' <span style="color:#854F0B;">(non-Catholic)</span>' : ''}</div>`;
-    const par2 = (p.parent2_first || p.parent2_last) ? `${p.parent2_first || ''} ${p.parent2_last || ''}`.trim() : (par1 ? '' : p.parent2);
-    if (par2) h += `<div style="font-size:13px;">${_esc(par2)}${p.parent2_catholic === false ? ' <span style="color:#854F0B;">(non-Catholic)</span>' : ''}</div>`;
+  const par1 = (p.parent1_first || p.parent1_last) ? `${p.parent1_first || ''} ${p.parent1_last || ''}`.trim() : (p.parent1 || p.parent2);
+  if (par1) {
+    h += `<div class="couple-section-label">Parent / Guardian</div>`;
+    h += `<div style="font-size:13px;">${_esc(par1)}${p.parent1_phone ? ' · ' + _esc(p.parent1_phone) : ''}</div>`;
   }
   if (commDate(p) || p.communion_church_override || p.communion_institution_id) {
     const ch = p.communion_institution_id ? ((store.institutions || []).find(x => x.id === p.communion_institution_id)?.name) : p.communion_church_override;
@@ -254,7 +252,6 @@ function newModalState(p, coordId) {
   return {
     id: p?.id || null, isEdit: !!p,
     respId: p?.preparation_responsible_id || coordId || '', respOther: !p?.preparation_responsible_id && !!p?.preparation_responsible_override,
-    showParent2: !!(p?.parent2_first || p?.parent2_last),
     docs: p ? normDocs(p) : computeTemplateDocs(),
     family: p?.family_group_id ? { group_id: p.family_group_id, label: `${lastNameOf(p)} Family` } : null,
   };
@@ -295,18 +292,9 @@ function buildModalHtml(p) {
   h += _row(_input('ff-city', 'City', p?.child_city || ''), _stateSelect('ff-state', p?.child_state || ''), _input('ff-zip', 'ZIP', p?.child_zip || ''));
 
   // 4 — Parents
-  h += _sectionHead('Parent / Guardian 1');
+  h += _sectionHead('Parent / Guardian');
   h += _row(_input('ff-p1first', 'First Name', p?.parent1_first || ''), _input('ff-p1last', 'Last Name', p?.parent1_last || ''));
   h += _row(_input('ff-p1phone', 'Cell Phone', p?.parent1_phone || p?.phone || ''), _input('ff-p1email', 'Email', p?.parent1_email || p?.email || ''));
-  h += _toggle('ff-p1cath', 'Catholic?', p?.parent1_catholic !== false);
-  h += `<div id="ff-p2-wrap" style="display:${_M.showParent2 ? 'block' : 'none'};">
-    ${_sectionHead('Parent / Guardian 2')}
-    ${_row(_input('ff-p2first', 'First Name', p?.parent2_first || ''), _input('ff-p2last', 'Last Name', p?.parent2_last || ''))}
-    ${_row(_input('ff-p2phone', 'Cell Phone', p?.parent2_phone || ''), _input('ff-p2email', 'Email', p?.parent2_email || ''))}
-    ${_toggle('ff-p2cath', 'Catholic?', p?.parent2_catholic !== false)}
-    <button class="btn-secondary" style="padding:.3rem .8rem;font-size:12px;margin-top:8px;" onclick="fcToggleParent2(false)">× Remove second parent</button>
-  </div>
-  <button id="ff-add-p2" class="btn-secondary" style="display:${_M.showParent2 ? 'none' : 'inline-block'};padding:.3rem .8rem;font-size:12px;margin-top:8px;" onclick="fcToggleParent2(true)">+ Add second parent/guardian</button>`;
 
   // 5 — Baptism
   h += _sectionHead('Baptism Information');
@@ -357,7 +345,6 @@ function fcRespChange(v) { _M.respOther = v === '__other'; document.getElementBy
 function fcCohortPick(v) { if (v === '__new') { document.getElementById('ff-cohort').value = ''; openCohortManager(); return; } const coh = _cohorts.find(c => c.id === v); if (coh?.cohort_date) { const dt = document.getElementById('ff-cdate'); if (dt && !dt.value) dt.value = coh.cohort_date; } }
 function fcDobChange() { const age = ageOf(document.getElementById('ff-dob').value); document.getElementById('ff-age-note').style.display = (age !== null && age > 13) ? 'block' : 'none'; }
 function fcChurchChange(v) { document.getElementById('ff-church-other-wrap').style.display = v === '__other' ? 'block' : 'none'; }
-function fcToggleParent2(show) { _M.showParent2 = show; document.getElementById('ff-p2-wrap').style.display = show ? 'block' : 'none'; document.getElementById('ff-add-p2').style.display = show ? 'none' : 'inline-block'; }
 function fcDocReceived(i, v) { _M.docs[i].received = v; }
 function fcRemoveDoc(i) { _M.docs.splice(i, 1); renderModalDocs(); }
 function fcAddDoc() { const inp = document.getElementById('ff-doc-new'); const name = (inp?.value || '').trim(); if (!name) return; _M.docs.push({ name, received: false, deletable: true, auto: false }); inp.value = ''; renderModalDocs(); }
@@ -384,7 +371,6 @@ async function fcSave() {
   const cohortSel = document.getElementById('ff-cohort')?.value || '';
   const coh = _cohorts.find(c => c.id === cohortSel);
   const churchSel = document.getElementById('ff-church')?.value || '';
-  const p2 = _M.showParent2;
 
   let familyGroupId = null, linkTarget = null;
   if (_M.family) { if (_M.family.group_id) familyGroupId = _M.family.group_id; else { familyGroupId = (crypto?.randomUUID?.() || String(Date.now())); linkTarget = _M.family.target_id; } }
@@ -397,8 +383,7 @@ async function fcSave() {
     preparation_responsible_override: respSel === '__other' ? (_v('ff-resp-other') || null) : null,
     school_name: _v('ff-school') || null, grade_level: document.getElementById('ff-grade')?.value || null,
     child_street: _v('ff-street') || null, child_city: _v('ff-city') || null, child_state: _v('ff-state') || null, child_zip: _v('ff-zip') || null,
-    parent1_first: _v('ff-p1first') || null, parent1_last: _v('ff-p1last') || null, parent1_phone: _v('ff-p1phone') || null, parent1_email: _v('ff-p1email') || null, parent1_catholic: _chk('ff-p1cath'),
-    parent2_first: p2 ? (_v('ff-p2first') || null) : null, parent2_last: p2 ? (_v('ff-p2last') || null) : null, parent2_phone: p2 ? (_v('ff-p2phone') || null) : null, parent2_email: p2 ? (_v('ff-p2email') || null) : null, parent2_catholic: p2 ? _chk('ff-p2cath') : true,
+    parent1_first: _v('ff-p1first') || null, parent1_last: _v('ff-p1last') || null, parent1_phone: _v('ff-p1phone') || null, parent1_email: _v('ff-p1email') || null,
     baptism_church: _v('ff-bchurch') || null, baptism_city: _v('ff-bcity') || null, baptism_state: _v('ff-bstate') || null, baptism_country: _v('ff-bcountry') || null,
     communion_date: _v('ff-cdate') || null,
     communion_institution_id: churchSel && churchSel !== '__other' ? churchSel : null,
@@ -512,7 +497,7 @@ Object.assign(window, {
   loadFirstComm, expandFirstComm, renderFcList, setFcFilter, fcCohortChange, toggleFc,
   openFcCreate, openFcEdit, openFcTemplate, fcCloseModal,
   toggleFcDoc, toggleFcPrep, addFcNote,
-  fcRespChange, fcCohortPick, fcDobChange, fcChurchChange, fcToggleParent2,
+  fcRespChange, fcCohortPick, fcDobChange, fcChurchChange,
   fcDocReceived, fcRemoveDoc, fcAddDoc, fcFamilySearch, fcRemoveFamily,
   fcSave, fcDeletePerson,
   openCohortManager, fcCohortChurchChange, fcSaveCohort, fcDeleteCohort,
