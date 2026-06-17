@@ -49,7 +49,7 @@ export const PANEL_TITLES = {
   marriage:     'Marriage preparation',
   annulments:   'Annulments',
   discernment:  'Discernment Tracker',
-  homebound:    'Homebound & Pastoral Care',
+  homebound:    'Sick & Homebound',
   baptism:      'Baptismal Preparation',
   firstcomm:    'First Communion',
   confirmation: 'Confirmation',

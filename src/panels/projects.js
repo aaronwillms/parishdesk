@@ -38,7 +38,7 @@ const PROJECT_ICONS = [
   { cls: 'fa-heart',            label: 'Pastoral' },
   { cls: 'fa-dove',             label: 'Spirit' },
   { cls: 'fa-fire',             label: 'Liturgy' },
-  { cls: 'fa-water',            label: 'Baptism' },
+  { cls: 'fa-droplet',          label: 'Baptism' },
   { cls: 'fa-star',             label: 'Priority' },
   { cls: 'fa-file-lines',       label: 'Documents' },
   { cls: 'fa-bullhorn',         label: 'Outreach' },
