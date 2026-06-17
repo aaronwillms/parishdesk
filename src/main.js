@@ -9,11 +9,14 @@ import { loadAdmin } from './panels/admin.js';
 import { initModal } from './ui/modal.js';
 import { loadUserProfile } from './panels/userProfile.js';
 import { openCoupleAdd, loadCouples } from './panels/marriage.js';
-import { caseForm, loadCases } from './panels/annulments.js';
+import { loadCases } from './panels/annulments.js';
 import { projectForm, loadProjects, openNewProjectModal } from './panels/projects.js';
 import { renderProjectDashboard } from './panels/projectDashboard.js';
 import { loadSacramental } from './panels/sacramental.js';
 import { loadOcia } from './panels/ocia.js';
+import { loadConfirmation } from './panels/confirmation.js';
+import { loadBaptism } from './panels/baptism.js';
+import { loadFirstComm } from './panels/firstcomm.js';
 import { loadDiscernment } from './panels/discernment.js';
 import { loadHomebound } from './panels/homebound.js';
 import { loadCoordData } from './ui/coordinator.js';
@@ -42,8 +45,8 @@ async function startApp(user) {
   window.openModal = (type, defaultStatus) => {
     if (type === 'couple')  { openCoupleAdd(); return; }
     if (type === 'project') { openNewProjectModal(); return; }
+    if (type === 'case')    { window.openCaseCreate?.(); return; }
     let html;
-    if (type === 'case') html = caseForm();
     if (!html) return;
     document.getElementById('modal-content').innerHTML = html;
     document.getElementById('modal-overlay').classList.add('open');
@@ -89,9 +92,9 @@ async function startApp(user) {
     projects:      loadProjects,
     personnel:     loadPersonnel,
     school:        loadSchool,
-    baptism:       () => { loadSacramental('baptism');      loadCoordData('baptism'); },
-    firstcomm:     () => { loadSacramental('firstcomm');    loadCoordData('firstcomm'); },
-    confirmation:  () => { loadSacramental('confirmation'); loadCoordData('confirmation'); },
+    baptism:       () => { loadBaptism();                   loadCoordData('baptism'); },
+    firstcomm:     () => { loadFirstComm();                 loadCoordData('firstcomm'); },
+    confirmation:  () => { loadConfirmation(); loadCoordData('confirmation'); },
     ocia:          () => { loadOcia(); loadCoordData('ocia'); },
     teams:         () => { loadTeams(); setActiveTeamSubNavItem(null); },
     tasks:         loadTasks,

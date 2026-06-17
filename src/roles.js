@@ -21,7 +21,7 @@ export async function loadUserRoles() {
   if (isSuperAdm) {
     store.currentUserRoles = {
       isSuperAdmin: true, isAdmin: true, roles: roleNames,
-      sacraments: [], panelGrants: [], teamIds: [], teamPersonnelIds: [],
+      sacraments: [], panelGrants: [], teamIds: [], teamPersonnelIds: [], advocateCaseIds: [],
     };
     return;
   }
@@ -42,6 +42,7 @@ export async function loadUserRoles() {
       panelGrants:  [],
       teamIds:      [],
       teamPersonnelIds: [],
+      advocateCaseIds: [],
     };
     return;
   }
@@ -73,12 +74,20 @@ export async function loadUserRoles() {
   const sacSacraments   = (sacramentRes.data || []).map(r => r.sacrament);
   const coordSacraments = (coordRes.data    || []).map(r => r.program);
 
+  // Annulment cases where this user is the assigned advocate (grants scoped access).
+  let advocateCaseIds = [];
+  if (personnelId) {
+    const { data: advCases } = await sb.from('annulment_cases').select('id').eq('advocate_id', personnelId);
+    advocateCaseIds = (advCases || []).map(c => c.id);
+  }
+
   store.currentUserRoles = {
     isSuperAdmin: false, isAdmin: false, roles: roleNames,
     sacraments:   [...new Set([...sacSacraments, ...coordSacraments])],
     panelGrants:  (grantsRes.data || []).map(r => r.panel),
     teamIds,
     teamPersonnelIds,
+    advocateCaseIds,
   };
 }
 
@@ -102,6 +111,14 @@ export function canAccessSacrament(sacrament) {
   return r?.sacraments.includes(sacrament) || r?.panelGrants.includes(sacrament) || false;
 }
 
+// Stricter than canAccessSacrament: super admin OR the actual sacramental
+// coordinator role for this sacrament (sacramental_roles / program_coordinators).
+// Excludes panel_grants and plain admins — used to gate template management.
+export function isSacramentCoordinator(sacrament) {
+  if (isSuperAdmin()) return true;
+  return (store.currentUserRoles?.sacraments || []).includes(sacrament);
+}
+
 export function canAccessPanel(panel) {
   if (isSuperAdmin()) return true;
   const r = store.currentUserRoles;
@@ -121,6 +138,9 @@ export function canAccessPanel(panel) {
 
   // School: admin+
   if (panel === 'school') return isAdmin();
+
+  // Annulments: coordinator/granted/super-admin, OR an advocate assigned to ≥1 case
+  if (panel === 'annulments') return canAccessSacrament('annulments') || (r.advocateCaseIds?.length > 0);
 
   // Pastoral Care stubs
   // Discernment: vocation director or super admin

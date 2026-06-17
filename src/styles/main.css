@@ -38,6 +38,14 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 .notif-unread::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--cardinal);flex-shrink:0;margin-top:5px;position:absolute;left:.65rem;}
 #content{flex:1;overflow-y:auto;padding:1.5rem;}
 .panel{display:none;}.panel.active{display:block;}
+/* Desktop message centre: fit the window inside the viewport so the input is
+   always visible (no page scroll). The window fills the padded #content box,
+   leaving the parch background as a filler below/around. Mobile is untouched. */
+@media(min-width:768px){
+  #content:has(#panel-messaging.active){overflow:hidden;}
+  #panel-messaging.active{height:100%;}
+  #panel-messaging.active #messaging-root{height:100% !important;border:.5px solid var(--stone);border-radius:10px;}
+}
 .lit-block{background:var(--navy);border-radius:var(--radius);padding:1.25rem 1.5rem;margin-bottom:1rem;display:flex;align-items:flex-start;gap:14px;}
 .lit-date{font-size:11.5px;color:rgba(248,247,244,.45);letter-spacing:.04em;margin-bottom:4px;}
 .lit-day{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;color:#F8F7F4;line-height:1.25;}
@@ -164,6 +172,21 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 .tl-event{font-size:13px;color:var(--navy);}
 .contact-chip{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;color:var(--navy);text-decoration:none;background:#EEF2F7;border-radius:4px;padding:4px 10px;border:.5px solid var(--stone);margin:2px 4px 2px 0;}
 .detail-chip{background:#F0EBE3;border-radius:4px;padding:3px 8px;font-size:12px;color:#555;display:inline-block;margin:2px 4px 2px 0;}
+/* Annulments */
+.confid-notice{font-size:12px;font-style:italic;color:#7A2A2A;background:#FBF1F1;border-left:3px solid #8B1A2F;border-radius:4px;padding:.55rem .8rem;margin-bottom:1rem;}
+.anl-icon-btn{background:#fff;border:.5px solid var(--stone);border-radius:7px;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:var(--navy);font-size:14px;transition:background .12s;}
+.anl-icon-btn:hover{background:var(--parch);}
+.anl-modal{width:90vw;max-width:90vw;height:90vh;max-height:90vh;}
+.anl-info-box{background:var(--parch);border-left:3px solid var(--gold);border-radius:4px;padding:.7rem .9rem;font-size:12.5px;color:#5B4636;line-height:1.6;margin-top:.5rem;}
+.anl-link-results{position:absolute;left:0;right:0;top:calc(100% + 2px);z-index:5;background:#fff;border:.5px solid var(--stone);border-radius:6px;box-shadow:0 6px 20px rgba(28,43,58,.14);overflow:hidden;max-height:220px;overflow-y:auto;}
+.anl-link-opt{padding:.45rem .7rem;font-size:13px;color:var(--navy);cursor:pointer;}
+.anl-link-opt:hover{background:var(--parch);}
+.anl-tpl-tab{padding:5px 12px;border-radius:7px;border:.5px solid var(--stone);background:#fff;color:#6B7280;font-size:12.5px;cursor:pointer;font-family:'Inter',sans-serif;}
+.anl-tpl-tab.active{background:var(--navy);color:var(--gold);border-color:var(--navy);}
+/* Large type-toggle buttons (OCIA / Confirmation create modals) */
+.ocia-type-btn,.sac-type-btn{padding:.7rem;border:1px solid var(--stone);border-radius:10px;background:#fff;color:var(--navy);font-size:14px;font-weight:600;font-family:'Inter',sans-serif;cursor:pointer;text-align:center;line-height:1.3;transition:border-color .12s,background .12s,color .12s;}
+.ocia-type-btn:hover,.sac-type-btn:hover{border-color:var(--gold);}
+.ocia-type-btn.active,.sac-type-btn.active{background:#1C2B3A;color:#fff;border-color:#1C2B3A;}
 .prog-bar-wrap{height:5px;background:var(--stone);border-radius:3px;overflow:hidden;margin:4px 0 2px;}
 .prog-bar-fill{height:100%;border-radius:3px;transition:width .3s;}
 
@@ -357,6 +380,56 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
   body.dark-mode .msg-link-tray,body.dark-mode [id^="disc-link-tray"]{background:transparent !important;}
   /* Denied link chip must stay visibly grey even past the generic chip override */
   body.dark-mode .mention-link-chip.denied{background:#6B7280 !important;}
+
+  /* Annulments */
+  body.dark-mode .confid-notice{background:#2A1518 !important;color:#FCA5A5 !important;border-left-color:#8B1A2F !important;}
+  body.dark-mode .anl-icon-btn{background:#243447 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+  body.dark-mode .anl-modal{background:#1A2634 !important;border-color:#2D3F50 !important;}
+  body.dark-mode .anl-info-box{background:#15202C !important;color:#E8DCc4 !important;border-left-color:#C9A84C !important;}
+  body.dark-mode .anl-link-results{background:#1A2634 !important;border-color:#2D3F50 !important;}
+  body.dark-mode .anl-link-opt{color:#F8F7F4 !important;}
+  body.dark-mode .anl-link-opt:hover{background:#243447 !important;}
+  body.dark-mode .anl-tpl-tab{background:#243447 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+  body.dark-mode .anl-tpl-tab.active{background:#1C2B3A !important;color:#C9A84C !important;}
+  body.dark-mode .ocia-type-btn,body.dark-mode .sac-type-btn{background:#243447 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+  body.dark-mode .ocia-type-btn.active,body.dark-mode .sac-type-btn.active{background:#1C2B3A !important;color:#C9A84C !important;border-color:#C9A84C !important;}
+
+  /* Project "Planning" status chip (teal) */
+  body.dark-mode [style*="#E0F7FA" i],body.dark-mode [style*="#E0F7FA" i] *{background:#003D47 !important;color:#80DEEA !important;border-color:#00695C !important;}
+
+  /* Nuclear override — catch any remaining light chip/badge/pill backgrounds */
+  body.dark-mode *[class*="chip"],
+  body.dark-mode *[class*="badge"],
+  body.dark-mode *[class*="tag"],
+  body.dark-mode *[class*="pill"],
+  body.dark-mode div[style*="background: #F"],
+  body.dark-mode div[style*="background:#F"],
+  body.dark-mode div[style*="background: white"],
+  body.dark-mode div[style*="background:white"],
+  body.dark-mode div[style*="background: rgb(255"],
+  body.dark-mode span[style*="background: #F"],
+  body.dark-mode span[style*="background:#F"],
+  body.dark-mode span[style*="background: white"],
+  body.dark-mode span[style*="background: rgb(255"] {
+    background: #243447 !important;
+    color: #F8F7F4 !important;
+    border-color: #2D3F50 !important;
+  }
+
+  /* Incoming chat bubbles → slate; outgoing stays navy */
+  body.dark-mode .msg-bubble,
+  body.dark-mode [class*="bubble"],
+  body.dark-mode [class*="message-bubble"] {
+    background: #243447 !important;
+    color: #F8F7F4 !important;
+  }
+  body.dark-mode .msg-bubble.outgoing,
+  body.dark-mode [class*="bubble"][class*="out"],
+  body.dark-mode [class*="bubble"][class*="sent"],
+  body.dark-mode [class*="bubble"][class*="self"] {
+    background: #1C2B3A !important;
+    color: #F8F7F4 !important;
+  }
 }
 
 /* AUTH SCREEN */

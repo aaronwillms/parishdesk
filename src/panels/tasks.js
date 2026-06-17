@@ -13,17 +13,17 @@ const RECURRENCE_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly'
 // Kanban status meta. Pastel bg/colors match the project STATUS palette and the
 // existing dark-mode overrides in main.css.
 const STATUS_META = {
-  todo:        { label: 'To Do',       color: '#6A1B9A', bg: '#F5F3FF', dot: '#9CA3AF' },
+  not_started: { label: 'Not Started', color: '#6A1B9A', bg: '#F5F3FF', dot: '#9CA3AF' },
   in_progress: { label: 'In Progress', color: '#1565C0', bg: '#EFF6FF', dot: '#1565C0' },
   blocked:     { label: 'Blocked',     color: '#8B1A2F', bg: '#FEF2F2', dot: '#8B1A2F' },
   complete:    { label: 'Complete',    color: '#2E7D32', bg: '#F0FDF4', dot: '#2E7D32' },
 };
-const BOARD_COLUMNS = ['todo', 'in_progress', 'blocked', 'complete'];
+const BOARD_COLUMNS = ['not_started', 'in_progress', 'blocked', 'complete'];
 
 let activeFilter    = 'all';
 let _taskSearch     = '';
 let _taskTeamFilter = null;   // null = all
-let _taskView       = 'list'; // 'list' | 'board'
+let _taskView       = (() => { try { return localStorage.getItem('pd_taskView') || 'board'; } catch (_) { return 'board'; } })(); // 'list' | 'board'
 let _showCompleted  = false;
 let _dragId         = null;   // task id being dragged
 
@@ -68,7 +68,8 @@ function teamName(id) {
 }
 
 function statusOf(t) {
-  return t.status || (t.completed ? 'complete' : 'todo');
+  const s = t.status || (t.completed ? 'complete' : 'not_started');
+  return s === 'todo' ? 'not_started' : s; // legacy 'todo' → 'not_started'
 }
 
 function isOverdue(task) {
@@ -119,7 +120,7 @@ function _miniAvatar(name, size = 22) {
 }
 
 function statusChip(status) {
-  const m = STATUS_META[status] || STATUS_META.todo;
+  const m = STATUS_META[status] || STATUS_META.not_started;
   return `<span style="font-size:10.5px;font-weight:600;color:${m.color};background:${m.bg};border-radius:20px;padding:2px 8px;display:inline-flex;align-items:center;gap:4px;"><span style="width:6px;height:6px;border-radius:50%;background:${m.dot};display:inline-block;"></span>${m.label}</span>`;
 }
 
@@ -213,7 +214,7 @@ function _renderTaskFilterBar() {
 
 window._taskTeamFilter = (teamId) => { _taskTeamFilter = teamId; renderTasks(); };
 window._taskSetFilter  = (f)      => { activeFilter = f; renderTasks(); };
-window._taskSetView    = (v)      => { _taskView = v; renderTasks(); };
+window._taskSetView    = (v)      => { _taskView = v; try { localStorage.setItem('pd_taskView', v); } catch (_) {} renderTasks(); };
 
 // ── Top-level render ─────────────────────────────────────────────────────────
 
@@ -390,7 +391,7 @@ async function _quickAddCreate(view, key, raw) {
     title,
     team_id:    _taskTeamFilter || null,
     visibility: _taskTeamFilter ? 'team' : 'personal',
-    status:     'todo',
+    status:     'not_started',
     updated_at: new Date().toISOString(),
   };
   if (view === 'board') {
@@ -499,7 +500,7 @@ function _syncCompleted(payload, status) {
 // ── Toggle complete (checkbox) ───────────────────────────────────────────────
 
 async function toggleTask(id, checked) {
-  const status = checked ? 'complete' : 'todo';
+  const status = checked ? 'complete' : 'not_started';
   const payload = {
     completed: checked,
     completed_at: checked ? new Date().toISOString() : null,
@@ -540,7 +541,7 @@ function _commentsHtml(t) {
 
 function taskForm(data) {
   const teams = store.teams || [];
-  const status = data ? statusOf(data) : 'todo';
+  const status = data ? statusOf(data) : 'not_started';
   const createdLine = data?.created_at
     ? `<div style="font-size:11px;color:#9CA3AF;margin-top:1rem;">Created ${_esc(data.created_at.slice(0, 10))}${data.created_by === store.currentUserProfile?.user_id ? ' by you' : ''}</div>`
     : '';
@@ -663,7 +664,7 @@ async function saveTask(id) {
   const title = document.getElementById('tf-title').value.trim();
   if (!title) { alert('Title is required.'); return; }
   const recurring = !!document.getElementById('tf-recurring')?.checked;
-  const status = document.getElementById('tf-status')?.value || 'todo';
+  const status = document.getElementById('tf-status')?.value || 'not_started';
 
   const payload = {
     title,

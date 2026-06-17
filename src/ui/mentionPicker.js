@@ -11,7 +11,7 @@ const TYPES = {
                   cols: ['groom', 'bride'],          label: r => `${r.groom || '?'} & ${r.bride || '?'}` },
   annulment:    { table: 'annulment_cases',         sacrament: 'annulments',      typeLabel: 'Annulment',        icon: 'fa-scale-balanced',
                   cols: ['petitioner', 'respondent'], label: r => r.respondent ? `${r.petitioner} v. ${r.respondent}` : (r.petitioner || '?') },
-  ocia:         { table: 'sacramental_ocia',         sacrament: 'ocia',            typeLabel: 'OCIA',             icon: 'fa-dove',
+  ocia:         { table: 'sacramental_ocia',         sacrament: 'ocia',            typeLabel: 'OCIA',             icon: 'fa-user-plus',
                   cols: ['name'],                    label: r => r.name || '?' },
   baptism:      { table: 'sacramental_baptism',      sacrament: 'baptism',         typeLabel: 'Baptism',          icon: 'fa-droplet',
                   cols: ['name'],                    label: r => r.name || '?' },
@@ -255,9 +255,9 @@ export function openLinkedRecord(type, id) {
     case 'marriage':     return window.expandCouple?.(id);
     case 'annulment':    return window.expandCase?.(id);
     case 'ocia':         return window.expandOcia?.(id);
-    case 'baptism':      return window.expandSacramental?.('baptism', id);
-    case 'firstcomm':    return window.expandSacramental?.('firstcomm', id);
-    case 'confirmation': return window.expandSacramental?.('confirmation', id);
+    case 'baptism':      return window.expandBaptism ? window.expandBaptism(id) : window.expandSacramental?.('baptism', id);
+    case 'firstcomm':    return window.expandFirstComm ? window.expandFirstComm(id) : window.expandSacramental?.('firstcomm', id);
+    case 'confirmation': return window.expandConfirmation ? window.expandConfirmation(id) : window.expandSacramental?.('confirmation', id);
     case 'project':      return window.showProjectDashboard?.(id);
     default: console.warn('[mention] unknown link type', type);
   }

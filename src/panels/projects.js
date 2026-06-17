@@ -10,6 +10,7 @@ import { isAdmin } from '../roles.js';
 // ── Status config ──────────────────────────────────────────────────────────
 
 export const STATUS = {
+  planning:     { label: 'Planning',     color: '#00695C', bg: '#E0F7FA', border: '#00695C', dot: '#00695C' },
   in_progress:  { label: 'In Progress',  color: '#1565C0', bg: '#EFF6FF', border: '#1565C0', dot: '#1565C0' },
   blocked:      { label: 'Blocked',      color: '#8B1A2F', bg: '#FEF2F2', border: '#8B1A2F', dot: '#8B1A2F' },
   not_started:  { label: 'Not Started',  color: '#6A1B9A', bg: '#F5F3FF', border: '#6A1B9A', dot: '#9CA3AF' },
@@ -17,7 +18,7 @@ export const STATUS = {
   inactive:     { label: 'Inactive',     color: '#6B7280', bg: '#F3F4F6', border: '#9CA3AF', dot: '#9CA3AF' },
 };
 
-export const GROUP_ORDER = ['in_progress', 'blocked', 'not_started', 'complete'];
+export const GROUP_ORDER = ['in_progress', 'blocked', 'planning', 'not_started', 'complete'];
 
 // ── Icon config ────────────────────────────────────────────────────────────
 
@@ -186,6 +187,7 @@ const _FILTER_OPTIONS = [
   { key: 'all',         label: 'All' },
   { key: 'in_progress', label: 'In Progress' },
   { key: 'blocked',     label: 'Blocked' },
+  { key: 'planning',    label: 'Planning' },
   { key: 'not_started', label: 'Not Started' },
   { key: 'complete',    label: 'Complete' },
 ];
@@ -547,9 +549,14 @@ async function deleteProject(id) {
   const { error } = await sb.from('projects').delete().eq('id', id);
   if (error) { alert('Delete failed: ' + error.message); return; }
   logActivity({ action: 'deleted project', entityType: 'project', entityName: p?.title || 'Unknown' });
+  // Remove from local store + DOM immediately (no refresh needed)
+  store.allProjects = (store.allProjects || []).filter(x => x.id !== id);
   closeModal();
-  await invalidateProjects();
-  loadProjects();
+  // If this project is open in the dashboard, return to the projects landing
+  if (document.getElementById('panel-projectDashboard')?.classList.contains('active')) {
+    window.switchPanel('projects');
+  }
+  renderProjects();
 }
 
 function openProjectDetail(id) {

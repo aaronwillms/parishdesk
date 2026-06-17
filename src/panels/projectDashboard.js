@@ -9,6 +9,7 @@ import { renderProjectLog } from '../ui/projectLog.js';
 // ── Status config ──────────────────────────────────────────────────────────
 
 const STATUS = {
+  planning:     { label: 'Planning',     color: '#00695C', bg: '#E0F7FA', border: '#00695C' },
   in_progress:  { label: 'In Progress',  color: '#1565C0', bg: '#EFF6FF', border: '#1565C0' },
   blocked:      { label: 'Blocked',      color: '#8B1A2F', bg: '#FEF2F2', border: '#8B1A2F' },
   not_started:  { label: 'Not Started',  color: '#6A1B9A', bg: '#F5F3FF', border: '#6A1B9A' },

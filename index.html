@@ -50,7 +50,7 @@
       <div class="nav-item" data-panel="baptism"><i class="fa-solid fa-droplet"></i> Baptismal Preparation</div>
       <div class="nav-item" data-panel="firstcomm"><i class="fa-solid fa-wine-glass"></i> First Communion</div>
       <div class="nav-item" data-panel="confirmation"><i class="fa-solid fa-fire"></i> Confirmation</div>
-      <div class="nav-item" data-panel="ocia"><i class="fa-solid fa-dove"></i> OCIA</div>
+      <div class="nav-item" data-panel="ocia"><i class="fa-solid fa-user-plus"></i> OCIA</div>
       <div class="nav-item" data-panel="marriage"><i class="fa-solid fa-heart"></i> Marriage Preparation</div>
       <div class="nav-sec">Pastoral Care</div>
       <div class="nav-item" data-panel="annulments"><i class="fa-solid fa-scale-balanced"></i> Annulments</div>
@@ -171,6 +171,7 @@
         <div class="card" style="padding:.875rem 1.25rem;">
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <input type="text" id="couple-search" placeholder="Search by name…" oninput="renderCouples()" style="flex:1;min-width:140px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
+            <button id="marriage-gear" class="anl-icon-btn" title="Document templates" style="display:none;" onclick="openMarriageTemplates()"><i class="fa-solid fa-gear"></i></button>
             <button class="btn-primary" style="white-space:nowrap;" onclick="openModal('couple')">+ Add couple</button>
           </div>
           <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;" id="couple-filters">
@@ -187,27 +188,7 @@
 
       <!-- ANNULMENTS -->
       <div id="panel-annulments" class="panel">
-        <div class="stat-row">
-          <div class="stat-card"><div class="stat-num" id="stat-cases">—</div><div class="stat-label">Active cases</div></div>
-          <div class="stat-card"><div class="stat-num" id="stat-tribunal">—</div><div class="stat-label">In tribunal</div></div>
-          <div class="stat-card"><div class="stat-num" id="stat-prep">—</div><div class="stat-label">Preparing</div></div>
-        </div>
-        <div id="annulment-alerts"></div>
-        <div class="card" style="padding:.875rem 1.25rem;">
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <input type="text" id="case-search" placeholder="Search by petitioner or respondent…" oninput="renderCases()" style="flex:1;min-width:160px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
-            <button class="btn-primary" style="white-space:nowrap;" onclick="openModal('case')">+ Add case</button>
-          </div>
-          <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;">
-            <button class="cf-btn active" onclick="setCaseFilter('all',this)">All</button>
-            <button class="cf-btn" onclick="setCaseFilter('active',this)">Active</button>
-            <button class="cf-btn" onclick="setCaseFilter('tribunal',this)">In tribunal</button>
-            <button class="cf-btn" onclick="setCaseFilter('prep',this)">Preparing</button>
-            <button class="cf-btn" onclick="setCaseFilter('affirm',this)">Affirmative</button>
-            <button class="cf-btn" onclick="setCaseFilter('archived',this)">Archived</button>
-          </div>
-        </div>
-        <div id="cases-list"><span class="pulse"></span></div>
+        <div id="annulments-root"><span class="pulse"></span></div>
       </div>
 
       <!-- DISCERNMENT (stub) -->
@@ -240,18 +221,7 @@
           <div class="stat-card"><div class="stat-num" id="stat-bap-upcoming">—</div><div class="stat-label">Upcoming baptisms</div></div>
           <div class="stat-card"><div class="stat-num" id="stat-bap-docs">—</div><div class="stat-label">Docs incomplete</div></div>
         </div>
-        <div class="card" style="padding:.875rem 1.25rem;">
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <input type="text" id="bap-search" placeholder="Search by name…" oninput="renderSacramental('baptism')" style="flex:1;min-width:140px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
-            <button class="btn-primary" style="white-space:nowrap;" onclick="openSacramentalModal('baptism')">+ Add child</button>
-          </div>
-          <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;">
-            <button class="cf-btn active" onclick="setSacramentalFilter('baptism','all',this)">All</button>
-            <button class="cf-btn" onclick="setSacramentalFilter('baptism','active',this)">Active</button>
-            <button class="cf-btn" onclick="setSacramentalFilter('baptism','archived',this)">Archived</button>
-          </div>
-        </div>
-        <div id="bap-list"><span class="pulse"></span></div>
+        <div id="baptism-root"><span class="pulse"></span></div>
       </div>
 
       <!-- FIRST COMMUNION -->
@@ -274,18 +244,7 @@
           <div class="stat-card"><div class="stat-num" id="stat-fc-upcoming">—</div><div class="stat-label">Upcoming sacrament</div></div>
           <div class="stat-card"><div class="stat-num" id="stat-fc-docs">—</div><div class="stat-label">Docs incomplete</div></div>
         </div>
-        <div class="card" style="padding:.875rem 1.25rem;">
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <input type="text" id="fc-search" placeholder="Search by name…" oninput="renderSacramental('firstcomm')" style="flex:1;min-width:140px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
-            <button class="btn-primary" style="white-space:nowrap;" onclick="openSacramentalModal('firstcomm')">+ Add student</button>
-          </div>
-          <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;">
-            <button class="cf-btn active" onclick="setSacramentalFilter('firstcomm','all',this)">All</button>
-            <button class="cf-btn" onclick="setSacramentalFilter('firstcomm','active',this)">Active</button>
-            <button class="cf-btn" onclick="setSacramentalFilter('firstcomm','archived',this)">Archived</button>
-          </div>
-        </div>
-        <div id="fc-list"><span class="pulse"></span></div>
+        <div id="firstcomm-root"><span class="pulse"></span></div>
       </div>
 
       <!-- CONFIRMATION -->
@@ -308,18 +267,7 @@
           <div class="stat-card"><div class="stat-num" id="stat-con-upcoming">—</div><div class="stat-label">Upcoming sacrament</div></div>
           <div class="stat-card"><div class="stat-num" id="stat-con-docs">—</div><div class="stat-label">Docs incomplete</div></div>
         </div>
-        <div class="card" style="padding:.875rem 1.25rem;">
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <input type="text" id="con-search" placeholder="Search by name…" oninput="renderSacramental('confirmation')" style="flex:1;min-width:140px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
-            <button class="btn-primary" style="white-space:nowrap;" onclick="openSacramentalModal('confirmation')">+ Add student</button>
-          </div>
-          <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;">
-            <button class="cf-btn active" onclick="setSacramentalFilter('confirmation','all',this)">All</button>
-            <button class="cf-btn" onclick="setSacramentalFilter('confirmation','active',this)">Active</button>
-            <button class="cf-btn" onclick="setSacramentalFilter('confirmation','archived',this)">Archived</button>
-          </div>
-        </div>
-        <div id="con-list"><span class="pulse"></span></div>
+        <div id="confirmation-root"><span class="pulse"></span></div>
       </div>
 
       <!-- OCIA -->
@@ -346,13 +294,14 @@
         <div class="card" style="padding:.875rem 1.25rem;">
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <input type="text" id="ocia-search" placeholder="Search by name…" oninput="renderOcia()" style="flex:1;min-width:140px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
-            <button class="btn-primary" style="white-space:nowrap;" onclick="openOciaModal()">+ Add person</button>
+            <button id="ocia-gear" class="anl-icon-btn" title="Document templates" style="display:none;" onclick="openOciaTemplates()"><i class="fa-solid fa-gear"></i></button>
+            <button class="btn-primary" style="white-space:nowrap;" onclick="openOciaCreate()">+ Add Candidate</button>
           </div>
           <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;">
             <button class="cf-btn active" onclick="setOciaFilter('all',this)">All</button>
             <button class="cf-btn" onclick="setOciaFilter('inquirer',this)">Inquirer</button>
-            <button class="cf-btn" onclick="setOciaFilter('preparation',this)">In preparation</button>
-            <button class="cf-btn" onclick="setOciaFilter('complete',this)">Complete</button>
+            <button class="cf-btn" onclick="setOciaFilter('preparation',this)">In Preparation</button>
+            <button class="cf-btn" onclick="setOciaFilter('complete',this)">Preparation Complete</button>
             <button class="cf-btn" onclick="setOciaFilter('received',this)">Received</button>
             <button class="cf-btn" onclick="setOciaFilter('inactive',this)">Inactive</button>
           </div>

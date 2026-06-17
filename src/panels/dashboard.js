@@ -627,7 +627,7 @@ const FEED_ICONS = {
   baptism:      'fa-droplet',
   firstcomm:    'fa-wine-glass',
   confirmation: 'fa-fire',
-  ocia:         'fa-dove',
+  ocia:         'fa-user-plus',
   couple:       'fa-heart',
   case:         'fa-scale-balanced',
   announcement: 'fa-bullhorn',
