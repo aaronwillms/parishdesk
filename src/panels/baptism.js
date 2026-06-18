@@ -3,8 +3,9 @@ import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
+import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 
-const BAP_STATUS = {
+export const BAP_STATUS = {
   scheduled: { label:'Scheduled', color:'#7D6608', bg:'#FEF9E7', dot:'#D4AC0D' },
   complete:  { label:'Complete',  color:'#2D6A4F', bg:'#D8F3DC', dot:'#2D6A4F' },
   inactive:  { label:'Inactive',  color:'#616A6B', bg:'#F2F3F4', dot:'#AAB7B8' },
@@ -25,36 +26,52 @@ function clergyPersonnel() { return (store.personnel || []).filter(p => CLERGY_T
 function ageOf(dob) { if (!dob) return null; const d = new Date(dob); if (isNaN(d)) return null; const now = new Date(new Date().toLocaleString('en-US', { timeZone: store.parishSettings?.timezone || 'America/Chicago' })); let a = now.getFullYear() - d.getFullYear(); const m = now.getMonth() - d.getMonth(); if (m < 0 || (m === 0 && now.getDate() < d.getDate())) a--; return a; }
 
 // ── Field accessors (backward-compatible) ────────────────────────────────────
-function nameOf(p) { return (p.first_name || p.last_name) ? `${p.first_name || ''} ${p.last_name || ''}`.trim() : (p.name || '—'); }
-function statusOf(p) { return p.status_code || (p.archived ? 'inactive' : 'scheduled'); }
-function bapDate(p) { return p ? (p.baptism_date || p.sacrament_date || null) : null; }
-function dobOf(p) { return p.dob || null; }
-function notesOf(p) {
+export function nameOf(p) { return (p.first_name || p.last_name) ? `${p.first_name || ''} ${p.last_name || ''}`.trim() : (p.name || '—'); }
+export function statusOf(p) { return p.status_code || (p.archived ? 'inactive' : 'scheduled'); }
+export function bapDate(p) { return p ? (p.baptism_date || p.sacrament_date || null) : null; }
+export function dobOf(p) { return p.dob || null; }
+export { ageOf as bapAgeOf, _esc as bapEsc };
+export function notesOf(p) {
   const out = (Array.isArray(p.notes_log) ? p.notes_log : []).map(n => ({ note: n.note || '', by: n.by || null, created_at: n.created_at || null }));
   if (p.notes && String(p.notes).trim()) out.push({ note: String(p.notes).trim(), by: null, created_at: null, legacy: true });
   return out;
 }
-function gpInvalid(p) {
+export function gpInvalid(p) {
   const g1g = p.godparent1_gender, g2g = p.godparent2_gender;
   const sameGender = g1g && g2g && p.godparent2_name && g1g === g2g;
   const bothNonCath = p.godparent1_name && p.godparent2_name && p.godparent1_catholic === false && p.godparent2_catholic === false;
   return sameGender || bothNonCath;
 }
-function delegationFlag(p) { return !!p.officiant_override && !p.delegation_given; }
-function ageFlag(p) { const a = ageOf(dobOf(p)); return a !== null && a > 7; }
+export function delegationFlag(p) { return !!p.officiant_override && !p.delegation_given; }
+export function ageFlag(p) { const a = ageOf(dobOf(p)); return a !== null && a > 7; }
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 async function loadTemplate() {
   const { data } = await sb.from('baptism_templates').select('*').limit(1);
   _tplRow = (data && data[0]) || { documents: [], steps: [{ step: 'Parent Preparation Complete', deletable: true }] };
 }
-export async function loadBaptism() {
+// Fetch-only (no render) — used by the shell's config.fetchRecords.
+export async function loadBaptismData() {
   await loadTemplate();
   const { data, error } = await sb.from('sacramental_baptism').select('*').order('created_at', { ascending: false });
   if (error) { console.error('[baptism]', error); return; }
   allBap = data || [];
   store.allBaptism = allBap;
-  renderAll(); updateStats();
+  updateStats();
+  return allBap;
+}
+export function getBapRecords() { return allBap; }
+export function getBapRecord(id) { return allBap.find(x => x.id === id) || null; }
+export { fullAccess as bapCanManage };
+export function bapTemplate() { return _tplRow; }
+
+// Nav loader — fetch then mount the master-detail shell into #baptism-root.
+export async function loadBaptism() {
+  await loadBaptismData();
+  const root = document.getElementById('baptism-root');
+  if (!root) return;
+  const { baptismConfig } = await import('../sacramental/baptismConfig.js');
+  renderSacramentalPanel(root, baptismConfig);
 }
 function updateStats() {
   const active = allBap.filter(p => !p.archived && statusOf(p) !== 'inactive');
@@ -64,130 +81,30 @@ function updateStats() {
   set('stat-bap-docs', active.filter(p => !p.preparation_complete).length);
 }
 
-// ── Chrome ───────────────────────────────────────────────────────────────────
-function renderAll() {
-  const root = document.getElementById('baptism-root'); if (!root) return;
-  const manage = fullAccess();
-  const canTpl = isSacramentCoordinator('baptism');
-  const filters = [['all', 'All'], ['scheduled', 'Scheduled'], ['complete', 'Complete'], ['inactive', 'Inactive']]
-    .map(([k, l]) => `<button class="cf-btn${bapFilter === k ? ' active' : ''}" onclick="setBapFilter('${k}',this)">${l}</button>`).join('');
-  root.innerHTML = `
-    <div class="card" style="padding:.875rem 1.25rem;">
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <input type="text" id="bap-search" placeholder="Search by name…" oninput="renderBapList()" style="flex:1;min-width:140px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
-        ${canTpl ? `<button class="anl-icon-btn" title="Settings" onclick="openBapTemplate()"><i class="fa-solid fa-gear"></i></button>` : ''}
-        ${manage ? `<button class="btn-primary" style="white-space:nowrap;" onclick="openBapCreate()">+ Add Child</button>` : ''}
-      </div>
-      <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;">${filters}</div>
-    </div>
-    <div id="bap-list"></div>`;
-  renderBapList();
-}
-function setBapFilter(f, el) { bapFilter = f; document.querySelectorAll('#panel-baptism .cf-btn').forEach(b => b.classList.remove('active')); el?.classList.add('active'); renderBapList(); }
+// ── Read-detail helpers (consumed by baptismConfig detail sections) ──────────
+export function churchName(p) { if (p.baptism_institution_id) { const i = (store.institutions || []).find(x => x.id === p.baptism_institution_id); if (i) return i.name; } return p.baptism_church_override || ''; }
+export function officiantName(p) { return p.officiant_id ? ((store.personnel || []).find(x => x.id === p.officiant_id)?.name || '') : (p.officiant_override || ''); }
 
-function renderBapList() {
-  const el = document.getElementById('bap-list'); if (!el) return;
-  const q = (document.getElementById('bap-search')?.value || '').toLowerCase();
-  const items = allBap.filter(p => {
-    const mf = bapFilter === 'all' ? true : bapFilter === 'inactive' ? (statusOf(p) === 'inactive' || p.archived) : (statusOf(p) === bapFilter && !p.archived);
-    return mf && (!q || nameOf(p).toLowerCase().includes(q));
-  });
-  if (!items.length) { el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No children match.</div>'; return; }
-  const active = items.filter(p => !p.archived), archived = items.filter(p => p.archived);
-  let html = active.map(renderBapCard).join('');
-  if (archived.length) {
-    html += `<div style="display:flex;align-items:center;gap:10px;margin:18px 0 10px;"><div style="flex:1;height:.5px;background:var(--stone);"></div><span style="font-size:11px;color:#6B7280;letter-spacing:.07em;text-transform:uppercase;font-weight:500;">Archived</span><div style="flex:1;height:.5px;background:var(--stone);"></div></div>`;
-    html += archived.map(renderBapCard).join('');
-  }
-  el.innerHTML = html;
+// Cross-link entry — open a specific baptism file in the shell (deep-link).
+export async function expandBaptism(id) {
+  openSacramentalRecord('baptism', id);   // set hash first so the shell opens it on mount
+  window.switchPanel('baptism');
 }
 
-function renderBapCard(p) {
-  const sm = BAP_STATUS[statusOf(p)] || BAP_STATUS.scheduled;
-  const age = ageOf(dobOf(p));
-  const gpBad = gpInvalid(p), deleg = delegationFlag(p), ageBad = ageFlag(p);
-  const exp = bapExpanded === p.id;
-  const bd = bapDate(p);
-
-  let h = `<div class="couple-card${(gpBad || deleg || ageBad) ? ' urgent' : ''}" id="bap-card-${p.id}" style="border-left:4px solid ${(gpBad || ageBad) ? '#922B21' : sm.dot};">
-    <div class="couple-header" onclick="toggleBap('${p.id}')">
-      <div style="flex:1;min-width:0;">
-        <span class="couple-name">${_esc(nameOf(p))}${age !== null ? ` <span style="font-size:12px;color:#6B7280;font-weight:400;">(${age})</span>` : ''}</span>
-        <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center;">
-          <span style="background:${sm.bg};color:${sm.color};border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;letter-spacing:.04em;display:inline-flex;align-items:center;gap:5px;border:1px solid ${sm.color}33;"><span style="width:7px;height:7px;border-radius:50%;background:${sm.dot};display:inline-block;"></span>${sm.label}</span>
-          ${bd ? `<span style="font-size:11px;background:#D6EAF8;color:#1B4F72;border-radius:20px;padding:2px 8px;">💧 ${formatDateDisplay(bd)}</span>` : ''}
-          ${p.preparation_complete ? `<span style="font-size:11px;color:#2D6A4F;">✅ prep complete</span>` : ''}
-        </div>
-        ${ageBad ? `<div style="margin-top:5px;background:#FDEDEC;border-left:3px solid #E74C3C;border-radius:3px;padding:4px 10px;font-size:12px;font-weight:600;color:#922B21;">⚠ Child is above age of reason — use the OCIA panel</div>` : ''}
-        ${gpBad ? `<div style="margin-top:5px;background:#FDEDEC;border-left:3px solid #E74C3C;border-radius:3px;padding:4px 10px;font-size:12px;font-weight:600;color:#922B21;">⚠ Godparent requirements not met</div>` : ''}
-        ${deleg ? `<div style="margin-top:5px;background:#FEF9E7;border-left:3px solid #D4AC0D;border-radius:3px;padding:4px 10px;font-size:12px;font-weight:600;color:#7D6608;">⚠ Send Letter of Delegation</div>` : ''}
-      </div>
-      <span style="font-size:16px;color:#B0A090;">${exp ? '▲' : '▼'}</span>
-    </div>`;
-  if (exp) h += renderBapBody(p);
-  h += `</div>`;
-  return h;
-}
-
-function renderBapBody(p) {
-  let h = `<div class="couple-body">`;
-  h += `<div style="margin-top:10px;">`;
-  if (dobOf(p)) h += `<span class="detail-chip">🎂 ${_esc(dobOf(p))}</span>`;
-  if (p.baptism_church_override || p.baptism_institution_id) h += `<span class="detail-chip">⛪ ${_esc(churchName(p))}</span>`;
-  h += `</div>`;
-  // parents
-  const par1 = (p.parent1_first || p.parent1_last) ? `${p.parent1_first || ''} ${p.parent1_last || ''}`.trim() : (p.father || p.mother);
-  if (par1 || p.parent2_first || p.mother) {
-    h += `<div class="couple-section-label">Parents / Guardians</div>`;
-    if (par1) h += `<div style="font-size:13px;">${_esc(par1)}${p.parent1_catholic === false ? ' <span style="color:#854F0B;">(non-Catholic)</span>' : ''}${p.parent1_phone ? ' · ' + _esc(p.parent1_phone) : ''}</div>`;
-    const par2 = (p.parent2_first || p.parent2_last) ? `${p.parent2_first || ''} ${p.parent2_last || ''}`.trim() : (par1 ? '' : p.mother);
-    if (par2) h += `<div style="font-size:13px;">${_esc(par2)}${p.parent2_catholic === false ? ' <span style="color:#854F0B;">(non-Catholic)</span>' : ''}${p.parent2_phone ? ' · ' + _esc(p.parent2_phone) : ''}</div>`;
-  }
-  // godparents
-  const gp1 = p.godparent1_name || p.godfather, gp2 = p.godparent2_name || p.godmother;
-  if (gp1 || gp2) {
-    h += `<div class="couple-section-label">Godparents</div>`;
-    if (gp1) h += `<div style="font-size:13px;">${_esc(gp1)}${p.godparent1_gender ? ` (${p.godparent1_gender})` : ''}${p.godparent1_catholic === false ? ' <span style="color:#854F0B;">— Christian witness only</span>' : ''}</div>`;
-    if (gp2) h += `<div style="font-size:13px;">${_esc(gp2)}${p.godparent2_gender ? ` (${p.godparent2_gender})` : ''}${p.godparent2_catholic === false ? ' <span style="color:#854F0B;">— Christian witness only</span>' : ''}</div>`;
-  }
-  // officiant
-  const off = p.officiant_id ? ((store.personnel || []).find(x => x.id === p.officiant_id)?.name) : p.officiant_override;
-  if (off) h += `<div style="font-size:13px;margin-top:6px;">Officiant: <strong>${_esc(off)}</strong></div>`;
-  // prep step
-  h += `<div class="couple-section-label" style="margin-top:12px;">Preparation</div>
-    <div class="doc-item" style="padding:4px 6px;display:flex;align-items:center;gap:8px;">
-      <span style="font-size:15px;cursor:pointer;" onclick="toggleBapPrep('${p.id}')">${p.preparation_complete ? '✅' : '⬜'}</span>
-      <span style="flex:1;color:${p.preparation_complete ? '#2D6A4F' : 'var(--navy)'};cursor:pointer;" onclick="toggleBapPrep('${p.id}')">Parent/Guardian Preparation Complete</span>
-      ${p.preparation_complete && p.preparation_complete_date ? `<span style="font-size:11px;color:#9CA3AF;">${fmtDate(String(p.preparation_complete_date).slice(0, 10))}</span>` : ''}
-    </div>`;
-  // notes
-  const notes = notesOf(p);
-  h += `<div class="couple-section-label" style="margin-top:12px;">Notes</div>
-    <div style="display:flex;gap:6px;margin-bottom:8px;"><input type="text" id="bn-${p.id}" placeholder="Add a note…" style="flex:1;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" onkeydown="if(event.key==='Enter'){event.preventDefault();addBapNote('${p.id}');}" /><button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="addBapNote('${p.id}')">Add</button></div>`;
-  h += notes.length ? notes.map(n => `<div style="font-size:13px;color:#555;margin-bottom:6px;padding:8px 12px;background:#FFF8EE;border-left:3px solid var(--gold);border-radius:3px;"><div style="white-space:pre-wrap;">${_esc(n.note)}</div>${(n.by || n.created_at) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${n.created_at ? fmtDate(String(n.created_at).slice(0, 10)) : ''}${n.by ? ' · ' + _esc(n.by) : ''}</div>` : ''}</div>`).join('') : `<div style="font-size:13px;color:#9CA3AF;font-style:italic;padding:.25rem 0;">No notes yet.</div>`;
-
-  h += `<div style="margin-top:12px;text-align:right;"><button class="anl-icon-btn" title="Edit" onclick="openBapEdit('${p.id}')"><i class="fa-solid fa-pencil"></i></button></div></div>`;
-  return h;
-}
-function churchName(p) { if (p.baptism_institution_id) { const i = (store.institutions || []).find(x => x.id === p.baptism_institution_id); if (i) return i.name; } return p.baptism_church_override || ''; }
-
-function toggleBap(id) { bapExpanded = bapExpanded === id ? null : id; renderBapList(); }
-export async function expandBaptism(id) { bapExpanded = id; window.switchPanel('baptism'); await loadBaptism(); document.getElementById('bap-card-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
-
-// ── Autosave ─────────────────────────────────────────────────────────────────
+// ── Autosave (used by the read-detail prep checkbox + add-note) ──────────────
 async function _patch(id, patch) { const p = allBap.find(x => x.id === id); if (!p) return null; const { error } = await sb.from('sacramental_baptism').update({ ...patch, updated_at: nowIso() }).eq('id', id); if (error) { alert('Save failed: ' + error.message); return null; } Object.assign(p, patch); return p; }
 async function toggleBapPrep(id) {
   const p = allBap.find(x => x.id === id); if (!p) return;
   const done = !p.preparation_complete;
   const patch = { preparation_complete: done, preparation_complete_date: done ? todayCST() : null, preparation_complete_by: done ? _curUserId() : null };
-  if (await _patch(id, patch)) { renderBapList(); updateStats(); }
+  if (await _patch(id, patch)) { updateStats(); refreshActivePanel(); }
 }
 async function addBapNote(id) {
   const inp = document.getElementById('bn-' + id); const note = (inp?.value || '').trim(); if (!note) return;
   const p = allBap.find(x => x.id === id); if (!p) return;
   const log = Array.isArray(p.notes_log) ? JSON.parse(JSON.stringify(p.notes_log)) : [];
   log.push({ note, by: _curUserName(), created_at: nowIso() });
-  if (await _patch(id, { notes_log: log })) renderBapList();
+  if (await _patch(id, { notes_log: log })) refreshActivePanel();
 }
 
 // ── Big modal ────────────────────────────────────────────────────────────────
@@ -221,14 +138,24 @@ function newModalState(p, coordId) {
   };
 }
 
-function buildModalHtml(p) {
+// Inline edit form for the shell detail pane: reuse the exact form markup, but
+// skip the modal-title + modal-actions (the shell renders Save/Cancel/Delete).
+export function buildBapEditForm(p) {
+  _M = newModalState(p, p?.preparation_responsible_id || null);
+  const html = buildModalHtml(p, { inline: true });
+  setTimeout(() => bapValidate(), 0);   // run age-gate/godparent validation on mount
+  return html;
+}
+
+function buildModalHtml(p, opts = {}) {
+  const inline = !!opts.inline;
   const isEdit = _M.isEdit;
   const respOpts = clergyPersonnel().map(c => `<option value="${c.id}"${_M.respId === c.id ? ' selected' : ''}>${_esc(c.name)}</option>`).join('');
   const offOpts = clergyPersonnel().map(c => `<option value="${c.id}"${p?.officiant_id === c.id ? ' selected' : ''}>${_esc(c.name)}</option>`).join('');
   const instOpts = (store.institutions || []).map(i => `<option value="${i.id}"${p?.baptism_institution_id === i.id ? ' selected' : ''}>${_esc(i.name)}</option>`).join('');
   const np = { first: p?.first_name || (p?.name || '').split(/\s+/)[0] || '', middle: p?.middle_name || '', last: p?.last_name || (p?.name || '').split(/\s+/).slice(1).join(' ') || '' };
 
-  let h = `<div class="modal-title">${isEdit ? 'Edit Baptism File' : 'New Baptism'}</div>`;
+  let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Baptism File' : 'New Baptism'}</div>`;
 
   // 1 — Person responsible
   h += _sectionHead('Person Responsible');
@@ -297,10 +224,12 @@ function buildModalHtml(p) {
     h += _toggle('bf-archive', 'Archive this file', !!p?.archived);
   }
 
-  h += `<div class="modal-actions" style="justify-content:space-between;">
-    ${isEdit ? `<button class="btn-delete" onclick="bapDeletePerson('${_M.id}')">Delete</button>` : '<span></span>'}
-    <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="bapCloseModal()">Cancel</button><button class="btn-primary" id="bf-save" onclick="bapSave()">${isEdit ? 'Save' : 'Create File'}</button></div>
-  </div>`;
+  if (!inline) {
+    h += `<div class="modal-actions" style="justify-content:space-between;">
+      ${isEdit ? `<button class="btn-delete" onclick="bapDeletePerson('${_M.id}')">Delete</button>` : '<span></span>'}
+      <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="bapCloseModal()">Cancel</button><button class="btn-primary" id="bf-save" onclick="bapSave()">${isEdit ? 'Save' : 'Create File'}</button></div>
+    </div>`;
+  }
   return h;
 }
 
@@ -371,17 +300,14 @@ function bapValidate() {
 // ── Save ─────────────────────────────────────────────────────────────────────
 function _v(id) { const e = document.getElementById(id); return e ? e.value.trim() : ''; }
 function _chk(id) { return !!document.getElementById(id)?.checked; }
-async function bapSave() {
-  if (!bapValidate()) { alert('Please resolve the highlighted issues before saving.'); return; }
+// Build the DB payload from the (modal OR inline) form — shared by all save paths.
+function _bapPayloadFromDom() {
   const first = _v('bf-first'), last = _v('bf-last');
   const name = [first, _v('bf-middle'), last].filter(Boolean).join(' ');
-  if (!name) { alert('Child name is required.'); return; }
-  if (!_v('bf-dob')) { alert('Date of birth is required.'); return; }
   const respSel = document.getElementById('bf-resp')?.value || '';
   const instSel = document.getElementById('bf-inst')?.value || '';
   const offSel = document.getElementById('bf-officiant')?.value || '';
   const p2 = _M.showParent2;
-
   const payload = {
     name, first_name: first || null, middle_name: _v('bf-middle') || null, last_name: last || null,
     dob: _v('bf-dob') || null,
@@ -404,18 +330,18 @@ async function bapSave() {
     delegation_given: offSel === '__other' ? _chk('bf-delegation') : false,
     updated_at: nowIso(),
   };
+  return { payload, name };
+}
 
+// Modal create path (the list "New" button still uses the existing modal).
+async function bapSave() {
+  if (!bapValidate()) { alert('Please resolve the highlighted issues before saving.'); return; }
+  const { payload, name } = _bapPayloadFromDom();
+  if (!name) { alert('Child name is required.'); return; }
+  if (!_v('bf-dob')) { alert('Date of birth is required.'); return; }
   if (_M.isEdit) {
-    const prior = allBap.find(x => x.id === _M.id);
-    const newStatus = document.getElementById('bf-status')?.value || statusOf(prior);
-    payload.status_code = newStatus;
-    payload.archived = _chk('bf-archive');
-    const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
-    if (prior && statusOf(prior) !== 'complete' && newStatus === 'complete') tl.push({ type: 'auto', text: 'Baptism Complete', created_at: nowIso() });
-    payload.timeline = tl;
-    const { error } = await sb.from('sacramental_baptism').update(payload).eq('id', _M.id);
-    if (error) { alert('Save failed: ' + error.message); return; }
-    logActivity({ action: 'updated Baptism record', entityType: 'baptism', entityName: name, contextType: 'baptism', contextId: _M.id });
+    const r = await _bapWriteEdit(_M.id, payload, name);
+    if (!r.ok) return;
     bapCloseModal(); await loadBaptism();
   } else {
     payload.status_code = 'scheduled';
@@ -429,6 +355,55 @@ async function bapSave() {
     notifyUsers(uids, user?.id, `New baptism file added: ${name}`, 'info', 'baptism');
     bapCloseModal(); await loadBaptism();
   }
+}
+
+// Shared edit-write: applies status/archive/timeline, writes, updates cache.
+async function _bapWriteEdit(id, payload, name) {
+  const prior = allBap.find(x => x.id === id);
+  const newStatus = document.getElementById('bf-status')?.value || statusOf(prior);
+  payload.status_code = newStatus;
+  payload.archived = _chk('bf-archive');
+  const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
+  if (prior && statusOf(prior) !== 'complete' && newStatus === 'complete') tl.push({ type: 'auto', text: 'Baptism Complete', created_at: nowIso() });
+  payload.timeline = tl;
+  const { error } = await sb.from('sacramental_baptism').update(payload).eq('id', id);
+  if (error) { alert('Save failed: ' + error.message); return { ok: false }; }
+  logActivity({ action: 'updated Baptism record', entityType: 'baptism', entityName: name, contextType: 'baptism', contextId: id });
+  if (prior) Object.assign(prior, payload);
+  return { ok: true, record: prior };
+}
+
+// Shell config.saveRecord — inline-edit save: write + update cache, no remount.
+export async function bapSaveEdit(id) {
+  if (!bapValidate()) { alert('Please resolve the highlighted issues before saving.'); return { ok: false }; }
+  const { payload, name } = _bapPayloadFromDom();
+  if (!name) { alert('Child name is required.'); return { ok: false }; }
+  if (!_v('bf-dob')) { alert('Date of birth is required.'); return { ok: false }; }
+  updateStats();
+  return _bapWriteEdit(id, payload, name);
+}
+
+// Shell config.deleteRecord
+export async function bapDeleteRec(id) {
+  if (!confirm('Permanently delete this record? This cannot be undone.')) return { ok: false };
+  const { error } = await sb.from('sacramental_baptism').delete().eq('id', id);
+  if (error) { alert('Delete failed: ' + error.message); return { ok: false }; }
+  allBap = allBap.filter(x => x.id !== id);
+  logActivity({ action: 'deleted Baptism record', entityType: 'baptism', entityName: id, contextType: 'baptism' });
+  updateStats();
+  return { ok: true };
+}
+
+// Shell config.bulkUpdateStatus
+export async function bapBulkStatus(ids, status) {
+  for (const id of ids) {
+    const { error } = await sb.from('sacramental_baptism').update({ status_code: status, updated_at: nowIso() }).eq('id', id);
+    if (error) { alert('Bulk update failed: ' + error.message); return { ok: false }; }
+    const p = allBap.find(x => x.id === id); if (p) p.status_code = status;
+  }
+  logActivity({ action: 'bulk-updated Baptism status', entityType: 'baptism', entityName: `${ids.length} files`, contextType: 'baptism' });
+  updateStats();
+  return { ok: true };
 }
 async function bapDeletePerson(id) {
   if (!confirm('Permanently delete this record? This cannot be undone.')) return;
@@ -482,7 +457,7 @@ async function bapTplSave() {
 }
 
 Object.assign(window, {
-  loadBaptism, expandBaptism, renderBapList, setBapFilter, toggleBap,
+  loadBaptism, expandBaptism,
   openBapCreate, openBapEdit, openBapTemplate, bapCloseModal,
   toggleBapPrep, addBapNote,
   bapRespChange, bapInstChange, bapParentCathChange, bapToggleParent2, bapAdoptChange, bapOfficiantChange,

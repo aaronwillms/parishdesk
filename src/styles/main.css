@@ -441,3 +441,50 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 .auth-submit{width:100%;background:var(--navy);color:#F8F7F4;border:none;border-radius:var(--radius-sm);padding:.6rem 1rem;font-size:14px;font-family:'Inter',sans-serif;cursor:pointer;margin-top:.25rem;transition:opacity .13s;}
 .auth-submit:hover{opacity:.85;}
 .auth-error{font-size:12.5px;color:#A32D2D;text-align:center;margin-top:.75rem;min-height:18px;}
+
+/* ── Sacramental master-detail shell (config-driven) ───────────────────────── */
+.sac-shell{display:flex;gap:0;align-items:stretch;min-height:60vh;border:.5px solid var(--stone);border-radius:var(--radius);overflow:hidden;background:#FFFFFF;}
+.sac-list{width:280px;flex-shrink:0;border-right:.5px solid var(--stone);display:flex;flex-direction:column;background:var(--parch);}
+.sac-list-head{padding:.75rem .8rem;border-bottom:.5px solid var(--stone);background:#FFFFFF;}
+.sac-list-title{font-family:'Cormorant Garamond',Georgia,serif;font-size:18px;font-weight:700;color:var(--navy);}
+.sac-list-scroll{flex:1;overflow-y:auto;padding:.5rem;}
+.sac-detail{flex:1;min-width:0;overflow-y:auto;padding:1.1rem 1.25rem;background:#FFFFFF;}
+.sac-item{background:#FFFFFF;border:.5px solid var(--stone);border-left:4px solid transparent;border-radius:var(--radius-sm);padding:.6rem .7rem;margin-bottom:.5rem;cursor:pointer;transition:border-color .12s,background .12s;}
+.sac-item:hover{background:var(--parch);}
+.sac-item.selected{border-left-color:var(--cardinal);background:var(--parch);box-shadow:0 1px 4px rgba(28,43,58,.08);}
+.sac-item-title{font-family:'Inter',sans-serif;font-weight:600;font-size:13.5px;color:var(--navy);}
+.sac-item-sub{font-size:11.5px;color:#6B7280;margin-top:1px;}
+.sac-item-row{display:flex;align-items:flex-start;gap:8px;}
+.sac-flag{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;font-weight:600;}
+.sac-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;min-height:40vh;color:#9CA3AF;text-align:center;gap:.5rem;}
+.sac-group-head{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6B7280;cursor:pointer;padding:.4rem .2rem;}
+.sac-detail-name{font-family:'Cormorant Garamond',Georgia,serif;font-size:24px;font-weight:700;color:var(--navy);line-height:1.1;}
+.sac-avatar{width:46px;height:46px;border-radius:50%;background:var(--navy);color:var(--gold);display:flex;align-items:center;justify-content:center;font-family:'Cormorant Garamond',Georgia,serif;font-weight:700;font-size:18px;flex-shrink:0;}
+.sac-section{margin-top:1.3rem;}
+.sac-section-title{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cardinal);margin-bottom:.5rem;border-bottom:.5px solid var(--stone);padding-bottom:4px;}
+.sac-back{display:none;background:none;border:none;color:var(--cardinal);font-size:20px;cursor:pointer;padding:0;margin-right:4px;}
+.sac-bulkbar{display:flex;align-items:center;gap:8px;padding:.5rem .7rem;background:var(--navy);color:#F5F1EB;border-radius:var(--radius-sm);margin-bottom:.5rem;font-size:12.5px;}
+/* Mobile: single pane, detail slides over list */
+@media (max-width:767px){
+  .sac-list{width:100%;}
+  .sac-detail{display:none;}
+  .sac-shell.detail-open .sac-list{display:none;}
+  .sac-shell.detail-open .sac-detail{display:block;}
+  .sac-back{display:inline-block;}
+}
+/* Dark mode — MOBILE ONLY, matching the app's media-gated dark theme, so the
+   shell darkens together with the inputs/badges (which are also media-gated). */
+@media (max-width:767px){
+  body.dark-mode .sac-shell{background:#1A2634 !important;border-color:#2D3F50 !important;}
+  body.dark-mode .sac-list{background:#15202C !important;border-color:#2D3F50 !important;}
+  body.dark-mode .sac-list-head,body.dark-mode .sac-detail{background:#1A2634 !important;}
+  body.dark-mode .sac-list-head{border-color:#2D3F50 !important;}
+  body.dark-mode .sac-item{background:#1A2634 !important;border-color:#2D3F50 !important;}
+  body.dark-mode .sac-item:hover,body.dark-mode .sac-item.selected{background:#243447 !important;}
+  body.dark-mode .sac-item.selected{border-left-color:var(--gold) !important;}
+  body.dark-mode .sac-item-title,body.dark-mode .sac-detail-name,body.dark-mode .sac-list-title{color:#F8F7F4 !important;}
+  body.dark-mode .sac-item-sub{color:#9CA3AF !important;}
+  body.dark-mode .sac-avatar{background:#243447 !important;color:var(--gold) !important;}
+  body.dark-mode .sac-section-title{color:var(--gold) !important;border-color:#2D3F50 !important;}
+  body.dark-mode #sac-search{background:#243447 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+}

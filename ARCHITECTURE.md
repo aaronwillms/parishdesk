@@ -43,6 +43,43 @@ All files under `functions/` are Cloudflare Pages Functions, served at `/functio
 | `GOOGLE_CLIENT_ID` | `config.js`, `auth/google/callback.js` |
 | `GOOGLE_CLIENT_SECRET` | `auth/google/callback.js` |
 
+## Sacramental master-detail shell
+
+The six sacramental panels share one reusable, config-driven split-pane shell
+(`src/sacramental/panelShell.js`). Each panel supplies a config object; the shell
+owns layout, the list pane, the read-first detail pane, hash deep-linking,
+responsive behavior, and bulk-select. Baptism is migrated
+(`src/sacramental/baptismConfig.js`); the other five migrate later by writing a
+config file only — no shell changes.
+
+- **Mount:** a panel's loader fetches data, then calls
+  `renderSacramentalPanel(containerEl, config)` (Baptism mounts into
+  `#baptism-root` from `loadBaptism()`).
+- **Routing:** hash-based, `#/<panelKey>` (list) and `#/<panelKey>/:id` (file
+  open); shareable, survives refresh. `openSacramentalRecord(panelKey, id)` is
+  the public deep-link hook (the future `#`-mention case-linking calls it).
+- **Theming:** uses the existing CSS variables/tokens and `.sac-*` classes with
+  explicit light + dark rules in `main.css`. No hardcoded hex in the shell.
+
+### Config schema (the contract a panel implements)
+
+| Key | Type | Purpose |
+|-----|------|---------|
+| `panelKey`, `title`, `newLabel` | string | identity + list header |
+| `groupBy(record)` / `groupLabel(key)` | fn / null | collapsible groups (cohort panels); `null` = flat list |
+| `canManage()`, `canManageTemplate()` | fn→bool | role gating (New/Edit/bulk; settings gear) |
+| `openCreate()`, `openTemplate()` | fn | New button / settings gear actions |
+| `fetchRecords()` / `fetchRecord(id)` | fn | data source (reuse existing Supabase fetch) |
+| `searchText(record)` | fn→string | client-side search field |
+| `statusFilters[]` | `{key,label,match(record)}` | filter pills |
+| `listItem(record)` | `{title, secondary?, chips[], flags[]}` | list card; chips = `{label,tone}`, flags = `{icon,tone,label,short?}` |
+| `detailHeader(record)` | `{initials,name,chips[],flags[]}` | detail header |
+| `actions[]` | `{label,icon?,handler(record)}` | header actions (e.g. Email) |
+| `detailSections[]` | `{title, render(record)→html}` | read-only detail body |
+| `editForm(record)` | fn→html | the EXISTING edit form, inline (no modal chrome) |
+| `saveRecord(id)` / `deleteRecord(id)` | async fn→`{ok,record?}` | persist + log via existing logic |
+| `bulkStatusOptions[]`, `bulkUpdateStatus(ids,key)` | array / async fn | bulk status change |
+
 ## NOT Used
 
 - **Netlify** — no Netlify config, functions, or redirects. Any `netlify/` or `.netlify/` directories are ignored via `.gitignore`.
