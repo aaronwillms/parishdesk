@@ -1,7 +1,7 @@
 import { sb } from '../supabase.js';
 import { notifyUsers } from '../notifications.js';
 import { store } from '../store.js';
-import { fmtDate, todayCST, logActivity } from '../utils.js';
+import { fmtDate, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { normalizePhone } from '../utils/phone.js';
 
@@ -681,7 +681,7 @@ async function anlSaveCase() {
     payload.timeline = tl;
 
     const { error } = await sb.from('annulment_cases').update(payload).eq('id', _M.id);
-    if (error) { alert('Save failed: ' + error.message); return; }
+    if (error) { reportWriteError('annulment update', error); return; }
     Object.assign(prior, payload);
     if (statusChanged) await notifyStatusChange(prior, newStatus);
     anlCloseModal(); await loadCases();
@@ -693,7 +693,7 @@ async function anlSaveCase() {
     const { data: { user } } = await sb.auth.getUser();
     if (user?.id) payload.created_by = user.id;
     const { error } = await sb.from('annulment_cases').insert(payload);
-    if (error) { alert('Create failed: ' + error.message); return; }
+    if (error) { reportWriteError('annulment insert', error); return; }
     await logActivity({ action: 'opened annulment case', entityType: 'annulments', entityName: payload.petitioner || 'New case', contextType: 'annulments' });
     anlCloseModal(); await loadCases();
   }

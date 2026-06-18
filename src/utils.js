@@ -83,6 +83,16 @@ export function compareByLastName(a, b) {
   return ka.last.localeCompare(kb.last) || ka.first.localeCompare(kb.first);
 }
 
+// Surface a failed Supabase write to the user AND log the full error object
+// (message, details, hint, code) to the console for diagnosis. Use in every
+// save error branch so rejections are never silently swallowed.
+export function reportWriteError(context, error) {
+  console.error(`[${context}] write failed`, {
+    message: error?.message, details: error?.details, hint: error?.hint, code: error?.code, error,
+  });
+  alert('Save failed: ' + (error?.message || 'Unknown error') + (error?.details ? `\n(${error.details})` : ''));
+}
+
 export function daysUntil(iso) {
   if (!iso) return null;
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: store.parishSettings?.timezone || 'America/Chicago' }));

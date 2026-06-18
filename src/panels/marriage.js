@@ -1,5 +1,5 @@
 import { sb } from '../supabase.js';
-import { fmtDate, formatDateDisplay, daysUntil, todayCST, logActivity } from '../utils.js';
+import { fmtDate, formatDateDisplay, daysUntil, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { store } from '../store.js';
 import { expandCase } from './annulments.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
@@ -791,14 +791,14 @@ async function marSaveCouple() {
     payload.status_code = external ? 'external' : (document.getElementById('mf-status')?.value || prior?.status_code || 'inprogress');
     payload.archived = _chk('mf-archive');
     const { error } = await sb.from('couples').update(payload).eq('id', _M.id);
-    if (error) { alert('Save failed: ' + error.message); return; }
+    if (error) { reportWriteError('couples update', error); return; }
     logActivity({ action: 'updated marriage prep record', entityType: 'marriage', entityName: `${payload.groom} & ${payload.bride}`, contextType: 'couple', contextId: _M.id });
     marCloseModal(); await loadCouples();
   } else {
     payload.status_code = external ? 'external' : 'inprogress';
     payload.archived = false;
     const { error } = await sb.from('couples').insert(payload);
-    if (error) { alert('Create failed: ' + error.message); return; }
+    if (error) { reportWriteError('couples insert', error); return; }
     logActivity({ action: 'created marriage prep record', entityType: 'marriage', entityName: `${payload.groom} & ${payload.bride}`, contextType: 'couple' });
     marCloseModal(); await loadCouples();
   }

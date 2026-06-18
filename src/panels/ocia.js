@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { expandCase } from './annulments.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
@@ -545,7 +545,7 @@ async function ociaSave() {
     if (prior && prior.status_code !== 'received' && newStatus === 'received') tl.push({ type: 'auto', text: 'Received', created_at: nowIso() });
     payload.timeline = tl;
     const { error } = await sb.from('sacramental_ocia').update(payload).eq('id', _M.id);
-    if (error) { alert('Save failed: ' + error.message); return; }
+    if (error) { reportWriteError('ocia update', error); return; }
     if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);
     logActivity({ action: 'updated OCIA record', entityType: 'ocia', entityName: name, contextType: 'ocia', contextId: _M.id });
     ociaCloseModal(); await loadOcia();
@@ -554,7 +554,7 @@ async function ociaSave() {
     payload.archived = false;
     payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
     const { error } = await sb.from('sacramental_ocia').insert(payload);
-    if (error) { alert('Create failed: ' + error.message); return; }
+    if (error) { reportWriteError('ocia insert', error); return; }
     if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);
     logActivity({ action: 'added OCIA candidate', entityType: 'ocia', entityName: name, contextType: 'ocia' });
     const { data: { user } } = await sb.auth.getUser();

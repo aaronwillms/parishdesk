@@ -1,7 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin, isSuperAdmin, coordinatorChipLabels } from '../roles.js';
-import { logActivity, personTitle } from '../utils.js';
+import { logActivity, personTitle, reportWriteError } from '../utils.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 
 // Clergy/religious types appear first, in this fixed order
@@ -405,9 +405,16 @@ async function deleteInstitution(id, name) {
 function personnelForm(data) {
   const type = data?.type || 'staff';
   const inst = data?.institution || '';
-  const instOptions = (store.institutions || [])
-    .map(i => `<option value="${i.name}"${inst === i.name ? ' selected' : ''}>${i.name}</option>`)
+  const instNames = (store.institutions || []).map(i => i.name);
+  const instOptions = instNames
+    .map(name => `<option value="${name}"${inst === name ? ' selected' : ''}>${name}</option>`)
     .join('');
+  // A stored value that matches no institution (legacy, e.g. "Parish") would
+  // otherwise have no option → the <select> defaults to N/A and saving nulls the
+  // field. Render it as a selected option so it round-trips and is never erased
+  // unless the user explicitly picks a different option.
+  const isUnlisted = !!inst && !instNames.includes(inst);
+  const unlistedOption = isUnlisted ? `<option value="${inst}" selected>${inst} (unlisted)</option>` : '';
   const isNa = !inst;
   return `<div class="modal-title">${data ? 'Edit person' : 'Add person'}</div>
   <label>Name</label><input id="pf-name" value="${data?.name || ''}" />
@@ -421,6 +428,7 @@ function personnelForm(data) {
   <label>Institution</label>
   <select id="pf-inst" onchange="personnelInstToggle()">
     <option value=""${isNa ? ' selected' : ''}>N/A</option>
+    ${unlistedOption}
     ${instOptions}
   </select>
   <label>Type</label>
@@ -484,11 +492,16 @@ async function savePersonnel(id) {
     updated_at:  new Date().toISOString(),
   };
   if (!payload.name) { alert('Name is required.'); return; }
+
+  // Check .error on BOTH paths — a swallowed rejection used to look like success
+  // (modal closed, list reloaded). Surface + log on failure; close/reload only on success.
   if (id) {
-    await sb.from('personnel').update(payload).eq('id', id);
+    const { error } = await sb.from('personnel').update(payload).eq('id', id);
+    if (error) { reportWriteError('personnel update', error); return; }
     logActivity({ action: 'updated person in directory', entityType: 'personnel', entityName: payload.name, contextType: 'personnel' });
   } else {
-    await sb.from('personnel').insert(payload);
+    const { error } = await sb.from('personnel').insert(payload);
+    if (error) { reportWriteError('personnel insert', error); return; }
     logActivity({ action: 'added person to directory', entityType: 'personnel', entityName: payload.name, contextType: 'personnel' });
   }
   closeModal();

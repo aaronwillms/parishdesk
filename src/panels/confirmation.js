@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
@@ -498,7 +498,7 @@ async function confSave() {
     if (prior && statusOf(prior) !== 'confirmed' && newStatus === 'confirmed') tl.push({ type: 'auto', text: 'Confirmed', created_at: nowIso() });
     payload.timeline = tl;
     const { error } = await sb.from('sacramental_confirmation').update(payload).eq('id', _M.id);
-    if (error) { alert('Save failed: ' + error.message); return; }
+    if (error) { reportWriteError('confirmation update', error); return; }
     if (linkTarget) await sb.from('sacramental_confirmation').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
     logActivity({ action: 'updated Confirmation record', entityType: 'confirmation', entityName: name, contextType: 'confirmation', contextId: _M.id });
     confCloseModal(); await loadConfirmation();
@@ -509,7 +509,7 @@ async function confSave() {
     payload.service_hours_completed = 0;
     payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
     const { error } = await sb.from('sacramental_confirmation').insert(payload);
-    if (error) { alert('Create failed: ' + error.message); return; }
+    if (error) { reportWriteError('confirmation insert', error); return; }
     if (linkTarget) await sb.from('sacramental_confirmation').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
     logActivity({ action: 'added Confirmation candidate', entityType: 'confirmation', entityName: name, contextType: 'confirmation' });
     const { data: { user } } = await sb.auth.getUser();

@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
@@ -319,7 +319,7 @@ async function fcSave() {
   payload.archived = false;
   payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
   const { error } = await sb.from('sacramental_firstcomm').insert(payload);
-  if (error) { alert('Create failed: ' + error.message); return; }
+  if (error) { reportWriteError('firstcomm insert', error); return; }
   if (linkTarget) await sb.from('sacramental_firstcomm').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
   logActivity({ action: 'added First Communion student', entityType: 'firstcomm', entityName: name, contextType: 'firstcomm' });
   const { data: { user } } = await sb.auth.getUser();
@@ -339,7 +339,7 @@ async function _fcWriteEdit(id, r) {
   if (prior && statusOf(prior) !== 'received' && newStatus === 'received') tl.push({ type: 'auto', text: 'First Communion Received', created_at: nowIso() });
   payload.timeline = tl;
   const { error } = await sb.from('sacramental_firstcomm').update(payload).eq('id', id);
-  if (error) { alert('Save failed: ' + error.message); return { ok: false }; }
+  if (error) { reportWriteError('firstcomm update', error); return { ok: false }; }
   if (linkTarget) await sb.from('sacramental_firstcomm').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
   logActivity({ action: 'updated First Communion record', entityType: 'firstcomm', entityName: name, contextType: 'firstcomm', contextId: id });
   await loadFcData();

@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
@@ -350,7 +350,7 @@ async function bapSave() {
     payload.archived = false;
     payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
     const { error } = await sb.from('sacramental_baptism').insert(payload);
-    if (error) { alert('Create failed: ' + error.message); return; }
+    if (error) { reportWriteError('baptism insert', error); return; }
     logActivity({ action: 'added Baptism child', entityType: 'baptism', entityName: name, contextType: 'baptism' });
     const { data: { user } } = await sb.auth.getUser();
     const uids = await getUserIdsForSacrament('baptism');
@@ -369,7 +369,7 @@ async function _bapWriteEdit(id, payload, name) {
   if (prior && statusOf(prior) !== 'complete' && newStatus === 'complete') tl.push({ type: 'auto', text: 'Baptism Complete', created_at: nowIso() });
   payload.timeline = tl;
   const { error } = await sb.from('sacramental_baptism').update(payload).eq('id', id);
-  if (error) { alert('Save failed: ' + error.message); return { ok: false }; }
+  if (error) { reportWriteError('baptism update', error); return { ok: false }; }
   logActivity({ action: 'updated Baptism record', entityType: 'baptism', entityName: name, contextType: 'baptism', contextId: id });
   if (prior) Object.assign(prior, payload);
   return { ok: true, record: prior };
