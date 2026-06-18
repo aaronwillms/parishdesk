@@ -7,12 +7,6 @@ import { loadUserRoles } from './roles.js';
 import { clearUserScope } from './ui/userScope.js';
 import { initModal } from './ui/modal.js';
 import { loadUserProfile } from './panels/userProfile.js';
-import { openCoupleAdd, loadCouples } from './panels/marriage.js';
-import { loadCases } from './panels/annulments.js';
-import { loadOcia } from './panels/ocia.js';
-import { loadConfirmation } from './panels/confirmation.js';
-import { loadBaptism } from './panels/baptism.js';
-import { loadFirstComm } from './panels/firstcomm.js';
 import { loadCoordData } from './ui/coordinator.js';
 import { loadPersonnel } from './panels/personnel.js';
 import { loadTeams, loadTeamsStore } from './panels/teams.js';
@@ -33,10 +27,27 @@ async function loadParishSettings() {
 }
 
 async function startApp(user) {
+  // Ensure-load stubs for the lazy sacramental cluster's cross-panel globals.
+  // A chip rendered by one panel may call e.g. window.expandCase before the
+  // annulments chunk has loaded; the stub loads the owning panel (whose
+  // module-eval Object.assign replaces the stub with the real impl) then
+  // delegates. After first load, direct calls hit the real function.
+  const lazyExpand = (globalName, panelKey) => {
+    const stub = (...args) => ensurePanel(panelKey).then(() =>
+      (window[globalName] && window[globalName] !== stub) ? window[globalName](...args) : undefined);
+    window[globalName] = stub;
+  };
+  lazyExpand('expandCouple', 'marriage');
+  lazyExpand('expandCase', 'annulments');
+  lazyExpand('expandOcia', 'ocia');
+  lazyExpand('expandBaptism', 'baptism');
+  lazyExpand('expandFirstComm', 'firstcomm');
+  lazyExpand('expandConfirmation', 'confirmation');
+
   window.openModal = async (type, defaultStatus) => {
-    if (type === 'couple')  { openCoupleAdd(); return; }
+    if (type === 'couple')  { const m = await ensurePanel('marriage'); m.openCoupleAdd(); return; }
     if (type === 'project') { const m = await ensurePanel('projects'); m.openNewProjectModal(); return; }
-    if (type === 'case')    { window.openCaseCreate?.(); return; }
+    if (type === 'case')    { await ensurePanel('annulments'); window.openCaseCreate?.(); return; }
   };
 
   window.showInstitutionDashboard = async (institutionId) => {
@@ -75,18 +86,18 @@ async function startApp(user) {
   };
 
   initNavigation({
-    marriage:      () => { loadCouples(); loadCoordData('marriage'); },
-    annulments:    loadCases,
+    marriage:      () => ensurePanel('marriage').then(m => { m.loadCouples(); loadCoordData('marriage'); }),
+    annulments:    () => ensurePanel('annulments').then(m => m.loadCases()),
     discernment:   () => ensurePanel('discernment').then(m => m.loadDiscernment()),
     homebound:     () => ensurePanel('homebound').then(m => m.loadHomebound()),
     projects:      () => ensurePanel('projects').then(m => m.loadProjects()),
     personnel:     loadPersonnel,
     hr:            () => ensurePanel('hr').then(m => m.loadHr()),
     school:        () => ensurePanel('school').then(m => m.loadSchool()),
-    baptism:       () => { loadBaptism();                   loadCoordData('baptism'); },
-    firstcomm:     () => { loadFirstComm();                 loadCoordData('firstcomm'); },
-    confirmation:  () => { loadConfirmation(); loadCoordData('confirmation'); },
-    ocia:          () => { loadOcia(); loadCoordData('ocia'); },
+    baptism:       () => ensurePanel('baptism').then(m => { m.loadBaptism(); loadCoordData('baptism'); }),
+    firstcomm:     () => ensurePanel('firstcomm').then(m => { m.loadFirstComm(); loadCoordData('firstcomm'); }),
+    confirmation:  () => ensurePanel('confirmation').then(m => { m.loadConfirmation(); loadCoordData('confirmation'); }),
+    ocia:          () => ensurePanel('ocia').then(m => { m.loadOcia(); loadCoordData('ocia'); }),
     teams:         () => { loadTeams(); setActiveTeamSubNavItem(null); },
     tasks:         () => ensurePanel('tasks').then(m => m.loadTasks()),
     teamDashboard:         () => {},   // handled by showTeamDashboard

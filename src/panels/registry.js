@@ -21,6 +21,17 @@ const loaders = {
   school:               () => import('./school.js'),
   discernment:          () => import('./discernment.js'),
   homebound:            () => import('./homebound.js'),
+  // Sacramental cluster — each panel owns exactly one expand* global (defined
+  // once; marriage/ocia only re-expose annulments' expandCase). Lazy-loadable
+  // because main.js installs ensure-load stubs for those globals, so a cross-link
+  // click loads the owning panel before invoking it. (marriage + ocia statically
+  // import annulments, so they naturally share a chunk.)
+  marriage:             () => import('./marriage.js'),
+  annulments:           () => import('./annulments.js'),
+  ocia:                 () => import('./ocia.js'),
+  baptism:              () => import('./baptism.js'),
+  firstcomm:            () => import('./firstcomm.js'),
+  confirmation:         () => import('./confirmation.js'),
 };
 
 const cache = {};
