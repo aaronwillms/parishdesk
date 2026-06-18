@@ -5,6 +5,9 @@ import { expandCase } from './annulments.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
+import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
+import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
+import { buildOfficiantField, readOfficiantValue, officiantIsOther } from '../sacramental/officiantField.js';
 
 export const COUPLE_STATUS = {
   inprogress:{ label:'In progress', color:'#7D6608', bg:'#FEF9E7', dot:'#D4AC0D' },
@@ -45,6 +48,7 @@ const FALLBACK_TEMPLATES = {
 let allCouples = [], coupleFilter = 'all', expandedCoupleId = null;
 let _templates = {};   // marriage_type → {documents, steps, fees_enabled, fees}
 let _M = null;         // create/edit modal working state
+let _marCoordinatorNames = [];   // marriage coordinator display names (preparer source)
 
 function fullAccess() { return isAdmin() || canAccessSacrament('marriage'); }
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
