@@ -194,7 +194,7 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
   }
 
   function personSub(p) {
-    return [p.title, p.institution].filter(Boolean).join(' Â· ');
+    return [p.institution].filter(Boolean).join(' Â· ');
   }
 
   function _addChip(person, onRemove) {
@@ -296,9 +296,6 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     form.innerHTML = `
       <div style="font-size:12px;font-weight:600;color:#555;margin-bottom:2px;">New contact</div>
       <input id="cp-new-name"  placeholder="Full name *" value="${prefillName.replace(/"/g, '&quot;')}" />
-      <div id="cp-new-title-row">
-        <input id="cp-new-title" placeholder="Title / role (optional)" />
-      </div>
       <div style="font-size:11px;color:#6B7280;margin-bottom:-2px;">Date of Birth (optional)</div>
       <input type="date" id="cp-new-dob" />
       <select id="cp-new-inst" style="
@@ -338,13 +335,10 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     const saveBtn  = form.querySelector('#cp-new-save');
     const errEl    = form.querySelector('#cp-new-error');
 
-    const titleRow = form.querySelector('#cp-new-title-row');
-
-    // Show/hide employment and title based on institution selection
+    // Show/hide employment based on institution selection
     function updateInstVisibility() {
       const isNa = instSel.value === 'volunteer';
       empSel.style.display   = isNa ? 'none' : '';
-      titleRow.style.display = isNa ? 'none' : '';
     }
     instSel.addEventListener('change', updateInstVisibility);
     updateInstVisibility();
@@ -354,7 +348,6 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     saveBtn.addEventListener('click', async e => {
       e.stopPropagation();
       const nameVal  = form.querySelector('#cp-new-name').value.trim();
-      const titleVal = form.querySelector('#cp-new-title').value.trim() || null;
       const isVolunteer = instSel.value === 'volunteer';
       const dobVal = form.querySelector('#cp-new-dob').value || null;
 
@@ -371,7 +364,6 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
       try {
         const { data, error } = await sb.from('personnel').insert({
           name:        nameVal,
-          title:       titleVal,
           type:          isVolunteer ? 'volunteer' : 'staff',
           employment:    isVolunteer ? null : empSel.value,
           institution:   isVolunteer ? null : instSel.value,
@@ -421,7 +413,7 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     } else {
       // Fallback: query Supabase directly
       sb.from('personnel')
-        .select('id,name,title,institution')
+        .select('id,name,institution')
         .ilike('name', `%${q}%`)
         .eq('active', true)
         .limit(8)
@@ -457,7 +449,7 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     if (existing) {
       select(existing);
     } else {
-      sb.from('personnel').select('id,name,title,institution').eq('id', initialValue).single()
+      sb.from('personnel').select('id,name,institution').eq('id', initialValue).single()
         .then(({ data }) => { if (data) select(data); });
     }
   }
