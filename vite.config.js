@@ -23,6 +23,14 @@ export default defineConfig({
       workbox: {
         navigateFallbackDenylist: [/^\/auth\//],
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // Take control immediately so a new deploy's chunks are served right
+        // away, and drop stale precaches. Paired with the controllerchange
+        // reload guard in main.js, this prevents a tab from running a stale
+        // bundle after a deploy (the cause of the "save button does nothing"
+        // symptom — an inline onclick whose handler the stale JS never defined).
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/[a-z0-9]+\.supabase\.co\/.*/i,

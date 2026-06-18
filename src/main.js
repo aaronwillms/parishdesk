@@ -190,6 +190,20 @@ async function syncParishStaff() {
   await sb.from('team_members').insert(toInsert);
 }
 
+// When a new service worker takes control after a deploy (skipWaiting +
+// clientsClaim), reload ONCE to pick up the fresh bundle. Gated on a controller
+// already existing, so the very first SW install never triggers a surprise
+// reload — only genuine updates do. Closes the stale-bundle window.
+if ('serviceWorker' in navigator) {
+  const hadController = !!navigator.serviceWorker.controller;
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing || !hadController) return;
+    refreshing = true;
+    window.location.reload();
+  });
+}
+
 (async () => {
   setSignOutCallback(() => {
     resetNavVisibility();
