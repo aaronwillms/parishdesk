@@ -1,5 +1,5 @@
 import { sb } from '../supabase.js';
-import { fmtDate, fmtDateYear, daysUntil, todayCST, logActivity } from '../utils.js';
+import { fmtDate, formatDateDisplay, daysUntil, todayCST, logActivity } from '../utils.js';
 import { store } from '../store.js';
 import { expandCase } from './annulments.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
@@ -201,7 +201,7 @@ function renderCoupleCard(c) {
         <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center;">
           <span style="background:${sm.bg};color:${sm.color};border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;letter-spacing:.04em;display:inline-flex;align-items:center;gap:5px;border:1px solid ${sm.color}33;"><span style="width:7px;height:7px;border-radius:50%;background:${sm.dot};display:inline-block;"></span>${sm.label}</span>
           <span style="font-size:11px;color:#5B4636;background:#F3ECE0;border-radius:20px;padding:2px 8px;">⛪ ${MTYPE_BADGE[marType(c)]}</span>
-          ${c.wedding_date ? `<span style="font-size:11px;color:${dateUrgent ? '#C0392B' : '#777'};background:${dateUrgent ? '#FDEDEC' : '#EFEFEF'};border-radius:20px;padding:2px 8px;font-weight:${dateUrgent ? 700 : 400};">${dateUrgent ? '⚠️ ' : ''}${fmtDateYear(c.wedding_date)}${c.wedding_time ? ' · ' + c.wedding_time : ''}${dayStr}</span>` : ''}
+          ${c.wedding_date ? `<span style="font-size:11px;color:${dateUrgent ? '#C0392B' : '#777'};background:${dateUrgent ? '#FDEDEC' : '#EFEFEF'};border-radius:20px;padding:2px 8px;font-weight:${dateUrgent ? 700 : 400};">${dateUrgent ? '⚠️ ' : ''}${formatDateDisplay(c.wedding_date)}${c.wedding_time ? ' · ' + c.wedding_time : ''}${dayStr}</span>` : ''}
           ${ft ? `<span style="font-size:11px;color:#5B4636;background:#FEF9E7;border-radius:20px;padding:2px 8px;">💰 $${ft.total} / $${ft.paid} paid</span>` : (c.fee ? `<span style="font-size:11px;color:#5B4636;background:#FEF9E7;border-radius:20px;padding:2px 8px;">💰 ${_esc(c.fee)}</span>` : '')}
           ${deleg ? `<span style="font-size:11px;color:#922B21;background:#FCEBEB;border-radius:20px;padding:2px 8px;font-weight:600;">⚠️ Send Letter of Delegation</span>` : ''}
         </div>

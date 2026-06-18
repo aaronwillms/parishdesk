@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, fmtDateYear, todayCST, logActivity } from '../utils.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 
@@ -115,7 +115,7 @@ function renderBapCard(p) {
         <span class="couple-name">${_esc(nameOf(p))}${age !== null ? ` <span style="font-size:12px;color:#6B7280;font-weight:400;">(${age})</span>` : ''}</span>
         <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center;">
           <span style="background:${sm.bg};color:${sm.color};border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;letter-spacing:.04em;display:inline-flex;align-items:center;gap:5px;border:1px solid ${sm.color}33;"><span style="width:7px;height:7px;border-radius:50%;background:${sm.dot};display:inline-block;"></span>${sm.label}</span>
-          ${bd ? `<span style="font-size:11px;background:#D6EAF8;color:#1B4F72;border-radius:20px;padding:2px 8px;">💧 ${fmtDateYear(bd)}</span>` : ''}
+          ${bd ? `<span style="font-size:11px;background:#D6EAF8;color:#1B4F72;border-radius:20px;padding:2px 8px;">💧 ${formatDateDisplay(bd)}</span>` : ''}
           ${p.preparation_complete ? `<span style="font-size:11px;color:#2D6A4F;">✅ prep complete</span>` : ''}
         </div>
         ${ageBad ? `<div style="margin-top:5px;background:#FDEDEC;border-left:3px solid #E74C3C;border-radius:3px;padding:4px 10px;font-size:12px;font-weight:600;color:#922B21;">⚠ Child is above age of reason — use the OCIA panel</div>` : ''}
@@ -238,7 +238,7 @@ function buildModalHtml(p) {
   // 2 — Child information
   h += _sectionHead('Child Information');
   h += _row(_input('bf-first', 'First Name', np.first), _input('bf-middle', 'Middle', np.middle), _input('bf-last', 'Last Name', np.last));
-  h += `<label>Date of Birth <span style="color:var(--cardinal);">*</span></label><input type="${(p?.dob && /^\d{4}-\d{2}-\d{2}/.test(p.dob)) ? 'date' : 'text'}" id="bf-dob" value="${_esc(p?.dob || '')}" placeholder="YYYY-MM-DD" oninput="bapValidate()" />`;
+  h += `<label>Date of Birth <span style="color:var(--cardinal);">*</span></label><input type="date" id="bf-dob" value="${(p?.dob && /^\d{4}-\d{2}-\d{2}/.test(p.dob)) ? p.dob.slice(0, 10) : ''}" oninput="bapValidate()" />`;
   h += `<div id="bf-agegate" class="anl-info-box" style="display:none;background:#FDEDEC;border-left-color:#E74C3C;color:#922B21;">This child is above the age of reason. Please use the OCIA panel for candidates over age 7.</div>`;
   // age-gated body
   h += `<div id="bf-body">`;
@@ -437,26 +437,41 @@ async function bapDeletePerson(id) {
   bapCloseModal(); await loadBaptism();
 }
 
-// ── Template (fees) ──────────────────────────────────────────────────────────
-let _tplState = null;
-function openBapTemplate() { _tplState = JSON.parse(JSON.stringify(_tplRow || { fees_enabled: false, fees: [] })); _bapOpen(buildTplHtml()); }
+// ── Template (documents + steps) ─────────────────────────────────────────────
+let _tplState = null, _bapStepDrag = null;
+const DEFAULT_BAP_STEPS = [{ step: 'Parent Preparation Complete', deletable: true }];
+function openBapTemplate() {
+  const base = _tplRow ? JSON.parse(JSON.stringify(_tplRow)) : {};
+  _tplState = { documents: base.documents || [], steps: base.steps || JSON.parse(JSON.stringify(DEFAULT_BAP_STEPS)) };
+  _bapOpen(buildTplHtml());
+}
 function buildTplHtml() {
-  const t = _tplState;
-  return `<div class="modal-title">Baptism Settings</div>
-    ${_toggle('bt-fees', 'Fees enabled', !!t.fees_enabled, 'bapTplFeesToggle()')}
-    <div id="bt-fees-wrap" style="display:${t.fees_enabled ? 'block' : 'none'};margin-top:.5rem;">
-      <div id="bt-fees-list">${renderTplFees()}</div>
-      <div style="display:flex;gap:6px;margin-top:6px;"><input type="text" id="bt-fee-name" placeholder="Fee name…" style="flex:2;border-radius:6px;border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;background:#fff;" /><input type="number" id="bt-fee-amt" placeholder="$" style="flex:1;border-radius:6px;border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;background:#fff;" /><button class="btn-secondary" style="padding:.3rem .8rem;font-size:12px;" onclick="bapTplAddFee()">+ Add</button></div>
-    </div>
+  return `<div class="modal-title">Baptism Template</div>
+    ${_sectionHead('Documents')}
+    <div style="font-size:12px;color:#6B7280;margin-bottom:8px;">Baptismal Certificate is automatically added for all records and cannot be removed.</div>
+    <div id="bt-docs-list">${renderTplDocs()}</div>
+    <div style="display:flex;gap:6px;margin-top:6px;"><input type="text" id="bt-doc-new" placeholder="Add document…" style="flex:1;border-radius:6px;border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;background:#fff;" onkeydown="if(event.key==='Enter'){event.preventDefault();bapTplAddDoc();}" /><button class="btn-secondary" style="padding:.3rem .8rem;font-size:12px;" onclick="bapTplAddDoc()">+ Add</button></div>
+    ${_sectionHead('Steps')}
+    <div style="font-size:12px;color:#6B7280;margin-bottom:8px;">Parent Preparation Complete is the standard step.</div>
+    <div id="bt-steps-list">${renderTplSteps()}</div>
+    <div style="display:flex;gap:6px;margin-top:6px;"><input type="text" id="bt-step-new" placeholder="Add step…" style="flex:1;border-radius:6px;border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;background:#fff;" onkeydown="if(event.key==='Enter'){event.preventDefault();bapTplAddStep();}" /><button class="btn-secondary" style="padding:.3rem .8rem;font-size:12px;" onclick="bapTplAddStep()">+ Add</button></div>
     <div style="font-size:12px;color:#6B7280;font-style:italic;margin-top:1rem;">Changes apply to new files only.</div>
     <div class="modal-actions"><button class="btn-secondary" onclick="bapCloseModal()">Cancel</button><button class="btn-primary" onclick="bapTplSave()">Save</button></div>`;
 }
-function renderTplFees() { return (_tplState.fees || []).map((f, i) => `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;"><span style="flex:1;font-size:13px;">${_esc(f.name)}</span><span style="font-size:12px;color:#5B4636;">$${Number(f.amount) || 0}</span><button onclick="bapTplRemoveFee(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;">×</button></div>`).join('') || `<div style="font-size:12px;color:#9CA3AF;font-style:italic;">No fees.</div>`; }
-function bapTplFeesToggle() { _tplState.fees_enabled = document.getElementById('bt-fees').checked; document.getElementById('bt-fees-wrap').style.display = _tplState.fees_enabled ? 'block' : 'none'; }
-function bapTplAddFee() { const nm = document.getElementById('bt-fee-name'), am = document.getElementById('bt-fee-amt'); const n = (nm?.value || '').trim(); if (!n) return; (_tplState.fees = _tplState.fees || []).push({ name: n, amount: Number(am?.value) || 0 }); nm.value = ''; am.value = ''; document.getElementById('bt-fees-list').innerHTML = renderTplFees(); }
-function bapTplRemoveFee(i) { _tplState.fees.splice(i, 1); document.getElementById('bt-fees-list').innerHTML = renderTplFees(); }
+function renderTplDocs() {
+  return (_tplState.documents || []).map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;"><span style="flex:1;font-size:13px;">${_esc(d.name)}</span>${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;"></i>` : `<button onclick="bapTplRemoveDoc(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;">×</button>`}</div>`).join('') || `<div style="font-size:12px;color:#9CA3AF;font-style:italic;">No documents.</div>`;
+}
+function renderTplSteps() {
+  return (_tplState.steps || []).map((s, i) => `<div draggable="true" ondragstart="bapTplStepDragStart(event,${i})" ondragover="event.preventDefault()" ondrop="bapTplStepDrop(event,${i})" style="display:flex;align-items:center;gap:8px;padding:3px 0;"><i class="fa-solid fa-grip-vertical" style="color:#CBD5E1;font-size:12px;cursor:grab;" title="Drag to reorder"></i><span style="flex:1;font-size:13px;">${_esc(s.step)}</span><button onclick="bapTplRemoveStep(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;">×</button></div>`).join('') || `<div style="font-size:12px;color:#9CA3AF;font-style:italic;">No steps.</div>`;
+}
+function bapTplAddDoc() { const inp = document.getElementById('bt-doc-new'); const n = (inp?.value || '').trim(); if (!n) return; (_tplState.documents = _tplState.documents || []).push({ name: n, deletable: true }); inp.value = ''; document.getElementById('bt-docs-list').innerHTML = renderTplDocs(); }
+function bapTplRemoveDoc(i) { _tplState.documents.splice(i, 1); document.getElementById('bt-docs-list').innerHTML = renderTplDocs(); }
+function bapTplAddStep() { const inp = document.getElementById('bt-step-new'); const n = (inp?.value || '').trim(); if (!n) return; (_tplState.steps = _tplState.steps || []).push({ step: n, deletable: true }); inp.value = ''; document.getElementById('bt-steps-list').innerHTML = renderTplSteps(); }
+function bapTplRemoveStep(i) { _tplState.steps.splice(i, 1); document.getElementById('bt-steps-list').innerHTML = renderTplSteps(); }
+function bapTplStepDragStart(e, i) { _bapStepDrag = i; }
+function bapTplStepDrop(e, i) { e.preventDefault(); if (_bapStepDrag === null || _bapStepDrag === i) return; const arr = _tplState.steps || []; const [moved] = arr.splice(_bapStepDrag, 1); arr.splice(i, 0, moved); _bapStepDrag = null; document.getElementById('bt-steps-list').innerHTML = renderTplSteps(); }
 async function bapTplSave() {
-  const payload = { fees_enabled: !!_tplState.fees_enabled, fees: _tplState.fees || [], updated_at: nowIso() };
+  const payload = { documents: _tplState.documents || [], steps: _tplState.steps || [], updated_at: nowIso() };
   let error;
   if (_tplRow?.id) { ({ error } = await sb.from('baptism_templates').update(payload).eq('id', _tplRow.id)); }
   else { ({ error } = await sb.from('baptism_templates').insert(payload)); }
@@ -473,5 +488,5 @@ Object.assign(window, {
   bapRespChange, bapInstChange, bapParentCathChange, bapToggleParent2, bapAdoptChange, bapOfficiantChange,
   bapToggleGp2, bapGpChange, bapValidate,
   bapSave, bapDeletePerson,
-  bapTplFeesToggle, bapTplAddFee, bapTplRemoveFee, bapTplSave,
+  bapTplAddDoc, bapTplRemoveDoc, bapTplAddStep, bapTplRemoveStep, bapTplStepDragStart, bapTplStepDrop, bapTplSave,
 });

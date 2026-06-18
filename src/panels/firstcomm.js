@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, fmtDateYear, todayCST, logActivity } from '../utils.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 
@@ -175,7 +175,7 @@ function renderFcBody(p, docs, progress, done) {
   }
   if (commDate(p) || p.communion_church_override || p.communion_institution_id) {
     const ch = p.communion_institution_id ? ((store.institutions || []).find(x => x.id === p.communion_institution_id)?.name) : p.communion_church_override;
-    h += `<div style="font-size:13px;margin-top:6px;">First Communion: <strong>${commDate(p) ? fmtDateYear(commDate(p)) : ''}</strong>${ch ? ' · ' + _esc(ch) : ''}</div>`;
+    h += `<div style="font-size:13px;margin-top:6px;">First Communion: <strong>${commDate(p) ? formatDateDisplay(commDate(p)) : ''}</strong>${ch ? ' · ' + _esc(ch) : ''}</div>`;
   }
   // documents
   if (docs.length) {
@@ -285,7 +285,7 @@ function buildModalHtml(p) {
   // 3 — Child info
   h += _sectionHead('Child Information');
   h += _row(_input('ff-first', 'First Name', np.first), _input('ff-middle', 'Middle', np.middle), _input('ff-last', 'Last Name', np.last));
-  h += `<label>Date of Birth</label><input type="${(p?.dob && /^\d{4}-\d{2}-\d{2}/.test(p.dob)) ? 'date' : 'text'}" id="ff-dob" value="${_esc(p?.dob || '')}" placeholder="YYYY-MM-DD" oninput="fcDobChange()" />`;
+  h += `<label>Date of Birth</label><input type="date" id="ff-dob" value="${(p?.dob && /^\d{4}-\d{2}-\d{2}/.test(p.dob)) ? p.dob.slice(0, 10) : ''}" oninput="fcDobChange()" />`;
   h += `<div id="ff-age-note" class="anl-info-box" style="display:${age !== null && age > 13 ? 'block' : 'none'};">For older candidates, consider the Confirmation or OCIA panel.</div>`;
   h += _row(_input('ff-school', 'School Name', p?.school_name || ''), `<label>Grade Level</label><select id="ff-grade">${GRADES.map(g => `<option${(p?.grade_level || p?.grade) === g ? ' selected' : ''}>${g}</option>`).join('')}</select>`);
   h += _input('ff-street', 'Mailing Street Address', p?.child_street || '');

@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, fmtDateYear, todayCST, logActivity } from '../utils.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
 import { expandCase } from './annulments.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
@@ -73,7 +73,7 @@ function receptionChip(p) {
   if (!p.reception_date) return null;
   const yr = new Date(p.reception_date + 'T00:00:00').getFullYear();
   const easter = (p.reception_is_easter_vigil !== false) || p.reception_date_type === 'easter';
-  return easter ? `Easter ${yr}` : fmtDateYear(p.reception_date);
+  return easter ? `Easter ${yr}` : formatDateDisplay(p.reception_date);
 }
 
 // ── Data ─────────────────────────────────────────────────────────────────────
@@ -343,7 +343,7 @@ function buildModalHtml(p) {
   h += _sectionHead('Candidate Information');
   h += _row(_input('of-first', 'First Name', np.first), _input('of-middle', 'Middle', np.middle), _input('of-last', 'Last Name', np.last));
   h += _row(_input('of-phone', 'Cell Phone', p?.phone || ''), _input('of-email', 'Email', p?.email || ''));
-  h += `<label>Date of Birth</label><input type="${(p?.dob && /^\d{4}-\d{2}-\d{2}/.test(p.dob)) ? 'date' : 'text'}" id="of-dob" value="${_esc(p?.dob || '')}" placeholder="YYYY-MM-DD" oninput="ociaDobChange()" />`;
+  h += `<label>Date of Birth</label><input type="date" id="of-dob" value="${(p?.dob && /^\d{4}-\d{2}-\d{2}/.test(p.dob)) ? p.dob.slice(0, 10) : ''}" oninput="ociaDobChange()" />`;
   h += `<div id="of-minor-wrap" style="display:${age !== null && age <= 17 ? 'block' : 'none'};">
     ${_toggle('of-consent', 'Parent/Guardian Permission Granted', !!p?.parental_consent)}
     ${_input('of-guardian', 'Parent/Guardian Name', p?.minor_guardian_name || p?.consent_parent_name || '')}
@@ -386,7 +386,7 @@ function buildModalHtml(p) {
     h += `<div id="of-rec-wrap" style="display:${showRec ? 'block' : 'none'};" data-easter="${easterVal}">
       ${_toggle('of-rec-other', 'Other date (not Easter Vigil)', _M.recOther, 'ociaRecOtherChange()')}
       <div id="of-rec-date-wrap" style="display:${_M.recOther ? 'block' : 'none'};">${_input('of-rec-date', 'Reception Date', (p?.reception_date && _M.recOther) ? p.reception_date : '', 'date')}</div>
-      <div id="of-rec-easter-note" style="display:${_M.recOther ? 'none' : 'block'};font-size:12px;color:#7D6608;margin-top:6px;">Reception at the Easter Vigil — ${fmtDateYear(easterVal)}</div>
+      <div id="of-rec-easter-note" style="display:${_M.recOther ? 'none' : 'block'};font-size:12px;color:#7D6608;margin-top:6px;">Reception at the Easter Vigil — ${formatDateDisplay(easterVal)}</div>
       <label style="margin-top:.75rem;">Church of Reception</label><select id="of-rec-church"><option value="">— Select —</option>${instOpts}<option value="__other"${(p?.reception_church && !(store.institutions || []).some(i => i.name === p.reception_church)) ? ' selected' : ''}>Other…</option></select>
       ${_sectionHead('Sacraments to be Received at Reception')}
       ${ociaSacramentRows(p)}

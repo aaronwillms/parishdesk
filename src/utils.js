@@ -37,6 +37,22 @@ export function fmtDate(iso) {
   return `${parseInt(d)} ${MONTHS[parseInt(m) - 1]}`;
 }
 
+// Display an ISO date (YYYY-MM-DD) as DD/MM/YYYY. Storage stays ISO; only display changes.
+export function formatDateDisplay(isoDate) {
+  if (!isoDate) return '';
+  const [y, m, d] = String(isoDate).slice(0, 10).split('-');
+  if (!y || !m || !d) return '';
+  return `${d}/${m}/${y}`;
+}
+
+// Parse a DD/MM/YYYY string back to ISO (YYYY-MM-DD) for storage. Returns null if blank/invalid.
+export function parseDateInput(displayDate) {
+  if (!displayDate) return null;
+  const [d, m, y] = String(displayDate).split('/');
+  if (!d || !m || !y) return null;
+  return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+}
+
 export function daysUntil(iso) {
   if (!iso) return null;
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: store.parishSettings?.timezone || 'America/Chicago' }));

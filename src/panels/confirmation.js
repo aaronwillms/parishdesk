@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, fmtDateYear, todayCST, logActivity } from '../utils.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 
@@ -204,12 +204,12 @@ function renderConfBody(p, docs, progress, done) {
   const parentName = p.parent_name || p.parent1;
   if (parentName) {
     h += `<div class="couple-section-label">Parent / Guardian</div><div style="font-size:13px;">${_esc(parentName)}${p.parent_phone ? ' · ' + _esc(p.parent_phone) : ''}${p.parent_email ? ' · ' + _esc(p.parent_email) : ''}</div>`;
-    if (tmplType(p) === 'youth') h += p.parent_permission_granted ? `<div style="font-size:12px;color:#2D6A4F;margin-top:3px;">✅ Permission granted${p.parent_permission_date ? ' ' + fmtDateYear(p.parent_permission_date) : ''}</div>` : `<div style="font-size:12px;color:#854F0B;margin-top:3px;">⚠ Permission outstanding</div>`;
+    if (tmplType(p) === 'youth') h += p.parent_permission_granted ? `<div style="font-size:12px;color:#2D6A4F;margin-top:3px;">✅ Permission granted${p.parent_permission_date ? ' ' + formatDateDisplay(p.parent_permission_date) : ''}</div>` : `<div style="font-size:12px;color:#854F0B;margin-top:3px;">⚠ Permission outstanding</div>`;
   }
   // sponsor + confirmation details
   const sponsor = p.sponsor_name || p.sponsor;
   if (sponsor) h += `<div style="font-size:13px;margin-top:6px;">Sponsor: <strong>${_esc(sponsor)}</strong></div>`;
-  if (confDate(p) || p.confirmation_location) h += `<div style="font-size:13px;margin-top:4px;">Confirmation: <strong>${confDate(p) ? fmtDateYear(confDate(p)) : ''}</strong>${p.confirmation_location ? ' · ' + _esc(p.confirmation_location) : ''}</div>`;
+  if (confDate(p) || p.confirmation_location) h += `<div style="font-size:13px;margin-top:4px;">Confirmation: <strong>${confDate(p) ? formatDateDisplay(confDate(p)) : ''}</strong>${p.confirmation_location ? ' · ' + _esc(p.confirmation_location) : ''}</div>`;
   // service hours
   if (svcEnabled(p)) {
     const pct = Math.min(100, Math.round(((p.service_hours_completed || 0) / p.service_hours_required) * 100));
@@ -324,7 +324,7 @@ function buildModalHtml(p) {
   // 4 — Candidate info
   h += _sectionHead('Candidate Information');
   h += _row(_input('cf-first', 'First Name', np.first), _input('cf-middle', 'Middle', np.middle), _input('cf-last', 'Last Name', np.last));
-  h += `<label>Date of Birth</label><input type="${(p?.dob && /^\d{4}-\d{2}-\d{2}/.test(p.dob)) ? 'date' : 'text'}" id="cf-dob" value="${_esc(p?.dob || '')}" placeholder="YYYY-MM-DD" oninput="confDobChange()" />`;
+  h += `<label>Date of Birth</label><input type="date" id="cf-dob" value="${(p?.dob && /^\d{4}-\d{2}-\d{2}/.test(p.dob)) ? p.dob.slice(0, 10) : ''}" oninput="confDobChange()" />`;
   h += `<div id="cf-adultage-note" class="anl-info-box" style="display:${isAdultAge ? 'block' : 'none'};">For adult candidates who are unbaptized, please use the OCIA panel instead.</div>`;
   // minor block
   h += `<div id="cf-minor-block" style="display:${isMinor ? 'block' : 'none'};">
