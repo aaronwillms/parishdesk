@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { todayCST, fmtDateYear, PANEL_TITLES } from '../utils.js';
+import { todayCST, fmtDateYear, PANEL_TITLES, personTitle, personDerivedType } from '../utils.js';
 
 let coordData = {};
 let scheduleData = {};
@@ -83,7 +83,7 @@ function openCoordModal(prog) {
   const options = personnel.map(p => {
     const checked = selectedIds.includes(p.id) ? 'checked' : '';
     const nameStr = p.name ?? '(no name)';
-    const subParts = [p.title, p.type].filter(Boolean);
+    const subParts = [personTitle(p.id), personDerivedType(p.id) === 'clergy' ? 'Clergy' : null].filter(Boolean);
     const sub = subParts.join(' · ');
     return `<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:.5px solid var(--stone);cursor:pointer;">
       <input type="checkbox" value="${p.id}" ${checked} style="flex-shrink:0;accent-color:var(--cardinal);width:15px;height:15px;" />

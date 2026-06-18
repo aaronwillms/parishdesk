@@ -1,7 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { createContactPicker } from '../ui/contactPicker.js';
-import { logActivity, fmtDate, todayCST, personTitle } from '../utils.js';
+import { logActivity, fmtDate, todayCST, personTitle, personDerivedType } from '../utils.js';
 import { isTeamAdmin, isSuperAdmin, isAdmin } from '../roles.js';
 import { notifyUsers, getUserIdForPersonnel } from '../notifications.js';
 import { createAvatar } from '../ui/avatar.js';
@@ -39,7 +39,7 @@ async function _loadData() {
   const [teamRes, membersRes] = await Promise.all([
     sb.from('teams').select('*').eq('id', _currentTeamId).single(),
     sb.from('team_members')
-      .select('*, personnel(id,name,phone,email,institution,employment)')
+      .select('*, personnel(id,name,phone,email)')
       .eq('team_id', _currentTeamId)
       .order('sort_order', { nullsFirst: false }),
   ]);
@@ -314,10 +314,10 @@ function _renderMembers(el) {
   document.getElementById('td-picker-confirm').addEventListener('click', _confirmAddMember);
 }
 
-const STAFF_TYPES = new Set(['full-time', 'part-time']);
-
+// Parish Staff auto-sync members = positioned people (HR-derived: clergy or
+// lay staff); volunteers/non-positioned are not auto-synced.
 function _isAutoSyncedMember(m) {
-  return _team?.is_protected && STAFF_TYPES.has(m.personnel?.employment);
+  return _team?.is_protected && m.personnel && personDerivedType(m.personnel.id) !== 'volunteer';
 }
 
 const TEAM_ROLES = ['President', 'Vice President', 'Secretary', 'Treasurer', 'Coordinator', 'Member', 'Ad Hoc', 'Other'];

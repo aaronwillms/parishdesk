@@ -1,5 +1,5 @@
 import { sb } from '../supabase.js';
-import { fmtDate, formatDateDisplay, daysUntil, todayCST, logActivity } from '../utils.js';
+import { fmtDate, formatDateDisplay, daysUntil, todayCST, logActivity, isPersonClergy } from '../utils.js';
 import { store } from '../store.js';
 import { expandCase } from './annulments.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
@@ -52,7 +52,7 @@ function nowIso() { return new Date().toISOString(); }
 function clergyPersonnel() {
   // Clergy are identified by personnel.type. (The legacy title-regex match was
   // retired with personnel.title in the HR collapse.)
-  return (store.personnel || []).filter(p => CLERGY_TYPES.includes(p.type))
+  return (store.personnel || []).filter(p => isPersonClergy(p.id))
     .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 }
 

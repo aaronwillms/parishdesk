@@ -1,5 +1,5 @@
 import { store } from '../store.js';
-import { personTitle } from '../utils.js';
+import { personTitle, personEntries } from '../utils.js';
 
 let _institutionId = null;
 let _activeTab = 'overview';
@@ -22,7 +22,7 @@ function _render(container) {
   }
 
   const icon = inst.icon || 'fa-building';
-  const personnel = (store.personnel || []).filter(p => p.institution === inst.name);
+  const personnel = (store.personnel || []).filter(p => personEntries(p.id).some(e => e.institution_name === inst.name));
   const teams = (store.teams || []).filter(() => false); // future: filter by institution
 
   const tabs = [

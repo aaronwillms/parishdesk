@@ -1,4 +1,4 @@
-import { PANEL_TITLES } from '../utils.js';
+import { PANEL_TITLES, personEntries } from '../utils.js';
 import { store } from '../store.js';
 import { createAvatar } from './avatar.js';
 import { canAccessPanel, isSuperAdmin, isAdmin } from '../roles.js';
@@ -154,7 +154,7 @@ export function renderMinistryNav() {
       if (!teamPersonnelIds) return false;
       // Show if any personnel in this institution share a team with the user
       const personnel = store.personnel || [];
-      return personnel.some(p => p.institution === i.name && teamPersonnelIds.includes(p.id));
+      return personnel.some(p => teamPersonnelIds.includes(p.id) && personEntries(p.id).some(e => e.institution_name === i.name));
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 

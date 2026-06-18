@@ -1,31 +1,18 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin, isSuperAdmin } from '../roles.js';
-import { logActivity, personTitle } from '../utils.js';
+import { logActivity, isPersonClergy, personEntries, personDerivedType } from '../utils.js';
 
-// Clergy/religious types appear first, in this fixed order
-const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
-const CLERGY_LABELS = {
-  'pastor':              'Pastor',
-  'parochial-vicar':     'Parochial Vicar',
-  'priest-in-residence': 'Priest-in-Residence',
-  'deacon':              'Deacon',
-  'religious':           'Religious',
-};
+// Lay employment headings (values come from the HR resolver's employment_heading,
+// strongest-commitment order). These are HR's underscore values, not the old
+// hyphenated personnel.employment column.
+const EMP_HEADINGS = [['full_time', 'Full-Time'], ['part_time', 'Part-Time'], ['contract', 'Contract']];
+const EMP_LABEL = { full_time: 'Full-Time', part_time: 'Part-Time', contract: 'Contract' };
 
-const EMPLOYMENT_ORDER = ['full-time', 'part-time', 'under-contract'];
-const EMPLOYMENT_LABELS = {
-  'full-time':      'Full-Time',
-  'part-time':      'Part-Time',
-  'under-contract': 'Under Contract',
-};
+// Placement is now HR-derived (see utils: isPersonClergy / personEntries).
+function isVolunteer(p)  { return personDerivedType(p.id) === 'volunteer'; }
 
-function isLayStaff(p) { return p.type === 'staff'; }
-function isVolunteer(p) { return p.type === 'volunteer' || p.employment === 'volunteer'; }
-function isClergy(p)    { return CLERGY_TYPES.includes(p.type); }
-function showsEmployment(type) { return type === 'staff'; }
-
-const alpha = (a, b) => a.name.localeCompare(b.name);
+const alpha = (a, b) => (a.name || '').localeCompare(b.name || '');
 
 function calcAge(dob) {
   if (!dob) return null;
@@ -48,28 +35,31 @@ function fmtDob(dob) {
 // ── Data loading ───────────────────────────────────────────────────────────────
 
 export async function loadPersonnel() {
-  const [{ data: instData, error: instErr }, { data: persData, error: persErr }, { data: titleData }] = await Promise.all([
+  const [{ data: instData, error: instErr }, { data: persData, error: persErr }, { data: placeData }, { data: dirData }] = await Promise.all([
     sb.from('institutions').select('*').order('sort_order').order('name'),
     sb.from('personnel').select('*').neq('active', false).order('name'),
-    sb.from('person_current_titles').select('*'),
+    sb.from('person_placement').select('*'),
+    sb.from('person_directory').select('*'),
   ]);
   if (instErr) console.error('[institutions]', instErr);
   if (persErr) console.error('[personnel]', persErr);
-  store.institutions  = instData || [];
-  store.personnel     = persData || [];
-  store.personTitles  = buildPersonTitles(titleData || []);
+  store.institutions     = instData || [];
+  store.personnel        = persData || [];
+  store.personPlacement  = buildPlacement(placeData || []);
+  store.personDirectory  = buildDirectory(dirData || []);
   renderPersonnel();
 }
 
-// Shape person_current_titles rows into the map personTitle() consumes:
-//   { [personId]: { byInstitution: { [instName]: title }, all: [title, ...] } }
-function buildPersonTitles(rows) {
+// person_placement rows → { [personId]: { isClergy, hasPosition, derivedType } }
+function buildPlacement(rows) {
   const map = {};
-  rows.forEach(r => {
-    if (!map[r.person_id]) map[r.person_id] = { byInstitution: {}, all: [] };
-    if (r.institution_name) map[r.person_id].byInstitution[r.institution_name] = r.title;
-    if (r.title) map[r.person_id].all.push(r.title);
-  });
+  rows.forEach(r => { map[r.person_id] = { isClergy: !!r.is_clergy, hasPosition: !!r.has_position, derivedType: r.derived_type || 'volunteer' }; });
+  return map;
+}
+// person_directory rows → { [personId]: [ entry, ... ] }
+function buildDirectory(rows) {
+  const map = {};
+  rows.forEach(r => { (map[r.person_id] = map[r.person_id] || []).push(r); });
   return map;
 }
 
@@ -82,7 +72,7 @@ function contactChips(p) {
   return chips ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:3px;">${chips}</div>` : '';
 }
 
-function personCard(p, instName = null) {
+function personCard(p, title = '') {
   const controls = isAdmin() ? `
     <div style="display:flex;gap:6px;flex-shrink:0;">
       <button class="card-action" onclick="openPersonnelModal('${p.id}')">Edit</button>
@@ -91,7 +81,6 @@ function personCard(p, instName = null) {
   const dobLine = p.date_of_birth
     ? `<div style="font-size:11.5px;color:#9CA3AF;margin-top:2px;">🎂 ${fmtDob(p.date_of_birth)}</div>`
     : '';
-  const title = personTitle(p.id, instName);
   return `<div class="evt-item" style="cursor:default;">
     <div style="flex:1;min-width:0;">
       <div style="font-weight:500;font-size:14px;color:var(--navy);">${p.name}</div>
@@ -131,95 +120,90 @@ function renderPersonnel() {
     return;
   }
 
-  let html = '';
-
-  insts.forEach(inst => {
-    const group = all.filter(p => p.institution === inst.name);
-
-    // Fix 5: basic users skip institutions with no visible personnel
-    if (!isAdmin() && !group.length) return;
-
-    const clergy   = group.filter(isClergy);
-    const layStaff = group.filter(isLayStaff);
-    const hasStaff = clergy.length || layStaff.length;
-
-    html += `<div class="card">`;
-
-    // Fix 1: institution icon; Fix 6: cogwheel only for super_admin
-    const safeId   = inst.id;
-    const safeName = inst.name.replace(/'/g, "\\'");
-    const instIcon = inst.icon || 'fa-building';
-    const cogwheel = isSuperAdmin()
-      ? `<button onclick="openInstitutionSettingsModal('${safeId}','${safeName}')" title="Institution settings" style="background:none;border:none;cursor:pointer;font-size:15px;color:#9CA3AF;padding:2px 4px;line-height:1;flex-shrink:0;" onmouseover="this.style.color='var(--navy)'" onmouseout="this.style.color='#9CA3AF'">⚙</button>`
-      : '';
-    html += `<div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:2px solid var(--navy);">
-      <i class="fa-solid ${instIcon}" style="font-size:17px;color:#8B1A2F;flex-shrink:0;"></i>
-      <span style="font-size:17px;font-weight:700;color:var(--navy);letter-spacing:-.01em;flex:1;">${inst.name}</span>
-      ${cogwheel}
-    </div>`;
-
-    if (!hasStaff) {
-      html += `<div style="font-size:13px;color:#6B7280;font-style:italic;">No staff assigned to this institution.</div>`;
-    }
-
-    if (hasStaff) {
-      html += sectionDivider('Staff', '0');
-
-      CLERGY_TYPES.forEach((type, i) => {
-        const clergyGroup = clergy.filter(p => p.type === type).sort(alpha);
-        if (!clergyGroup.length) return;
-        html += `<div style="${i > 0 ? 'margin-top:.75rem;' : ''}">`;
-        html += groupPill(CLERGY_LABELS[type]);
-        clergyGroup.forEach(p => { html += personCard(p, inst.name); });
-        html += `</div>`;
-      });
-
-      EMPLOYMENT_ORDER.forEach((emp, i) => {
-        const empGroup = layStaff.filter(p => p.employment === emp).sort(alpha);
-        if (!empGroup.length) return;
-        html += `<div style="${clergy.length || i > 0 ? 'margin-top:.75rem;' : ''}">`;
-        html += groupPill(EMPLOYMENT_LABELS[emp]);
-        empGroup.forEach(p => { html += personCard(p, inst.name); });
-        html += `</div>`;
-      });
-
-      const unclassified = layStaff.filter(p => !p.employment).sort(alpha);
-      if (unclassified.length) {
-        html += `<div style="margin-top:.75rem;">`;
-        html += groupPill('Other Staff');
-        unclassified.forEach(p => { html += personCard(p, inst.name); });
-        html += `</div>`;
+  const byId = new Map(all.map(p => [p.id, p]));
+  // Build the per-institution directory entries the viewer may see, split by the
+  // PERSON-level clergy rollup (clergy wins at the person level → all of a
+  // clergy person's entries file under Clergy, never Lay).
+  const clergyByInst = {};   // instName -> [{ p, title }]
+  const layByInst = {};      // instName -> { full_time:[], part_time:[], contract:[], __other:[] }
+  all.forEach(p => {
+    const clergy = isPersonClergy(p.id);
+    personEntries(p.id).forEach(e => {
+      const inst = e.institution_name || '—';
+      if (clergy) {
+        (clergyByInst[inst] = clergyByInst[inst] || []).push({ p, title: e.title || '' });
+      } else {
+        const buckets = (layByInst[inst] = layByInst[inst] || { full_time: [], part_time: [], contract: [], __other: [] });
+        (buckets[e.employment_heading] || buckets.__other).push({ p, title: e.title || '' });
       }
-    }
-
-    html += `</div>`;
+    });
   });
 
-  // People with no matching institution (safety net — excludes volunteers, handled below)
-  const instNames = new Set(insts.map(i => i.name));
-  const orphans = all.filter(p => !instNames.has(p.institution) && !isVolunteer(p));
-  if (orphans.length) {
-    html += `<div class="card">`;
-    html += `<div style="margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:2px solid var(--navy);">
-      <span style="font-size:17px;font-weight:700;color:var(--navy);">Unassigned</span>
+  const instHeading = (name, icon, cog = '') => `<div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:2px solid var(--navy);">
+      <i class="fa-solid ${icon}" style="font-size:17px;color:#8B1A2F;flex-shrink:0;"></i>
+      <span style="font-size:17px;font-weight:700;color:var(--navy);letter-spacing:-.01em;flex:1;">${name}</span>${cog}
     </div>`;
-    orphans.sort(alpha).forEach(p => { html += personCard(p); });
+  const sortEntries = (arr) => arr.sort((a, b) => alpha(a.p, b.p));
+  const instIconOf = (name) => (insts.find(i => i.name === name)?.icon) || 'fa-building';
+  const cogOf = (name) => {
+    if (!isSuperAdmin()) return '';
+    const inst = insts.find(i => i.name === name); if (!inst) return '';
+    const safeName = inst.name.replace(/'/g, "\\'");
+    return `<button onclick="openInstitutionSettingsModal('${inst.id}','${safeName}')" title="Institution settings" style="background:none;border:none;cursor:pointer;font-size:15px;color:#9CA3AF;padding:2px 4px;line-height:1;flex-shrink:0;" onmouseover="this.style.color='var(--navy)'" onmouseout="this.style.color='#9CA3AF'">⚙</button>`;
+  };
+
+  let html = '';
+
+  // ── CLERGY (top): institution + title(s), no employment grouping ──────────
+  const clergyInsts = Object.keys(clergyByInst).sort();
+  if (clergyInsts.length) {
+    html += `<div class="card">`;
+    html += instHeading('Clergy', 'fa-cross');
+    clergyInsts.forEach((inst, i) => {
+      html += `<div style="${i > 0 ? 'margin-top:.75rem;' : ''}">`;
+      html += groupPill(inst);
+      sortEntries(clergyByInst[inst]).forEach(({ p, title }) => { html += personCard(p, title); });
+      html += `</div>`;
+    });
     html += `</div>`;
   }
 
-  // Volunteers section — all volunteers across all institutions, always last
-  const allVolunteers = all.filter(isVolunteer).sort(alpha);
+  // ── LAY STAFF: by institution → employment heading ────────────────────────
+  // Institution order follows store.institutions, then any extras alphabetically.
+  const layInstNames = Object.keys(layByInst);
+  const orderedLay = [...insts.map(i => i.name).filter(n => layByInst[n]),
+                      ...layInstNames.filter(n => !insts.some(i => i.name === n)).sort()];
+  orderedLay.forEach(inst => {
+    const buckets = layByInst[inst];
+    html += `<div class="card">`;
+    html += instHeading(inst, instIconOf(inst), cogOf(inst));
+    let first = true;
+    EMP_HEADINGS.forEach(([key, label]) => {
+      const grp = buckets[key]; if (!grp.length) return;
+      html += `<div style="${first ? '' : 'margin-top:.75rem;'}">`; first = false;
+      html += groupPill(label);
+      sortEntries(grp).forEach(({ p, title }) => { html += personCard(p, title); });
+      html += `</div>`;
+    });
+    if (buckets.__other.length) {
+      html += `<div style="${first ? '' : 'margin-top:.75rem;'}">`;
+      html += groupPill('Other Staff');
+      sortEntries(buckets.__other).forEach(({ p, title }) => { html += personCard(p, title); });
+      html += `</div>`;
+    }
+    html += `</div>`;
+  });
+
+  // ── VOLUNTEERS / NON-POSITIONED (bottom): flat, no institution/employment ──
+  const allVolunteers = all.filter(p => !isPersonClergy(p.id) && !personEntries(p.id).length).sort(alpha);
   if (allVolunteers.length) {
     html += `<div class="card">`;
-    html += `<div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:2px solid var(--navy);">
-      <i class="fa-solid fa-hands-helping" style="font-size:17px;color:#8B1A2F;flex-shrink:0;"></i>
-      <span style="font-size:17px;font-weight:700;color:var(--navy);">Volunteers</span>
-    </div>`;
+    html += instHeading('Volunteers', 'fa-hands-helping');
     allVolunteers.forEach(p => { html += personCard(p); });
     html += `</div>`;
   }
 
-  el.innerHTML = html || '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No personnel added yet.</div>';
+  el.innerHTML = html || '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No personnel yet.</div>';
 }
 
 // ── Institution icon picker ────────────────────────────────────────────────────
@@ -327,24 +311,18 @@ async function saveInstitutionSettings(id, oldName) {
   const sortOrder = parseInt(document.getElementById('if-sort').value) || 0;
   const icon      = document.getElementById('if-icon')?.value || 'fa-building';
   if (!newName) { alert('Name is required.'); return; }
+  // Renaming the institution is enough — placement derives from HR (positions
+  // reference institutions by FK), so the directory updates live. (oldName kept
+  // for signature compatibility.)
+  void oldName;
   const { error: instErr } = await sb.from('institutions').update({ name: newName, sort_order: sortOrder, icon }).eq('id', id);
   if (instErr) { alert('Save failed: ' + instErr.message); return; }
-  if (newName !== oldName) {
-    const { error: persErr } = await sb.from('personnel')
-      .update({ institution: newName, updated_at: new Date().toISOString() })
-      .eq('institution', oldName);
-    if (persErr) { alert('Failed to update personnel records: ' + persErr.message); return; }
-  }
   closeModal();
   await loadPersonnel();
 }
 
 async function deleteInstitution(id, name) {
-  if (!confirm(`Deleting "${name}" will remove it from all personnel records. This cannot be undone. Continue?`)) return;
-  const { error: persErr } = await sb.from('personnel')
-    .update({ institution: null, updated_at: new Date().toISOString() })
-    .eq('institution', name);
-  if (persErr) { alert('Failed to clear personnel: ' + persErr.message); return; }
+  if (!confirm(`Delete "${name}"? Its HR positions and their occupancies are removed too (FK cascade). This cannot be undone. Continue?`)) return;
   const { error } = await sb.from('institutions').delete().eq('id', id);
   if (error) { alert('Delete failed: ' + error.message); return; }
   closeModal();
@@ -354,44 +332,36 @@ async function deleteInstitution(id, name) {
 // ── Personnel modal ────────────────────────────────────────────────────────────
 
 function personnelForm(data) {
-  const type = data?.type || 'staff';
-  const inst = data?.institution || '';
-  const instOptions = (store.institutions || [])
-    .map(i => `<option value="${i.name}"${inst === i.name ? ' selected' : ''}>${i.name}</option>`)
-    .join('');
-  const isNa = !inst;
+  // Identity + contact only. Organizational placement (institution / type /
+  // employment / clergy-or-lay) is HR-derived — set by assigning a POSITION in
+  // Human Resources — and shown here read-only when editing.
   return `<div class="modal-title">${data ? 'Edit person' : 'Add person'}</div>
   <label>Name</label><input id="pf-name" value="${data?.name || ''}" />
   <label>Date of Birth</label><input type="date" id="pf-dob" value="${data?.date_of_birth || ''}" />
   <label>Phone</label><input id="pf-phone" value="${data?.phone || ''}" placeholder="e.g. (601) 555-0100" />
   <label>Email</label><input id="pf-email" value="${data?.email || ''}" />
-  <label>Institution</label>
-  <select id="pf-inst" onchange="personnelInstToggle()">
-    <option value=""${isNa ? ' selected' : ''}>N/A</option>
-    ${instOptions}
-  </select>
-  <label>Type</label>
-  <select id="pf-type" onchange="personnelTypeToggle()">
-    <optgroup label="Clergy &amp; Religious">
-      ${CLERGY_TYPES.map(t => `<option value="${t}"${type === t ? ' selected' : ''}>${CLERGY_LABELS[t]}</option>`).join('')}
-    </optgroup>
-    <optgroup label="Lay">
-      <option value="staff"${type === 'staff' ? ' selected' : ''}>Lay Staff</option>
-      <option value="volunteer"${type === 'volunteer' ? ' selected' : ''}>Volunteer</option>
-    </optgroup>
-  </select>
-  <div id="pf-emp-row" style="${showsEmployment(type) ? '' : 'display:none;'}">
-    <label>Employment</label>
-    <select id="pf-emp">
-      <option value="full-time"${data?.employment === 'full-time' ? ' selected' : ''}>Full-Time</option>
-      <option value="part-time"${data?.employment === 'part-time' ? ' selected' : ''}>Part-Time</option>
-      <option value="under-contract"${data?.employment === 'under-contract' ? ' selected' : ''}>Under Contract</option>
-    </select>
-  </div>
   <label>Sort order</label><input type="number" id="pf-sort" value="${data?.sort_order ?? ''}" placeholder="0" style="width:80px;" />
+  ${data ? derivedPlacementHtml(data) : ''}
   <div class="modal-actions">
     <button class="btn-secondary" onclick="closeModal()">Cancel</button>
     <button class="btn-primary" onclick="savePersonnel(${data ? `'${data.id}'` : null})">Save</button>
+  </div>`;
+}
+
+// Read-only HR-derived placement, shown when editing an existing person.
+function derivedPlacementHtml(p) {
+  const type = personDerivedType(p.id);
+  const clergy = isPersonClergy(p.id);
+  const typeLabel = type === 'clergy' ? 'Clergy' : type === 'staff' ? 'Lay Staff' : 'Volunteer';
+  const entries = personEntries(p.id);
+  const rows = entries.length
+    ? entries.map(e => `<div style="font-size:12.5px;color:#374151;padding:2px 0;">${e.institution_name || '—'} — ${e.title || '(no title)'}${(!clergy && e.employment_heading) ? ` · ${EMP_LABEL[e.employment_heading] || e.employment_heading}` : ''}</div>`).join('')
+    : '<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No HR position — appears under Volunteers.</div>';
+  return `<div style="margin-top:1rem;padding-top:.75rem;border-top:.5px solid var(--stone);">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:.3rem;">Placement (from Human Resources)</div>
+    <div style="font-size:12.5px;color:var(--navy);font-weight:600;margin-bottom:.25rem;">${typeLabel}</div>
+    ${rows}
+    <div style="font-size:11px;color:#9CA3AF;margin-top:.4rem;">Set placement by assigning this person a position in Human Resources.</div>
   </div>`;
 }
 
@@ -401,29 +371,12 @@ function openPersonnelModal(id) {
   document.getElementById('modal-overlay').classList.add('open');
 }
 
-function personnelTypeToggle() {
-  const type = document.getElementById('pf-type').value;
-  document.getElementById('pf-emp-row').style.display = showsEmployment(type) ? '' : 'none';
-}
-
-window.personnelInstToggle = function() {
-  const isNa = !document.getElementById('pf-inst').value;
-  if (isNa) {
-    const typeEl = document.getElementById('pf-type');
-    if (typeEl) typeEl.value = 'volunteer';
-    personnelTypeToggle();
-  }
-};
-
 async function savePersonnel(id) {
-  const type = document.getElementById('pf-type').value;
+  // Identity + contact only — organizational placement is HR-derived.
   const payload = {
     name:        document.getElementById('pf-name').value.trim(),
     phone:       document.getElementById('pf-phone').value.trim() || null,
     email:       document.getElementById('pf-email').value.trim() || null,
-    institution: document.getElementById('pf-inst').value || null,
-    type,
-    employment:  showsEmployment(type) ? document.getElementById('pf-emp').value : null,
     date_of_birth: document.getElementById('pf-dob').value || null,
     sort_order:  parseInt(document.getElementById('pf-sort').value) || 0,
     active:      true,
@@ -448,7 +401,7 @@ async function deletePersonnel(id) {
 }
 
 Object.assign(window, {
-  openPersonnelModal, savePersonnel, deletePersonnel, personnelTypeToggle,
+  openPersonnelModal, savePersonnel, deletePersonnel,
   openInstitutionModal, saveInstitution,
   openInstitutionSettingsModal, saveInstitutionSettings, deleteInstitution,
 });

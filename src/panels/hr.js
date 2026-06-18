@@ -147,7 +147,7 @@ export async function loadHr() {
 
   const [instRes, peopleRes, posRes, occRes] = await Promise.all([
     sb.from('institutions').select('*').order('sort_order').order('name'),
-    sb.from('personnel').select('id,name,type,employment,institution,active').order('name'),
+    sb.from('personnel').select('id,name,active').order('name'),
     sb.from('positions').select('*').is('archived_at', null),
     sb.from('person_positions').select('*'),
   ]);
@@ -235,8 +235,11 @@ export function resolveEffectiveSupervisor(positionId, ctx) {
     }
     parentId = anc.parent_position_id;
   }
-  const pastor = _people.find(p => p.type === 'pastor');
-  return { kind: 'pastor', name: pastor ? pastor.name : 'the Pastor', title: 'Pastor' };
+  // Pastor backstop derives from HR: the occupant of a clergy administrator
+  // position (personnel.type was retired).
+  const pastorPos = [...ctx.posById.values()].find(p => p.is_clergy && p.is_administrator && ctx.currentByPos.get(p.id)?.length);
+  const pastorName = pastorPos ? ctx.personName(ctx.currentByPos.get(pastorPos.id)[0].person_id) : null;
+  return { kind: 'pastor', name: pastorName || 'the Pastor', title: 'Pastor' };
 }
 
 // ── Render: panel shell + institution tabs ──────────────────────────────────
@@ -414,13 +417,10 @@ async function hrSaveInstitution(id) {
   const name = document.getElementById('hr-inst-name').value.trim();
   if (!name) { alert('Name is required.'); return; }
   if (id) {
-    const old = _insts.find(i => i.id === id);
     const { error } = await sb.from('institutions').update({ name }).eq('id', id);
     if (error) { alert('Save failed: ' + error.message); return; }
-    // Cascade the rename to personnel.institution (name-based link, per existing convention).
-    if (old && old.name !== name) {
-      await sb.from('personnel').update({ institution: name, updated_at: new Date().toISOString() }).eq('institution', old.name);
-    }
+    // No personnel cascade — placement is HR-derived via the institution FK, so
+    // the rename propagates to the directory automatically.
     logActivity({ action: 'renamed institution', entityType: 'institution', entityName: name });
   } else {
     const nextOrder = _insts.length ? Math.max(..._insts.map(i => i.sort_order ?? 0)) + 1 : 0;

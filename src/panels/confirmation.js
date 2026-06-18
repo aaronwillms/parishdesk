@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity, isPersonClergy } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 
@@ -28,7 +28,7 @@ function fullAccess() { return isAdmin() || canAccessSacrament('confirmation'); 
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function _curUserName() { return store.currentUserProfile?.personnel?.name || 'Staff'; }
 function nowIso() { return new Date().toISOString(); }
-function clergyPersonnel() { return (store.personnel || []).filter(p => CLERGY_TYPES.includes(p.type) || (p.title && CLERGY_TITLE_RE.test(p.title))).sort((a, b) => (a.name || '').localeCompare(b.name || '')); }
+function clergyPersonnel() { return (store.personnel || []).filter(p => isPersonClergy(p.id)).sort((a, b) => (a.name || '').localeCompare(b.name || '')); }
 function ageOf(dob) { if (!dob) return null; const d = new Date(dob); if (isNaN(d)) return null; const now = new Date(new Date().toLocaleString('en-US', { timeZone: store.parishSettings?.timezone || 'America/Chicago' })); let a = now.getFullYear() - d.getFullYear(); const m = now.getMonth() - d.getMonth(); if (m < 0 || (m === 0 && now.getDate() < d.getDate())) a--; return a; }
 function cohortLabel(dateStr) { if (!dateStr) return 'No date'; const d = new Date(dateStr + 'T00:00:00'); return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); }
 

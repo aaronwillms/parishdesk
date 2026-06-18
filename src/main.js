@@ -159,12 +159,6 @@ async function startApp(user) {
 }
 
 async function syncParishStaff() {
-  const primaryInstitution = store.parishSettings?.primary_institution;
-  if (!primaryInstitution) {
-    console.warn('[syncParishStaff] no parish_settings found, skipping sync');
-    return;
-  }
-
   const { data: team } = await sb
     .from('teams')
     .select('id')
@@ -173,18 +167,18 @@ async function syncParishStaff() {
     .maybeSingle();
   if (!team) return;
 
+  // Parish Staff = HR-positioned people (clergy or lay staff, derived_type
+  // != volunteer) — placement is HR-derived now, no manual type/employment.
   const [{ data: staff }, { data: existing }] = await Promise.all([
-    sb.from('personnel').select('id,type')
-      .eq('institution', primaryInstitution)
-      .or('employment.in.(full-time,part-time),type.in.(pastor,parochial-vicar,priest-in-residence,deacon,religious)'),
+    sb.from('person_placement').select('person_id').neq('derived_type', 'volunteer'),
     sb.from('team_members').select('personnel_id').eq('team_id', team.id),
   ]);
   if (!staff?.length) return;
 
   const existingIds = new Set((existing || []).map(m => m.personnel_id));
   const toInsert = staff
-    .filter(p => !existingIds.has(p.id))
-    .map(p => ({ team_id: team.id, personnel_id: p.id }));
+    .filter(s => !existingIds.has(s.person_id))
+    .map(s => ({ team_id: team.id, personnel_id: s.person_id }));
   if (!toInsert.length) return;
 
   await sb.from('team_members').insert(toInsert);

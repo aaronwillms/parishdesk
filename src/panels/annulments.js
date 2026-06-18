@@ -1,7 +1,7 @@
 import { sb } from '../supabase.js';
 import { notifyUsers } from '../notifications.js';
 import { store } from '../store.js';
-import { fmtDate, todayCST, logActivity } from '../utils.js';
+import { fmtDate, todayCST, logActivity, isPersonClergy } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 
 // ── Status (legacy codes preserved for backward compatibility) ───────────────
@@ -404,7 +404,7 @@ function _coupleLabel(id) { const r = (store.allCouples || []).find(x => x.id ==
 function _ociaLabel(id)   { const r = (store.allOcia || []).find(x => x.id === id); return r ? (r.name || 'OCIA record') : 'OCIA record'; }
 
 function clergyPersonnel() {
-  return (store.personnel || []).filter(p => CLERGY_TYPES.includes(p.type) || (p.title && CLERGY_TITLE_RE.test(p.title)))
+  return (store.personnel || []).filter(p => isPersonClergy(p.id))
     .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 }
 
