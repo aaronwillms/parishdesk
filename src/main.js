@@ -5,28 +5,18 @@ import { loadCalendar, loadInit } from './panels/dashboard.js';
 import { initNavigation, renderSidebarProfileWidget, setActiveTeamSubNavItem, applyNavVisibility, resetNavVisibility, applyParishName, renderMinistryNav } from './ui/navigation.js';
 import { loadUserRoles } from './roles.js';
 import { clearUserScope } from './ui/userScope.js';
-import { loadAdmin } from './panels/admin.js';
 import { initModal } from './ui/modal.js';
 import { loadUserProfile } from './panels/userProfile.js';
 import { openCoupleAdd, loadCouples } from './panels/marriage.js';
 import { loadCases } from './panels/annulments.js';
-import { projectForm, loadProjects, openNewProjectModal } from './panels/projects.js';
-import { renderProjectDashboard } from './panels/projectDashboard.js';
-import { loadSacramental } from './panels/sacramental.js';
 import { loadOcia } from './panels/ocia.js';
 import { loadConfirmation } from './panels/confirmation.js';
 import { loadBaptism } from './panels/baptism.js';
 import { loadFirstComm } from './panels/firstcomm.js';
-import { loadDiscernment } from './panels/discernment.js';
-import { loadHomebound } from './panels/homebound.js';
 import { loadCoordData } from './ui/coordinator.js';
-import { loadSchool } from './panels/school.js';
 import { loadPersonnel } from './panels/personnel.js';
-import { loadHr } from './panels/hr.js';
 import { loadTeams, loadTeamsStore } from './panels/teams.js';
-import { renderTeamDashboard } from './panels/teamDashboard.js';
-import { renderInstitutionDashboard } from './panels/institutionDashboard.js';
-import { loadTasks } from './panels/tasks.js';
+import { ensurePanel } from './panels/registry.js';
 import { initNotifications } from './notifications.js';
 import { loadMessaging, initChatBubble } from './panels/messaging.js';
 import { sb } from './supabase.js';
@@ -43,17 +33,13 @@ async function loadParishSettings() {
 }
 
 async function startApp(user) {
-  window.openModal = (type, defaultStatus) => {
+  window.openModal = async (type, defaultStatus) => {
     if (type === 'couple')  { openCoupleAdd(); return; }
-    if (type === 'project') { openNewProjectModal(); return; }
+    if (type === 'project') { const m = await ensurePanel('projects'); m.openNewProjectModal(); return; }
     if (type === 'case')    { window.openCaseCreate?.(); return; }
-    let html;
-    if (!html) return;
-    document.getElementById('modal-content').innerHTML = html;
-    document.getElementById('modal-overlay').classList.add('open');
   };
 
-  window.showInstitutionDashboard = (institutionId) => {
+  window.showInstitutionDashboard = async (institutionId) => {
     const container = document.getElementById('institution-dashboard-root');
     if (!container) return;
     // Highlight the matching nav item
@@ -61,25 +47,28 @@ async function startApp(user) {
       el.classList.toggle('active', el.dataset.institutionId === institutionId);
     });
     window.switchPanel('institutionDashboard', { title: 'Ministry' });
-    renderInstitutionDashboard(container, institutionId);
+    const m = await ensurePanel('institutionDashboard');
+    m.renderInstitutionDashboard(container, institutionId);
   };
 
-  window.showProjectDashboard = (projectId) => {
+  window.showProjectDashboard = async (projectId) => {
     const container = document.getElementById('project-dashboard-root');
     if (!container) return;
     window.switchPanel('projectDashboard', { title: 'Projects' });
-    renderProjectDashboard(container, projectId).then(() => {
+    const m = await ensurePanel('projectDashboard');
+    m.renderProjectDashboard(container, projectId).then(() => {
       const h1 = container.querySelector('h1');
       if (h1) document.getElementById('topbar-title').textContent = h1.textContent.trim();
     });
   };
 
-  window.showTeamDashboard = (teamId) => {
+  window.showTeamDashboard = async (teamId) => {
     const container = document.getElementById('team-dashboard-root');
     if (!container) return;
     setActiveTeamSubNavItem(teamId);
     window.switchPanel('teamDashboard', { title: 'Teams' });
-    renderTeamDashboard(container, teamId).then(() => {
+    const m = await ensurePanel('teamDashboard');
+    m.renderTeamDashboard(container, teamId).then(() => {
       const h1 = container.querySelector('h1');
       if (h1) document.getElementById('topbar-title').textContent = h1.textContent.trim();
     });
@@ -88,23 +77,23 @@ async function startApp(user) {
   initNavigation({
     marriage:      () => { loadCouples(); loadCoordData('marriage'); },
     annulments:    loadCases,
-    discernment:   loadDiscernment,
-    homebound:     loadHomebound,
-    projects:      loadProjects,
+    discernment:   () => ensurePanel('discernment').then(m => m.loadDiscernment()),
+    homebound:     () => ensurePanel('homebound').then(m => m.loadHomebound()),
+    projects:      () => ensurePanel('projects').then(m => m.loadProjects()),
     personnel:     loadPersonnel,
-    hr:            loadHr,
-    school:        loadSchool,
+    hr:            () => ensurePanel('hr').then(m => m.loadHr()),
+    school:        () => ensurePanel('school').then(m => m.loadSchool()),
     baptism:       () => { loadBaptism();                   loadCoordData('baptism'); },
     firstcomm:     () => { loadFirstComm();                 loadCoordData('firstcomm'); },
     confirmation:  () => { loadConfirmation(); loadCoordData('confirmation'); },
     ocia:          () => { loadOcia(); loadCoordData('ocia'); },
     teams:         () => { loadTeams(); setActiveTeamSubNavItem(null); },
-    tasks:         loadTasks,
+    tasks:         () => ensurePanel('tasks').then(m => m.loadTasks()),
     teamDashboard:         () => {},   // handled by showTeamDashboard
     projectDashboard:      () => {},   // handled by showProjectDashboard
     institutionDashboard:  () => {},   // handled by showInstitutionDashboard
     userProfile:      loadUserProfile,
-    admin:            loadAdmin,
+    admin:            () => ensurePanel('admin').then(m => m.loadAdmin()),
     messaging:        loadMessaging,
   });
 
