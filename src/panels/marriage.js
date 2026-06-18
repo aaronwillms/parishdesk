@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite } from '../supabase.js';
 import { fmtDate, formatDateDisplay, daysUntil, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { store } from '../store.js';
 import { expandCase } from './annulments.js';
@@ -200,7 +200,9 @@ export async function expandCouple(id) {
 // ── Autosave (live card) ─────────────────────────────────────────────────────
 async function _patch(coupleId, patch) {
   const c = allCouples.find(x => x.id === coupleId); if (!c) return null;
-  const { error } = await sb.from('couples').update({ ...patch, updated_at: nowIso() }).eq('id', coupleId);
+  // Serialize per-couple so rapid checkbox toggles don't overlap; retry transport failures.
+  const { error } = await serializeWrite(`couple:${coupleId}`, () =>
+    withWriteRetry(() => sb.from('couples').update({ ...patch, updated_at: nowIso() }).eq('id', coupleId), { kind: 'update' }));
   if (error) { alert('Save failed: ' + error.message); return null; }
   Object.assign(c, patch);
   return c;
@@ -701,7 +703,7 @@ async function _marWriteEdit(id) {
   const { payload, external, prior } = r;
   payload.status_code = external ? 'external' : (document.getElementById('mf-status')?.value || prior?.status_code || 'inprogress');
   payload.archived = _chk('mf-archive');
-  const { error } = await sb.from('couples').update(payload).eq('id', id);
+  const { error } = await withWriteRetry(() => sb.from('couples').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('couples update', error); return { ok: false }; }
   logActivity({ action: 'updated marriage prep record', entityType: 'marriage', entityName: `${payload.groom} & ${payload.bride}`, contextType: 'couple', contextId: id });
   await loadCouplesData();
@@ -716,7 +718,7 @@ async function marSaveCouple() {
   const { payload, external } = r;
   payload.status_code = external ? 'external' : 'inprogress';
   payload.archived = false;
-  const { error } = await sb.from('couples').insert(payload);
+  const { error } = await withWriteRetry(() => sb.from('couples').insert(payload), { kind: 'insert' });
   if (error) { reportWriteError('couples insert', error); return; }
   logActivity({ action: 'created marriage prep record', entityType: 'marriage', entityName: `${payload.groom} & ${payload.bride}`, contextType: 'couple' });
   marCloseModal(); await loadCouplesData(); refreshActivePanel();

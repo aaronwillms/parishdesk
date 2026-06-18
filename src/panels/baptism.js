@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
@@ -94,7 +94,7 @@ export async function expandBaptism(id) {
 }
 
 // ── Autosave (used by the read-detail prep checkbox + add-note) ──────────────
-async function _patch(id, patch) { const p = allBap.find(x => x.id === id); if (!p) return null; const { error } = await sb.from('sacramental_baptism').update({ ...patch, updated_at: nowIso() }).eq('id', id); if (error) { alert('Save failed: ' + error.message); return null; } Object.assign(p, patch); return p; }
+async function _patch(id, patch) { const p = allBap.find(x => x.id === id); if (!p) return null; const { error } = await serializeWrite(`baptism:${id}`, () => withWriteRetry(() => sb.from('sacramental_baptism').update({ ...patch, updated_at: nowIso() }).eq('id', id), { kind: 'update' })); if (error) { alert('Save failed: ' + error.message); return null; } Object.assign(p, patch); return p; }
 async function toggleBapPrep(id) {
   const p = allBap.find(x => x.id === id); if (!p) return;
   const done = !p.preparation_complete;
@@ -349,7 +349,7 @@ async function bapSave() {
     payload.status_code = 'scheduled';
     payload.archived = false;
     payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-    const { error } = await sb.from('sacramental_baptism').insert(payload);
+    const { error } = await withWriteRetry(() => sb.from('sacramental_baptism').insert(payload), { kind: 'insert' });
     if (error) { reportWriteError('baptism insert', error); return; }
     logActivity({ action: 'added Baptism child', entityType: 'baptism', entityName: name, contextType: 'baptism' });
     const { data: { user } } = await sb.auth.getUser();
@@ -368,7 +368,7 @@ async function _bapWriteEdit(id, payload, name) {
   const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
   if (prior && statusOf(prior) !== 'complete' && newStatus === 'complete') tl.push({ type: 'auto', text: 'Baptism Complete', created_at: nowIso() });
   payload.timeline = tl;
-  const { error } = await sb.from('sacramental_baptism').update(payload).eq('id', id);
+  const { error } = await withWriteRetry(() => sb.from('sacramental_baptism').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('baptism update', error); return { ok: false }; }
   logActivity({ action: 'updated Baptism record', entityType: 'baptism', entityName: name, contextType: 'baptism', contextId: id });
   if (prior) Object.assign(prior, payload);

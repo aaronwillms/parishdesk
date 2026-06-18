@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, withWriteRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin, isSuperAdmin, coordinatorChipLabels } from '../roles.js';
 import { logActivity, personTitle, reportWriteError } from '../utils.js';
@@ -458,14 +458,14 @@ async function savePersonnel(id) {
   // Check .error on BOTH paths — a swallowed rejection used to look like success
   // (modal closed, list reloaded). Surface + log on failure; close/reload only on success.
   if (id) {
-    const { error } = await sb.from('personnel').update(payload).eq('id', id);
+    const { error } = await withWriteRetry(() => sb.from('personnel').update(payload).eq('id', id), { kind: 'update' });
     if (error) { reportWriteError('personnel update', error); return; }
     logActivity({ action: 'updated person in directory', entityType: 'personnel', entityName: payload.name, contextType: 'personnel' });
   } else {
     // `type` is a legacy (now dead) column that may still be NOT NULL — seed a
     // harmless default on insert only so new rows are valid. The directory never
     // reads it; institution/employment are HR-owned and left unset.
-    const { error } = await sb.from('personnel').insert({ ...payload, type: 'staff' });
+    const { error } = await withWriteRetry(() => sb.from('personnel').insert({ ...payload, type: 'staff' }), { kind: 'insert' });
     if (error) { reportWriteError('personnel insert', error); return; }
     logActivity({ action: 'added person to directory', entityType: 'personnel', entityName: payload.name, contextType: 'personnel' });
   }

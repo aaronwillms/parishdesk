@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { expandCase } from './annulments.js';
@@ -249,7 +249,7 @@ export async function expandOcia(id) {
 }
 
 // ── Autosave (live card) ─────────────────────────────────────────────────────
-async function _patch(id, patch) { const p = allOcia.find(x => x.id === id); if (!p) return null; const { error } = await sb.from('sacramental_ocia').update({ ...patch, updated_at: nowIso() }).eq('id', id); if (error) { alert('Save failed: ' + error.message); return null; } Object.assign(p, patch); return p; }
+async function _patch(id, patch) { const p = allOcia.find(x => x.id === id); if (!p) return null; const { error } = await serializeWrite(`ocia:${id}`, () => withWriteRetry(() => sb.from('sacramental_ocia').update({ ...patch, updated_at: nowIso() }).eq('id', id), { kind: 'update' })); if (error) { alert('Save failed: ' + error.message); return null; } Object.assign(p, patch); return p; }
 async function toggleOciaDoc(id, i) {
   const p = allOcia.find(x => x.id === id); if (!p) return;
   const docs = normDocs(p); docs[i].received = !docs[i].received;
@@ -544,7 +544,7 @@ async function ociaSave() {
     const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
     if (prior && prior.status_code !== 'received' && newStatus === 'received') tl.push({ type: 'auto', text: 'Received', created_at: nowIso() });
     payload.timeline = tl;
-    const { error } = await sb.from('sacramental_ocia').update(payload).eq('id', _M.id);
+    const { error } = await withWriteRetry(() => sb.from('sacramental_ocia').update(payload).eq('id', _M.id), { kind: 'update' });
     if (error) { reportWriteError('ocia update', error); return; }
     if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);
     logActivity({ action: 'updated OCIA record', entityType: 'ocia', entityName: name, contextType: 'ocia', contextId: _M.id });
@@ -553,7 +553,7 @@ async function ociaSave() {
     payload.status_code = 'inquirer';
     payload.archived = false;
     payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-    const { error } = await sb.from('sacramental_ocia').insert(payload);
+    const { error } = await withWriteRetry(() => sb.from('sacramental_ocia').insert(payload), { kind: 'insert' });
     if (error) { reportWriteError('ocia insert', error); return; }
     if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);
     logActivity({ action: 'added OCIA candidate', entityType: 'ocia', entityName: name, contextType: 'ocia' });

@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
@@ -110,7 +110,7 @@ export async function expandFirstComm(id) {
 }
 
 // ── Autosave ─────────────────────────────────────────────────────────────────
-async function _patch(id, patch) { const p = allFc.find(x => x.id === id); if (!p) return null; const { error } = await sb.from('sacramental_firstcomm').update({ ...patch, updated_at: nowIso() }).eq('id', id); if (error) { alert('Save failed: ' + error.message); return null; } Object.assign(p, patch); return p; }
+async function _patch(id, patch) { const p = allFc.find(x => x.id === id); if (!p) return null; const { error } = await serializeWrite(`firstcomm:${id}`, () => withWriteRetry(() => sb.from('sacramental_firstcomm').update({ ...patch, updated_at: nowIso() }).eq('id', id), { kind: 'update' })); if (error) { alert('Save failed: ' + error.message); return null; } Object.assign(p, patch); return p; }
 async function toggleFcDoc(id, i) {
   const p = allFc.find(x => x.id === id); if (!p) return;
   const docs = normDocs(p); docs[i].received = !docs[i].received;
@@ -324,7 +324,7 @@ async function fcSave() {
   payload.status_code = 'enrolled';
   payload.archived = false;
   payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-  const { error } = await sb.from('sacramental_firstcomm').insert(payload);
+  const { error } = await withWriteRetry(() => sb.from('sacramental_firstcomm').insert(payload), { kind: 'insert' });
   if (error) { reportWriteError('firstcomm insert', error); return; }
   if (linkTarget) await sb.from('sacramental_firstcomm').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
   logActivity({ action: 'added First Communion student', entityType: 'firstcomm', entityName: name, contextType: 'firstcomm' });
@@ -344,7 +344,7 @@ async function _fcWriteEdit(id, r) {
   const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
   if (prior && statusOf(prior) !== 'received' && newStatus === 'received') tl.push({ type: 'auto', text: 'First Communion Received', created_at: nowIso() });
   payload.timeline = tl;
-  const { error } = await sb.from('sacramental_firstcomm').update(payload).eq('id', id);
+  const { error } = await withWriteRetry(() => sb.from('sacramental_firstcomm').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('firstcomm update', error); return { ok: false }; }
   if (linkTarget) await sb.from('sacramental_firstcomm').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
   logActivity({ action: 'updated First Communion record', entityType: 'firstcomm', entityName: name, contextType: 'firstcomm', contextId: id });

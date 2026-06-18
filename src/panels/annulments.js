@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, withWriteRetry } from '../supabase.js';
 import { notifyUsers } from '../notifications.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity, reportWriteError } from '../utils.js';
@@ -305,7 +305,7 @@ async function _pushTimeline(caseId, entry) {
   if (!c) return;
   const tl = _rawTimeline(c);
   tl.push(entry);
-  const { error } = await sb.from('annulment_cases').update({ timeline: tl, updated_at: nowIso() }).eq('id', caseId);
+  const { error } = await withWriteRetry(() => sb.from('annulment_cases').update({ timeline: tl, updated_at: nowIso() }).eq('id', caseId), { kind: 'update' });
   if (error) { alert('Save failed: ' + error.message); return; }
   c.timeline = tl;
 }
@@ -342,7 +342,7 @@ async function toggleCaseDoc(caseId, idx) {
   const update = { documents: docs, updated_at: nowIso() };
   let tl = _rawTimeline(c);
   if (allDone && !prevAllDone) { tl.push({ type: 'auto', text: 'Documents Collected', created_at: nowIso(), created_by: _curUserId() }); update.timeline = tl; }
-  const { error } = await sb.from('annulment_cases').update(update).eq('id', caseId);
+  const { error } = await withWriteRetry(() => sb.from('annulment_cases').update(update).eq('id', caseId), { kind: 'update' });
   if (error) { console.error(error); return; }
   c.documents = docs;
   if (update.timeline) c.timeline = tl;
@@ -680,7 +680,7 @@ async function anlSaveCase() {
     if (justArchived) tl.push({ type: 'auto', text: 'Case Closed', created_at: nowIso(), created_by: _curUserId() });
     payload.timeline = tl;
 
-    const { error } = await sb.from('annulment_cases').update(payload).eq('id', _M.id);
+    const { error } = await withWriteRetry(() => sb.from('annulment_cases').update(payload).eq('id', _M.id), { kind: 'update' });
     if (error) { reportWriteError('annulment update', error); return; }
     Object.assign(prior, payload);
     if (statusChanged) await notifyStatusChange(prior, newStatus);
@@ -692,7 +692,7 @@ async function anlSaveCase() {
     payload.timeline = [{ type: 'auto', text: 'Case opened', created_at: nowIso(), created_by: _curUserId() }];
     const { data: { user } } = await sb.auth.getUser();
     if (user?.id) payload.created_by = user.id;
-    const { error } = await sb.from('annulment_cases').insert(payload);
+    const { error } = await withWriteRetry(() => sb.from('annulment_cases').insert(payload), { kind: 'insert' });
     if (error) { reportWriteError('annulment insert', error); return; }
     await logActivity({ action: 'opened annulment case', entityType: 'annulments', entityName: payload.petitioner || 'New case', contextType: 'annulments' });
     anlCloseModal(); await loadCases();

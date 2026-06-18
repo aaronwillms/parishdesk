@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
@@ -120,7 +120,7 @@ function cohortChurchName(coh) {
   return coh.church_override || '';
 }
 // ── Autosave ─────────────────────────────────────────────────────────────────
-async function _patch(id, patch) { const p = allConf.find(x => x.id === id); if (!p) return null; const { error } = await sb.from('sacramental_confirmation').update({ ...patch, updated_at: nowIso() }).eq('id', id); if (error) { alert('Save failed: ' + error.message); return null; } Object.assign(p, patch); return p; }
+async function _patch(id, patch) { const p = allConf.find(x => x.id === id); if (!p) return null; const { error } = await serializeWrite(`confirmation:${id}`, () => withWriteRetry(() => sb.from('sacramental_confirmation').update({ ...patch, updated_at: nowIso() }).eq('id', id), { kind: 'update' })); if (error) { alert('Save failed: ' + error.message); return null; } Object.assign(p, patch); return p; }
 async function toggleConfDoc(id, i) {
   const p = allConf.find(x => x.id === id); if (!p) return;
   const docs = normDocs(p); docs[i].received = !docs[i].received;
@@ -396,7 +396,7 @@ async function _confWriteEdit(id, r) {
   const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
   if (prior && statusOf(prior) !== 'confirmed' && newStatus === 'confirmed') tl.push({ type: 'auto', text: 'Confirmed', created_at: nowIso() });
   payload.timeline = tl;
-  const { error } = await sb.from('sacramental_confirmation').update(payload).eq('id', id);
+  const { error } = await withWriteRetry(() => sb.from('sacramental_confirmation').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('confirmation update', error); return { ok: false }; }
   if (linkTarget) await sb.from('sacramental_confirmation').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
   logActivity({ action: 'updated Confirmation record', entityType: 'confirmation', entityName: name, contextType: 'confirmation', contextId: id });
@@ -415,7 +415,7 @@ async function confSave() {
   payload.service_hours_required = (type === 'youth' && tmpl.service_hours_enabled) ? (tmpl.service_hours_required || 20) : 0;
   payload.service_hours_completed = 0;
   payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-  const { error } = await sb.from('sacramental_confirmation').insert(payload);
+  const { error } = await withWriteRetry(() => sb.from('sacramental_confirmation').insert(payload), { kind: 'insert' });
   if (error) { reportWriteError('confirmation insert', error); return; }
   if (linkTarget) await sb.from('sacramental_confirmation').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
   logActivity({ action: 'added Confirmation candidate', entityType: 'confirmation', entityName: name, contextType: 'confirmation' });
