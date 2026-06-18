@@ -232,6 +232,22 @@ when the columns are dropped. (Note: `src/ui/contactPicker.js` still writes thes
 columns when creating a contact; harmless dead writes, to be cleaned up with the
 columns.)
 
+## Institution address
+
+An institution's mailing address (`institutions.street` / `city` / `state` /
+`zip`) lives on the **institution record** and is the **single source of truth**;
+every institution has the same fields (the principal "The Basilica of Saint Mary"
+is not special-cased). It is edited in the **Directory's institution
+create/settings dialog** ([src/panels/personnel.js](src/panels/personnel.js),
+admin/super-admin only, same surface as institution name/icon/order). Consumers —
+the sacrament file address display — read it through the shared
+`getInstitutionAddress(institutionId)` helper in
+[src/ui/directory.js](src/ui/directory.js) (alongside `getInstitutionClergy`),
+which returns `{ street, city, state, zip, cityStateZip, full, has }`. The four
+columns are added by a proposed/paused migration
+(`20260618_institutions_address.sql`) — apply it before/with the UI change, since
+the create/settings save writes these columns.
+
 ## Directory clergy field
 
 `personnel.clergy` (boolean, set in the Add/Edit Person dialog) is the **single

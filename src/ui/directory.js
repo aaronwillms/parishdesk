@@ -15,3 +15,19 @@ export function getInstitutionClergy(institutionId) {
     .filter(p => p.clergy && p.institution === inst.name)
     .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 }
+
+// Single source of truth for an institution's mailing ADDRESS (street/city/state
+// /zip), stored on the institution record and edited in the Directory's
+// institution create/settings dialog. Sacrament file address display reads this.
+// Returns the address parts plus convenience `cityStateZip` / one-line `full`
+// strings; `has` is true when any part is set. Unknown id → all-empty (has:false).
+export function getInstitutionAddress(institutionId) {
+  const inst = (store.institutions || []).find(i => i.id === institutionId) || {};
+  const street = inst.street || '';
+  const city   = inst.city   || '';
+  const state  = inst.state  || '';
+  const zip    = inst.zip    || '';
+  const cityStateZip = [[city, state].filter(Boolean).join(', '), zip].filter(Boolean).join(' ').trim();
+  const full = [street, cityStateZip].filter(Boolean).join(', ');
+  return { street, city, state, zip, cityStateZip, full, has: !!(street || city || state || zip) };
+}
