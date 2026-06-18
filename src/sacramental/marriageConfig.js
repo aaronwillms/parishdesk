@@ -7,10 +7,9 @@
 import { fmtDate, formatDateDisplay } from '../utils.js';
 import { formatPhone } from '../utils/phone.js';
 import { store } from '../store.js';
-import { clergyNames } from './preparerField.js';
 import {
   getCouples, getCouple, marCanManage, COUPLE_STATUS, MTYPE_BADGE,
-  marType, coupleLabel, s1Name, s2Name, normDocs, normSteps, normFees, notesOf,
+  marTypeReal, isVisitingOfficiant, coupleLabel, s1Name, s2Name, normDocs, normSteps, normFees, notesOf,
   feeTotals, weddingDateOf, officiantOf, preparerOf, weddingLocation,
   buildMarEditForm, marSaveEdit, marDeleteRec, marBulkStatus,
 } from '../panels/marriage.js';
@@ -30,7 +29,10 @@ const STATUS_STYLE = {
 };
 function statusKey(c) { return c.archived ? 'inactive' : (c.status_code || 'inprogress'); }
 function statusChip(c) { const k = statusKey(c); return { label: (COUPLE_STATUS[k] || {}).label || k, tone: STATUS_TONE[k] || 'neutral', style: STATUS_STYLE[k] }; }
-function typeChip(c) { return { label: MTYPE_BADGE[marType(c)] || 'Marriage', tone: 'neutral' }; }
+// The TYPE chip shows the real ceremony type (Nuptial Mass / Outside Mass /
+// Convalidation / Sanatio), never "External" — the first chip owns the external
+// badge. marTypeReal() drops marType()'s external short-circuit.
+function typeChip(c) { return { label: MTYPE_BADGE[marTypeReal(c)] || 'Marriage', tone: 'neutral' }; }
 function ini(name) { const p = String(name || '').trim().split(/\s+/).filter(Boolean); return ((p[0]?.[0] || '') + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase(); }
 function coupleInitials(c) { const a = ini(s1Name(c)) || '?', b = ini(s2Name(c)) || '?'; return `${a}·${b}`; }
 
@@ -38,12 +40,28 @@ function coupleInitials(c) { const a = ini(s1Name(c)) || '?', b = ini(s2Name(c))
 function row(label, val) {
   return val ? `<div style="display:flex;gap:10px;font-size:13px;padding:3px 0;"><span style="color:#6B7280;min-width:120px;">${esc(label)}</span><span style="flex:1;color:var(--navy);">${val}</span></div>` : '';
 }
-// A visiting/external officiant = the saved officiant isn't one of the parish
-// clergy (free-text "Other"). Mirrors the edit form's gating of the Delegation
-// field; legacy officiant_override (also a free-text name) counts as visiting.
-function hasVisitingOfficiant(c) {
-  const o = officiantOf(c);
-  return (!!o && !clergyNames().includes(o)) || !!c.officiant_override;
+// Officiant cell — the name, plus an inline VIEWER-EDITABLE delegation checkbox
+// when a visiting/external officiant is set (non-removable; check/uncheck only).
+// The checkbox routes through the retry-wrapped toggleCoupleDelegation save path.
+function officiantCell(c) {
+  const name = officiantOf(c) ? esc(officiantOf(c)) : '';
+  if (!isVisitingOfficiant(c)) return name;
+  const on = !!c.delegation_given;
+  return `${name}<span onclick="toggleCoupleDelegation('${c.id}')" style="display:inline-flex;align-items:center;gap:5px;margin-left:10px;cursor:pointer;vertical-align:middle;">
+    <span style="font-size:14px;">${on ? '✅' : '⬜'}</span>
+    <span style="font-size:12px;color:${on ? '#2D6A4F' : '#854F0B'};">${on ? 'Delegation given' : 'Delegation not given — send letter'}</span>
+  </span>`;
+}
+// "Marriage File Placed in Parish Records" — viewer-editable, non-removable
+// checkbox, shown only when the file's real status is Complete (independent of
+// archived, so an archived-complete file can still be resolved here).
+function recordsPlacedRow(c) {
+  if (c.status_code !== 'complete') return '';
+  const on = !!c.records_placed;
+  return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;" onclick="toggleCoupleRecordsPlaced('${c.id}')" >
+    <span style="font-size:15px;cursor:pointer;">${on ? '✅' : '⬜'}</span>
+    <span style="flex:1;cursor:pointer;color:${on ? '#2D6A4F' : 'var(--navy)'};">Marriage File Placed in Parish Records</span>
+  </div>`;
 }
 function priorList(prior) {
   return (prior || []).map(pm => {
@@ -82,9 +100,9 @@ function fileDetails(c) {
   const wd = weddingDateOf(c);
   const loc = weddingLocation(c);
   const dateLine = wd ? `${esc(formatDateDisplay(wd))}${c.wedding_time ? ' · ' + esc(c.wedding_time) : ''}` : '<span style="color:#9CA3AF;">Not set</span>';
-  // Use the RAW marriage_type for type-conditional fields — marType() collapses
+  // Use the REAL ceremony type for type-conditional fields — marType() collapses
   // to 'external' for external files, which would hide the real type's fields.
-  const type = c.marriage_type || marType(c);
+  const type = marTypeReal(c);
   return [
     row('Type', esc(MTYPE_BADGE[type] || '') + (c.is_external ? ' · External' : '')),
     row('Civil marriage', c.civil_marriage_date ? esc(formatDateDisplay(c.civil_marriage_date)) : ''),
@@ -92,8 +110,8 @@ function fileDetails(c) {
     row('Wedding', dateLine),
     row('Location', loc.name ? esc(loc.name) : (c.non_church_wedding ? 'Non-church wedding' : '')),
     row('Address', loc.lines.length ? esc(loc.lines.join(', ')) : ''),
-    row('Officiant', officiantOf(c) ? esc(officiantOf(c)) : ''),
-    hasVisitingOfficiant(c) ? row('Delegation', c.delegation_given ? 'Given' : '⚠️ Not given — send letter of delegation') : '',
+    row('Officiant', officiantCell(c)),                 // includes inline editable delegation toggle
+    recordsPlacedRow(c),                                // editable, Complete-only
     row('Person Responsible for Formation', preparerOf(c) ? esc(preparerOf(c)) : ''),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
 }
@@ -186,7 +204,7 @@ export const marriageConfig = {
 
   listItem: (c) => ({
     title: coupleLabel(c),
-    secondary: weddingDateOf(c) ? `💍 ${formatDateDisplay(weddingDateOf(c))}` : 'Date not set',
+    secondary: weddingDateOf(c) ? formatDateDisplay(weddingDateOf(c)) : 'Date not set',
     chips: [statusChip(c), typeChip(c)],
     flags: [],
   }),

@@ -1,5 +1,5 @@
 import { sb, withWriteRetry, serializeWrite } from '../supabase.js';
-import { fmtDate, formatDateDisplay, daysUntil, todayCST, logActivity, reportWriteError } from '../utils.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { store } from '../store.js';
 import { expandCase } from './annulments.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
@@ -74,6 +74,20 @@ function marType(c) {
   if (lt.includes('sanatio')) return 'sanatio';
   return 'nuptial_mass';
 }
+// The REAL ceremony type, independent of the external flag. `marType()` collapses
+// external files to 'external' (the first chip / external badge owns that), but the
+// file still has a real type (Nuptial Mass / Outside Mass / Convalidation / Sanatio)
+// that the TYPE chip + viewer must show. Same normalization, minus the short-circuit.
+export function marTypeReal(c) {
+  const t = c.marriage_type;
+  if (!t) return 'nuptial_mass';
+  if (MTYPE_BADGE[t]) return t;
+  const lt = String(t).toLowerCase();
+  if (lt.includes('outside')) return 'outside_mass';
+  if (lt.includes('convalid')) return 'convalidation';
+  if (lt.includes('sanatio')) return 'sanatio';
+  return 'nuptial_mass';
+}
 function s1Name(c) { return (c.spouse1_first || c.spouse1_last) ? `${c.spouse1_first || ''} ${c.spouse1_last || ''}`.trim() : (c.groom || ''); }
 function s2Name(c) { return (c.spouse2_first || c.spouse2_last) ? `${c.spouse2_first || ''} ${c.spouse2_last || ''}`.trim() : (c.bride || ''); }
 function coupleLabel(c) { return `${s1Name(c) || '?'} & ${s2Name(c) || '?'}`; }
@@ -102,7 +116,15 @@ function notesOf(c) {
   if (c.notes && String(c.notes).trim()) out.push({ note: String(c.notes).trim(), by: null, created_at: null, legacy: true });
   return out;
 }
-function hasDelegationFlag(c) { return !!c.officiant_override && !c.delegation_given; }
+// A visiting/external officiant = the saved officiant is NOT one of the parish
+// clergy (a free-text "Other" name), or the legacy officiant_override free-text is
+// set. Mirrors the edit form's gating of the Delegation toggle. Exported so the
+// viewer (marriageConfig) and the banner share one definition.
+export function isVisitingOfficiant(c) {
+  const o = officiantOf(c);
+  return (!!o && !clergyNames().includes(o)) || !!c.officiant_override;
+}
+function delegationOutstanding(c) { return isVisitingOfficiant(c) && !c.delegation_given; }
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 async function loadTemplates() {
@@ -191,24 +213,47 @@ function updateCoupleStats() {
   set('stat-needs-attention', active.filter(c => c.status_code === 'inprogress').length);
 }
 
+// Priority Actions banner — Marriage-specific (renders into #marriage-alerts).
+// State-based rule (no wedding-date thresholds):
+//   • ACTIVE files (not archived AND status_code !== 'inactive') surface, per file:
+//       - Missing DOCUMENTS (names; NOT steps)
+//       - Delegation not given (visiting/external officiant + delegation unchecked)
+//       - Records not placed (status Complete + records-placement unchecked)
+//   • ARCHIVED or INACTIVE files surface ONLY "Records not placed" (status Complete
+//     + unchecked) — the sole banner item that applies to archived files. This is an
+//     intentional exception to the general archived/inactive exclusion.
+// Pure per-file banner items (exported for testability + single source of truth).
+// Returns an array of already-escaped strings (may be empty). State rule:
+//   • archived/inactive → ONLY the records-placement item (Complete + unchecked).
+//   • active            → missing documents + delegation + records-placement.
+export function marriageAlertItems(c) {
+  const archivedOrInactive = !!c.archived || c.status_code === 'inactive';
+  const recordsNotPlaced = c.status_code === 'complete' && !c.records_placed;
+  const items = [];
+  if (archivedOrInactive) {
+    if (recordsNotPlaced) items.push('Marriage file not yet placed in parish records');
+    return items;
+  }
+  const missingDocs = normDocs(c).filter(d => !d.received).map(d => d.name);
+  if (missingDocs.length) items.push('Missing documents: ' + missingDocs.map(_esc).join(', '));
+  if (delegationOutstanding(c)) items.push('Delegation not given — send letter of delegation');
+  if (recordsNotPlaced) items.push('Marriage file not yet placed in parish records');
+  return items;
+}
 function renderMarriageAlerts() {
   const el = document.getElementById('marriage-alerts'); if (!el) return;
-  const urgent = allCouples.filter(p => {
-    if (p.archived || p.status_code === 'inactive') return false;
-    const days = daysUntil(p.wedding_date);
-    const docs = normDocs(p);
-    return (days !== null && days <= 30 && docs.some(d => !d.received)) || (days !== null && days <= 7) || hasDelegationFlag(p);
-  });
-  if (!urgent.length) { el.innerHTML = ''; return; }
+  const blocks = [];
+  for (const c of allCouples) {
+    const items = marriageAlertItems(c);
+    if (items.length) blocks.push({ c, items });
+  }
+  if (!blocks.length) { el.innerHTML = ''; return; }
   el.innerHTML = `<div class="alert-strip" style="margin-bottom:1rem;flex-direction:column;align-items:flex-start;">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><i class="ti ti-alert-triangle" style="color:var(--gold);font-size:15px;"></i><strong style="font-size:13px;">Priority actions</strong></div>
-    ${urgent.map(p => {
-      const days = daysUntil(p.wedding_date);
-      const ds = days === 0 ? 'TODAY' : days === 1 ? 'tomorrow' : `${days} days`;
-      const out = normDocs(p).filter(d => !d.received).map(d => d.name);
-      const deleg = hasDelegationFlag(p) ? ' · ⚠️ send letter of delegation' : '';
-      return `<div style="font-size:13px;color:var(--navy);margin-bottom:3px;">· <strong>${_esc(coupleLabel(p))}</strong>${days !== null ? ' — wedding ' + ds : ''}${out.length ? ' · outstanding: ' + out.slice(0, 3).join(', ') + (out.length > 3 ? ` +${out.length - 3} more` : '') : ''}${deleg}</div>`;
-    }).join('')}
+    ${blocks.map(b => `<div style="font-size:13px;color:var(--navy);margin-bottom:5px;">
+      <strong>${_esc(coupleLabel(b.c))}</strong>
+      ${b.items.map(it => `<div style="margin-left:14px;">· ${it}</div>`).join('')}
+    </div>`).join('')}
   </div>`;
 }
 
@@ -248,6 +293,18 @@ async function toggleCoupleFee(coupleId, i) {
   fees[i].paid = !fees[i].paid;
   fees[i].paid_date = fees[i].paid ? nowIso() : null;
   if (await _patch(coupleId, { fees })) refreshActivePanel();
+}
+// Delegation toggle — viewer-editable, non-removable checkbox beside the officiant.
+// Routes through the same write-retry-wrapped _patch as the document checkboxes.
+async function toggleCoupleDelegation(coupleId) {
+  const c = allCouples.find(x => x.id === coupleId); if (!c) return;
+  if (await _patch(coupleId, { delegation_given: !c.delegation_given })) refreshActivePanel();
+}
+// "Marriage File Placed in Parish Records" toggle — viewer-editable, non-removable,
+// shown when status is Complete. Same retry-wrapped write path.
+async function toggleCoupleRecordsPlaced(coupleId) {
+  const c = allCouples.find(x => x.id === coupleId); if (!c) return;
+  if (await _patch(coupleId, { records_placed: !c.records_placed })) refreshActivePanel();
 }
 async function addCoupleNoteLog(coupleId) {
   const inp = document.getElementById('cn-' + coupleId); const note = (inp?.value || '').trim();
@@ -394,12 +451,14 @@ function buildCoupleModalHtml(c, opts = {}) {
     <div style="display:flex;gap:6px;margin-top:6px;"><input type="text" id="mf-fee-name" placeholder="Fee name…" style="flex:2;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" /><input type="number" id="mf-fee-amt" placeholder="$" style="flex:1;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" /><button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="marAddFee()">+ Add</button></div>
     <div id="mf-fee-total" style="font-size:12px;color:#5B4636;margin-top:6px;"></div>`;
 
-  // Edit-only
-  if (isEdit) {
-    h += _sectionHead('Status');
-    h += `<label>Status</label><select id="mf-status">${Object.entries(COUPLE_STATUS).map(([k, v]) => `<option value="${k}"${(c?.status_code || 'inprogress') === k ? ' selected' : ''}>${v.label}</option>`).join('')}</select>`;
-    h += _toggle('mf-archive', 'Archive this file', !!c?.archived);
-  }
+  // Status — shown in BOTH Add and Edit (default "In progress") so an already-
+  // complete paper file can be back-entered at any status. Archive stays edit-only.
+  const curStatus = c?.status_code || 'inprogress';
+  h += _sectionHead('Status');
+  h += `<label>Status</label><select id="mf-status" onchange="marOnStatusChange()">${Object.entries(COUPLE_STATUS).map(([k, v]) => `<option value="${k}"${curStatus === k ? ' selected' : ''}>${v.label}</option>`).join('')}</select>`;
+  // "Marriage File Placed in Parish Records" — visible only when status is Complete.
+  h += `<div id="mf-records-wrap" style="display:${curStatus === 'complete' ? 'block' : 'none'};">${_toggle('mf-records-placed', 'Marriage File Placed in Parish Records', !!c?.records_placed)}</div>`;
+  if (isEdit) h += _toggle('mf-archive', 'Archive this file', !!c?.archived);
 
   if (!inline) {
     h += `<div class="modal-actions" style="justify-content:space-between;">
@@ -571,6 +630,7 @@ function _instAddrBlock(instId) {
 }
 // Show the Delegation toggle only when the officiant is a free-text "Other".
 function marOnOfficiantOtherToggle() { const w = document.getElementById('mf-delegation-wrap'); if (w) w.style.display = officiantIsOther('mf-officiant') ? 'block' : 'none'; }
+function marOnStatusChange() { const v = document.getElementById('mf-status')?.value; const w = document.getElementById('mf-records-wrap'); if (w) w.style.display = v === 'complete' ? 'block' : 'none'; }
 
 function marSpouseToggle(n) {
   const p = n === 1 ? 's1' : 's2';
@@ -696,6 +756,9 @@ function _marReadPayload() {
     // Officiant + preparer via the shared clergy helpers (name strings).
     officiant: readOfficiantValue('mf-officiant'),
     delegation_given: officiantIsOther('mf-officiant') ? _chk('mf-delegation') : false,
+    // Records-placement only applies to a (non-external) Complete file; reset
+    // otherwise so it can't linger when a file moves out of Complete.
+    records_placed: (!external && (document.getElementById('mf-status')?.value === 'complete')) ? _chk('mf-records-placed') : false,
     preparer: readPreparerValue('mf-preparer'),
     documents: finalDocs,
     steps: external ? [] : _M.steps,
@@ -728,7 +791,7 @@ async function marSaveCouple() {
   if (!r.ok) { alert('At least one spouse name is required.'); return; }
   if (_M.isEdit) { const res = await _marWriteEdit(_M.id); if (res.ok) { marCloseModal(); refreshActivePanel(); } return; }
   const { payload, external } = r;
-  payload.status_code = external ? 'external' : 'inprogress';
+  payload.status_code = external ? 'external' : (document.getElementById('mf-status')?.value || 'inprogress');
   payload.archived = false;
   const { error } = await withWriteRetry(() => sb.from('couples').insert(payload), { kind: 'insert' });
   if (error) { reportWriteError('couples insert', error); return; }
@@ -827,9 +890,9 @@ async function marTplSave() {
 
 Object.assign(window, {
   openCoupleAdd, openCoupleEdit,
-  toggleCoupleDoc, toggleCoupleStep, toggleCoupleFee, addCoupleNoteLog,
+  toggleCoupleDoc, toggleCoupleStep, toggleCoupleFee, toggleCoupleDelegation, toggleCoupleRecordsPlaced, addCoupleNoteLog,
   marCloseModal, marSaveCouple, marDeleteCouple,
-  marOnExternalToggle, marOnTypeChange, marOnNonChurchToggle, marOnInstitutionChange, marOnOfficiantOtherToggle,
+  marOnExternalToggle, marOnTypeChange, marOnNonChurchToggle, marOnInstitutionChange, marOnOfficiantOtherToggle, marOnStatusChange,
   marSpouseToggle, marPriorToggle, marAddPrior, marRemovePrior, marPriorEndedChange,
   marOciaSearch, marRemoveOcia, marAnnulSearch, marRemoveAnnul,
   marDocReceived, marRemoveDoc, marAddDoc, marAddStep, marRemoveStep, marStepDragStart, marStepDrop, marAddFee, marRemoveFee, marFeePaid,

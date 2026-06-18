@@ -173,6 +173,30 @@ institution-based locations** (they previously held a stale per-file copy — th
 source of the "locked but empty city/state" bug); they remain in use **only** for
 the "Other location" path, so they are not fully dead — do not drop them.
 
+**Priority Actions banner (Marriage-specific).** `renderMarriageAlerts()` renders
+into `#marriage-alerts`; the per-file logic is the exported pure helper
+`marriageAlertItems(c)` (single source of truth). It is **state-based, not
+date-based**: for **active** files (not archived AND `status_code !== 'inactive'`)
+it surfaces missing **documents** (names; steps are never surfaced), delegation
+not given (`isVisitingOfficiant(c) && !delegation_given`), and records-not-placed
+(`status_code === 'complete' && !records_placed`). For **archived OR inactive**
+files it surfaces **only** records-not-placed — the sole exception to the general
+archived/inactive banner exclusion. Other panels' banners keep the plain
+archived/inactive exclusion. Type chip / viewer use `marTypeReal(c)` (the real
+ceremony type, dropping `marType()`'s external short-circuit) so an external file's
+**second** chip shows its real type, not "External".
+
+**Two viewer-editable, non-removable toggles** feed that banner, both rendered in
+the file viewer's File-details section and written through the retry-wrapped
+`_patch` (same path as the document checkboxes): **Delegation given** (inline
+checkbox beside the officiant, shown when a visiting/external officiant is set;
+`couples.delegation_given`, existing column) and **Marriage File Placed in Parish
+Records** (shown when `status_code === 'complete'`, independent of archived;
+`couples.records_placed`, **new** boolean — paused migration
+`20260618_couples_records_placed.sql`). The Add Couple modal now also shows the
+Status dropdown (default "In progress") so an already-complete paper file can be
+back-entered at any status.
+
 ### Config schema (the contract a panel implements)
 
 | Key | Type | Purpose |
