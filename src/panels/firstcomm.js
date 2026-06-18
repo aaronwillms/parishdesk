@@ -119,13 +119,19 @@ function renderFcList() {
 }
 function cohortChurchName(coh) { if (!coh) return ''; if (coh.church_institution_id) { const i = (store.institutions || []).find(x => x.id === coh.church_institution_id); if (i) return i.name; } return coh.church_override || ''; }
 function familyOrder(list) {
+  // Alphabetical by last name; family members stay grouped (oldest→youngest)
+  // and the unit sorts by the family's last name.
   const groups = {}; list.forEach(p => { if (p.family_group_id) (groups[p.family_group_id] = groups[p.family_group_id] || []).push(p); });
-  const seen = new Set(); const out = [];
+  const seen = new Set(); const units = [];
   list.forEach(p => {
-    if (p.family_group_id) { if (seen.has(p.family_group_id)) return; seen.add(p.family_group_id); out.push(...groups[p.family_group_id].slice().sort((a, b) => (ageOf(b.dob) ?? -1) - (ageOf(a.dob) ?? -1))); }
-    else out.push(p);
+    if (p.family_group_id) {
+      if (seen.has(p.family_group_id)) return; seen.add(p.family_group_id);
+      const members = groups[p.family_group_id].slice().sort((a, b) => (ageOf(b.dob) ?? -1) - (ageOf(a.dob) ?? -1));
+      units.push({ members, key: lastNameOf(members[0]).toLowerCase() });
+    } else units.push({ members: [p], key: lastNameOf(p).toLowerCase() });
   });
-  return out;
+  units.sort((a, b) => a.key.localeCompare(b.key));
+  return units.flatMap(u => u.members);
 }
 
 // ── Card ─────────────────────────────────────────────────────────────────────

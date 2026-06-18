@@ -8,7 +8,7 @@ import { fmtDate, formatDateDisplay } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import {
   getBapRecords, getBapRecord, bapCanManage, bapTemplate,
-  nameOf, statusOf, bapDate, dobOf, bapAgeOf, bapEsc, gpInvalid, delegationFlag, ageFlag, notesOf, churchName, officiantName,
+  nameOf, lastNameOf, statusOf, bapDate, dobOf, bapAgeOf, bapEsc, gpInvalid, delegationFlag, ageFlag, notesOf, churchName, officiantName,
   BAP_STATUS, buildBapEditForm, bapSaveEdit, bapDeleteRec, bapBulkStatus,
 } from '../panels/baptism.js';
 
@@ -107,6 +107,8 @@ export const baptismConfig = {
   fetchRecords: async () => getBapRecords(),
   fetchRecord: (id) => getBapRecord(id),
   searchText: (r) => nameOf(r),
+  // Cards sort alphabetically by last name.
+  compare: (a, b) => lastNameOf(a).toLowerCase().localeCompare(lastNameOf(b).toLowerCase()),
 
   statusFilters: [
     { key: 'all',       label: 'All',       match: () => true },

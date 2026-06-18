@@ -110,13 +110,11 @@ export async function loadCouples() {
   await loadTemplates();
   const { data, error } = await sb.from('couples').select('*');
   if (error) { console.error('[marriage]', error); return; }
-  const byDate = (a, b, dir = 1) => {
-    if (!a.wedding_date && !b.wedding_date) return 0;
-    if (!a.wedding_date) return 1; if (!b.wedding_date) return -1;
-    return dir * (new Date(a.wedding_date) - new Date(b.wedding_date));
-  };
-  const active = (data || []).filter(c => !c.archived).sort((a, b) => byDate(a, b, 1));
-  const archived = (data || []).filter(c => c.archived).sort((a, b) => byDate(a, b, -1));
+  // Marriages sort alphabetically by the groom's (spouse 1) last name.
+  const groomLast = (c) => (c.spouse1_last || String(c.groom || '').trim().split(/\s+/).pop() || '').toLowerCase();
+  const byGroom = (a, b) => groomLast(a).localeCompare(groomLast(b));
+  const active = (data || []).filter(c => !c.archived).sort(byGroom);
+  const archived = (data || []).filter(c => c.archived).sort(byGroom);
   allCouples = [...active, ...archived];
   store.allCouples = allCouples;
   const gear = document.getElementById('marriage-gear');

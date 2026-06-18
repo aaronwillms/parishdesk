@@ -80,7 +80,7 @@ function visibleRecords() {
   const s = _active, cfg = s.config;
   const q = s.search.trim().toLowerCase();
   const f = (cfg.statusFilters || []).find(x => x.key === s.filter);
-  return s.records.filter(r => {
+  const out = s.records.filter(r => {
     if (f && f.match && !f.match(r)) return false;
     if (q) {
       const txt = (cfg.searchText ? cfg.searchText(r) : cfg.listItem(r).title) || '';
@@ -88,6 +88,8 @@ function visibleRecords() {
     }
     return true;
   });
+  if (cfg.compare) out.sort(cfg.compare);   // alphabetical (within groups too, since groups read this order)
+  return out;
 }
 
 function listPaneHtml() {

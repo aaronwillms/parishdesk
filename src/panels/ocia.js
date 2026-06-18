@@ -131,7 +131,7 @@ function renderOcia() {
         const members = groups[p.family_group_id].slice().sort((a, b) => (ociaAge(b.dob) ?? -1) - (ociaAge(a.dob) ?? -1)); // oldest → youngest
         units.push({ members, sort: (lastNameOf(members[0]) + ' ' + (members[0].name || '')).toLowerCase() });
       } else {
-        units.push({ members: [p], sort: (p.name || '').toLowerCase() });
+        units.push({ members: [p], sort: (lastNameOf(p) + ' ' + (p.name || '')).toLowerCase() });
       }
     });
     units.sort((a, b) => a.sort.localeCompare(b.sort));

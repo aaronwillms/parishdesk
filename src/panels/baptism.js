@@ -27,6 +27,7 @@ function ageOf(dob) { if (!dob) return null; const d = new Date(dob); if (isNaN(
 
 // ── Field accessors (backward-compatible) ────────────────────────────────────
 export function nameOf(p) { return (p.first_name || p.last_name) ? `${p.first_name || ''} ${p.last_name || ''}`.trim() : (p.name || '—'); }
+export function lastNameOf(p) { if (p.last_name) return p.last_name; const parts = String(p.name || '').trim().split(/\s+/); return parts[parts.length - 1] || ''; }
 export function statusOf(p) { return p.status_code || (p.archived ? 'inactive' : 'scheduled'); }
 export function bapDate(p) { return p ? (p.baptism_date || p.sacrament_date || null) : null; }
 export function dobOf(p) { return p.dob || null; }

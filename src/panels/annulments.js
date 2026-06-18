@@ -83,6 +83,9 @@ function respName(c) {
   }
   return c.respondent || c.co_petitioner || '';
 }
+// Card-label last names — maiden replaces last name where applicable.
+function petLast(c) { return c.petitioner_maiden || c.petitioner_last || String(c.petitioner || '').trim().split(/\s+/).pop() || ''; }
+function respLast(c) { return c.respondent_maiden || c.respondent_last || String(c.respondent || c.co_petitioner || '').trim().split(/\s+/).pop() || ''; }
 function advocateName(c) {
   if (c.advocate_id) { const p = (store.personnel || []).find(x => x.id === c.advocate_id); if (p) return p.name; }
   return c.advocate_name_override || '';
@@ -115,7 +118,7 @@ export async function loadCases() {
   if (error) { console.error('[annulments]', error); return; }
   let rows = data || [];
   if (advocateOnly()) { const ids = advocateIds(); rows = rows.filter(c => ids.includes(c.id)); }
-  rows.sort((a, b) => (STATUS_ORDER.indexOf(a.status_code) + 1 || 9) - (STATUS_ORDER.indexOf(b.status_code) + 1 || 9) || (a.sort_order || 0) - (b.sort_order || 0));
+  rows.sort((a, b) => petLast(a).toLowerCase().localeCompare(petLast(b).toLowerCase()));
   allCases = rows;
   store.allCases = allCases;
   renderAll();
@@ -200,7 +203,7 @@ function renderCaseCard(c) {
   const progress = docs.length ? Math.round((docsDone / docs.length) * 100) : null;
   const exp = expandedCaseId === c.id;
   const adv = advocateName(c);
-  const pet = petName(c), resp = respName(c);
+  const pet = petLast(c) || '(Unnamed)', resp = respLast(c);
 
   let h = `<div id="case-card-${c.id}" class="couple-card" style="border-left:4px solid ${sm.dot};">
     <div class="couple-header" onclick="toggleCase('${c.id}')">
