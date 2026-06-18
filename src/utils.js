@@ -90,6 +90,7 @@ export const PANEL_TITLES = {
   projects:     'My Projects',
   tasks:        'My Tasks',
   personnel:    'Directory',
+  hr:           'Human Resources',
   admin:        'Administration',
   userProfile:  'My Profile',
 };

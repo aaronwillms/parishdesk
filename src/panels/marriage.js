@@ -495,7 +495,7 @@ function buildCoupleModalHtml(c) {
 function renderSpouseSection(c, n) {
   const s = _M[`s${n}`];
   const p = n === 1 ? 's1' : 's2';
-  let h = _sectionHead('Spouse ' + n);
+  let h = _sectionHead(n === 1 ? 'Groom' : 'Bride');
   h += _row(_input(`mf-${p}-first`, 'First Name', c?.[`spouse${n}_first`] || ''), _input(`mf-${p}-middle`, 'Middle', c?.[`spouse${n}_middle`] || ''), _input(`mf-${p}-last`, 'Last Name', c?.[`spouse${n}_last`] || ''));
   h += _row(_input(`mf-${p}-cell`, 'Cell Phone', c?.[`${n === 1 ? 'groom' : 'bride'}_phone`] || ''), _input(`mf-${p}-email`, 'Email', c?.[`${n === 1 ? 'groom' : 'bride'}_email`] || ''));
   h += _input(`mf-${p}-dob`, 'Date of Birth', c?.[`spouse${n}_dob`] || '', 'date');
