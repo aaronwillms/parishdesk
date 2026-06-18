@@ -22,6 +22,7 @@ import { loadHomebound } from './panels/homebound.js';
 import { loadCoordData } from './ui/coordinator.js';
 import { loadSchool } from './panels/school.js';
 import { loadPersonnel } from './panels/personnel.js';
+import { loadHr } from './panels/hr.js';
 import { loadTeams, loadTeamsStore } from './panels/teams.js';
 import { renderTeamDashboard } from './panels/teamDashboard.js';
 import { renderInstitutionDashboard } from './panels/institutionDashboard.js';
@@ -91,6 +92,7 @@ async function startApp(user) {
     homebound:     loadHomebound,
     projects:      loadProjects,
     personnel:     loadPersonnel,
+    hr:            loadHr,
     school:        loadSchool,
     baptism:       () => { loadBaptism();                   loadCoordData('baptism'); },
     firstcomm:     () => { loadFirstComm();                 loadCoordData('firstcomm'); },
