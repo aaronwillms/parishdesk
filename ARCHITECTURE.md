@@ -128,6 +128,35 @@ record and shown in the read view. Each panel supplies its own coordinator sourc
   + succession history; it removes only the current occupancy, not the position
   or the person.
 
+## Institution membership — HR is the sole owner
+
+A person's institution membership is **derived from HR**, not stored on the
+directory record. HR (`person_positions` → `positions.institution_id`) is the
+single source of truth: the directory ([src/panels/personnel.js](src/panels/personnel.js))
+reads each person's **active** `person_positions` (`unlinked_at IS NULL`) whose
+`positions` are active (`archived_at IS NULL`), maps `institution_id → name`, and
+renders the person under **every** institution they hold a position in (multiple
+appearances for multiple institutions). The Full/Part/Contract sub-grouping is
+**per-position**, from `person_positions.employment_type`
+(`full_time`/`part_time`/`contract`). A person with **no** active position appears
+once under **Volunteer**; there is no "Unassigned" bucket. Person-level facts —
+the **Clergy** chip (`personnel.clergy`) and **coordinator** chips
+(`program_coordinators`) — show on every appearance; clergy sort to the top of
+each institution group.
+
+The Add/Edit Person form writes **person-level fields only** (name, phone, email,
+DOB, clergy, active). It no longer has Type/Employment/Institution dropdowns —
+those assignments are made in HR.
+
+**Dead columns (pending a later cleanup task):** `personnel.institution`,
+`personnel.type`, `personnel.employment` are no longer read or written by the
+directory and hold stale values (e.g. the legacy `institution = "Parish"`). They
+are intentionally NOT migrated/dropped yet. `personnel.type` is still seeded to
+`'staff'` on insert only, as a guard against a possible legacy NOT NULL — remove
+when the columns are dropped. (Note: `src/ui/contactPicker.js` still writes these
+columns when creating a contact; harmless dead writes, to be cleaned up with the
+columns.)
+
 ## Directory clergy field
 
 `personnel.clergy` (boolean, set in the Add/Edit Person dialog) is the **single
