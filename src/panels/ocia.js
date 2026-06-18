@@ -4,6 +4,7 @@ import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
 import { expandCase } from './annulments.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
+import { formatPhone, normalizePhone } from '../utils/phone.js';
 
 const OCIA_STATUS = {
   inquirer:    { label:'Inquirer',             color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -189,7 +190,7 @@ function renderOciaBody(p, docs, progress, done) {
   h += `</div>`;
   if (p.phone || p.email) {
     h += `<div style="margin-top:8px;">`;
-    if (p.phone) h += `<a href="tel:${p.phone}" class="contact-chip">📞 ${_esc(p.phone)}</a>`;
+    if (p.phone) h += `<a href="tel:${normalizePhone(p.phone)}" class="contact-chip">📞 ${_esc(formatPhone(p.phone))}</a>`;
     if (p.email) h += `<a href="mailto:${p.email}" class="contact-chip">✉️ ${_esc(p.email)}</a>`;
     h += `</div>`;
   }
@@ -342,7 +343,7 @@ function buildModalHtml(p) {
   // Section 3 — Candidate info
   h += _sectionHead('Candidate Information');
   h += _row(_input('of-first', 'First Name', np.first), _input('of-middle', 'Middle', np.middle), _input('of-last', 'Last Name', np.last));
-  h += _row(_input('of-phone', 'Cell Phone', p?.phone || ''), _input('of-email', 'Email', p?.email || ''));
+  h += _row(_input('of-phone', 'Cell Phone', p?.phone || '', 'tel'), _input('of-email', 'Email', p?.email || ''));
   h += `<label>Date of Birth</label><input type="date" id="of-dob" value="${(p?.dob && /^\d{4}-\d{2}-\d{2}/.test(p.dob)) ? p.dob.slice(0, 10) : ''}" oninput="ociaDobChange()" />`;
   h += `<div id="of-minor-wrap" style="display:${age !== null && age <= 17 ? 'block' : 'none'};">
     ${_toggle('of-consent', 'Parent/Guardian Permission Granted', !!p?.parental_consent)}
@@ -509,7 +510,7 @@ async function ociaSave() {
     name, candidate_type: type, baptismal_status: type === 'candidate' ? 'baptized' : 'unbaptized',
     preparation_responsible_id: respSel && respSel !== '__other' ? respSel : null,
     preparation_responsible_override: respSel === '__other' ? (_v('of-resp-other') || null) : null,
-    phone: _v('of-phone') || null, email: _v('of-email') || null, dob: _v('of-dob') || null,
+    phone: normalizePhone(_v('of-phone')) || null, email: _v('of-email') || null, dob: _v('of-dob') || null,
     parental_consent: minor ? _chk('of-consent') : false,
     minor_guardian_name: minor ? (_v('of-guardian') || null) : null,
     minor_permission_date: minor ? (_v('of-permdate') || null) : null,

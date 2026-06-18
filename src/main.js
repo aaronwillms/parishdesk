@@ -15,6 +15,7 @@ import { initNotifications } from './notifications.js';
 import { loadMessaging, initChatBubble } from './panels/messaging.js';
 import { sb } from './supabase.js';
 import { store } from './store.js';
+import { installPhoneMask } from './utils/phone.js';
 
 async function loadParishSettings() {
   const { data, error } = await sb.from('parish_settings').select('*').limit(1).single();
@@ -110,6 +111,7 @@ async function startApp(user) {
 
   initModal();
   initLiturgical();
+  installPhoneMask();   // live phone mask on every input[type="tel"], app-wide
 
   // Phase 1 — non-user-dependent data (parallel)
   try {

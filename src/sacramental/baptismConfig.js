@@ -5,6 +5,7 @@
 
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay } from '../utils.js';
+import { formatPhone } from '../utils/phone.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import {
   getBapRecords, getBapRecord, bapCanManage, bapTemplate,
@@ -36,7 +37,7 @@ function fileDetails(p) {
   const age = bapAgeOf(dobOf(p));
   const par1 = `${p.parent1_first || ''} ${p.parent1_last || ''}`.trim();
   const par2 = `${p.parent2_first || ''} ${p.parent2_last || ''}`.trim();
-  const parLine = (n, nm, phone, cath) => nm ? `${esc(nm)}${cath === false ? ' <span style="color:#854F0B;">(non-Catholic)</span>' : ''}${phone ? ' · ' + esc(phone) : ''}` : '';
+  const parLine = (n, nm, phone, cath) => nm ? `${esc(nm)}${cath === false ? ' <span style="color:#854F0B;">(non-Catholic)</span>' : ''}${phone ? ' · ' + esc(formatPhone(phone)) : ''}` : '';
   return [
     row('Date of birth', dobOf(p) ? `${esc(formatDateDisplay(dobOf(p)))}${age !== null ? ` (age ${age})` : ''}` : ''),
     row('Baptism date', bapDate(p) ? esc(formatDateDisplay(bapDate(p))) : ''),

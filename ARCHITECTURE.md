@@ -118,6 +118,17 @@ in a later task. (An earlier experiment deriving clergy/placement from HR
 positions was reverted; HR positions no longer drive the directory's clergy
 determination.)
 
+## Phone numbers
+
+Phones are **stored as normalized digits** and formatted on input and display via
+the one shared helper `src/utils/phone.js` (`formatPhone`, `normalizePhone`,
+`attachPhoneMask`). `installPhoneMask()` (called once at boot in `main.js`) uses a
+MutationObserver to attach the live, caret-stable mask to every `input[type="tel"]`
+as forms are injected — no per-field wiring. Saves pass through `normalizePhone`;
+displays through `formatPhone` (which degrades gracefully, leaving non-10-digit
+values untouched). No data migration is required — the formatter re-derives from
+digits.
+
 ## NOT Used
 
 - **Netlify** — no Netlify config, functions, or redirects. Any `netlify/` or `.netlify/` directories are ignored via `.gitignore`.

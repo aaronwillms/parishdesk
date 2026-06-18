@@ -2,6 +2,7 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST } from '../utils.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
+import { formatPhone, normalizePhone } from '../utils/phone.js';
 
 const SACRAMENTAL_CFG = {
   baptism: {
@@ -220,7 +221,7 @@ function renderSacramentalCard(prog, item) {
 
     if(item.phone||item.email) {
       h += `<div style="margin-top:8px;">`;
-      if(item.phone) h += `<a href="tel:${item.phone}" class="contact-chip">📞 ${item.phone}</a>`;
+      if(item.phone) h += `<a href="tel:${normalizePhone(item.phone)}" class="contact-chip">📞 ${formatPhone(item.phone)}</a>`;
       if(item.email) h += `<a href="mailto:${item.email}" class="contact-chip">✉️ ${item.email}</a>`;
       h += `</div>`;
     }

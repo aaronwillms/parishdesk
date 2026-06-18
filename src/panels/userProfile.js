@@ -1,5 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
+import { formatPhone, normalizePhone } from '../utils/phone.js';
 
 let _user = null;
 let _profile = null;
@@ -104,7 +105,7 @@ function _render() {
         <div style="display:flex;flex-direction:column;gap:.65rem;">
           <div>
             <div style="font-size:11.5px;color:#6B7280;margin-bottom:4px;">Phone</div>
-            <input id="up-phone" value="${linkedPerson.phone || ''}" placeholder="e.g. (601) 555-0100" style="
+            <input type="tel" id="up-phone" value="${formatPhone(linkedPerson.phone || '')}" placeholder="e.g. (601) 555-0100" style="
               width:100%;box-sizing:border-box;padding:.4rem .65rem;
               border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;
               font-family:'Inter',sans-serif;outline:none;background:#fff;
@@ -339,7 +340,7 @@ async function _saveContactInfo() {
   statusEl.textContent = 'Saving…';
 
   try {
-    const phone = document.getElementById('up-phone')?.value.trim() || null;
+    const phone = normalizePhone(document.getElementById('up-phone')?.value.trim()) || null;
     const email = document.getElementById('up-contact-email')?.value.trim() || null;
     const date_of_birth = document.getElementById('up-dob')?.value || null;
 

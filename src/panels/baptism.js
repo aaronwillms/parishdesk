@@ -4,6 +4,7 @@ import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
+import { normalizePhone } from '../utils/phone.js';
 
 export const BAP_STATUS = {
   scheduled: { label:'Scheduled', color:'#7D6608', bg:'#FEF9E7', dot:'#D4AC0D' },
@@ -183,14 +184,14 @@ function buildModalHtml(p, opts = {}) {
   // 4 — Parents
   h += _sectionHead('Parent / Guardian 1');
   h += _row(_input('bf-p1first', 'First Name', p?.parent1_first || ''), _input('bf-p1last', 'Last Name', p?.parent1_last || ''));
-  h += _row(_input('bf-p1phone', 'Cell Phone', p?.parent1_phone || ''), _input('bf-p1email', 'Email', p?.parent1_email || ''));
+  h += _row(_input('bf-p1phone', 'Cell Phone', p?.parent1_phone || '', 'tel'), _input('bf-p1email', 'Email', p?.parent1_email || ''));
   h += _toggle('bf-p1cath', 'Catholic?', p?.parent1_catholic !== false, 'bapParentCathChange(1)');
   h += `<div id="bf-p1note" class="anl-info-box" style="display:${p?.parent1_catholic === false ? 'block' : 'none'};">Non-Catholic parent — see godparent requirements.</div>`;
   // parent 2 optional
   h += `<div id="bf-p2-wrap" style="display:${_M.showParent2 ? 'block' : 'none'};">
     ${_sectionHead('Parent / Guardian 2')}
     ${_row(_input('bf-p2first', 'First Name', p?.parent2_first || ''), _input('bf-p2last', 'Last Name', p?.parent2_last || ''))}
-    ${_row(_input('bf-p2phone', 'Cell Phone', p?.parent2_phone || ''), _input('bf-p2email', 'Email', p?.parent2_email || ''))}
+    ${_row(_input('bf-p2phone', 'Cell Phone', p?.parent2_phone || '', 'tel'), _input('bf-p2email', 'Email', p?.parent2_email || ''))}
     ${_toggle('bf-p2cath', 'Catholic?', p?.parent2_catholic !== false, 'bapParentCathChange(2)')}
     <div id="bf-p2note" class="anl-info-box" style="display:${p?.parent2_catholic === false ? 'block' : 'none'};">Non-Catholic parent — see godparent requirements.</div>
     <button class="btn-secondary" style="padding:.3rem .8rem;font-size:12px;margin-top:8px;" onclick="bapToggleParent2(false)">× Remove second parent</button>
@@ -319,8 +320,8 @@ function _bapPayloadFromDom() {
     baptism_institution_id: instSel && instSel !== '__other' ? instSel : null,
     baptism_church_override: instSel === '__other' ? (_v('bf-church-override') || null) : null,
     baptism_city: _v('bf-bcity') || null, baptism_state: _v('bf-bstate') || null,
-    parent1_first: _v('bf-p1first') || null, parent1_last: _v('bf-p1last') || null, parent1_phone: _v('bf-p1phone') || null, parent1_email: _v('bf-p1email') || null, parent1_catholic: _chk('bf-p1cath'),
-    parent2_first: p2 ? (_v('bf-p2first') || null) : null, parent2_last: p2 ? (_v('bf-p2last') || null) : null, parent2_phone: p2 ? (_v('bf-p2phone') || null) : null, parent2_email: p2 ? (_v('bf-p2email') || null) : null, parent2_catholic: p2 ? _chk('bf-p2cath') : true,
+    parent1_first: _v('bf-p1first') || null, parent1_last: _v('bf-p1last') || null, parent1_phone: normalizePhone(_v('bf-p1phone')) || null, parent1_email: _v('bf-p1email') || null, parent1_catholic: _chk('bf-p1cath'),
+    parent2_first: p2 ? (_v('bf-p2first') || null) : null, parent2_last: p2 ? (_v('bf-p2last') || null) : null, parent2_phone: p2 ? (normalizePhone(_v('bf-p2phone')) || null) : null, parent2_email: p2 ? (_v('bf-p2email') || null) : null, parent2_catholic: p2 ? _chk('bf-p2cath') : true,
     is_adopted: _M.isAdopted,
     birth_father_name: _M.isAdopted ? (_v('bf-birthfather') || null) : null,
     birth_mother_name: _M.isAdopted ? (_v('bf-birthmother') || null) : null,

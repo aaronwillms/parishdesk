@@ -3,6 +3,7 @@ import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
+import { formatPhone, normalizePhone } from '../utils/phone.js';
 
 const CONF_STATUS = {
   enrolled:    { label:'Enrolled',             color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -205,11 +206,11 @@ function renderConfBody(p, docs, progress, done) {
   h += `</div>`;
   // contact
   const phone = p.candidate_phone || p.phone, email = p.candidate_email || p.email;
-  if (phone || email) { h += `<div style="margin-top:8px;">`; if (phone) h += `<a href="tel:${phone}" class="contact-chip">📞 ${_esc(phone)}</a>`; if (email) h += `<a href="mailto:${email}" class="contact-chip">✉️ ${_esc(email)}</a>`; h += `</div>`; }
+  if (phone || email) { h += `<div style="margin-top:8px;">`; if (phone) h += `<a href="tel:${normalizePhone(phone)}" class="contact-chip">📞 ${_esc(formatPhone(phone))}</a>`; if (email) h += `<a href="mailto:${email}" class="contact-chip">✉️ ${_esc(email)}</a>`; h += `</div>`; }
   // parent
   const parentName = p.parent_name || p.parent1;
   if (parentName) {
-    h += `<div class="couple-section-label">Parent / Guardian</div><div style="font-size:13px;">${_esc(parentName)}${p.parent_phone ? ' · ' + _esc(p.parent_phone) : ''}${p.parent_email ? ' · ' + _esc(p.parent_email) : ''}</div>`;
+    h += `<div class="couple-section-label">Parent / Guardian</div><div style="font-size:13px;">${_esc(parentName)}${p.parent_phone ? ' · ' + _esc(formatPhone(p.parent_phone)) : ''}${p.parent_email ? ' · ' + _esc(p.parent_email) : ''}</div>`;
     if (tmplType(p) === 'youth') h += p.parent_permission_granted ? `<div style="font-size:12px;color:#2D6A4F;margin-top:3px;">✅ Permission granted${p.parent_permission_date ? ' ' + formatDateDisplay(p.parent_permission_date) : ''}</div>` : `<div style="font-size:12px;color:#854F0B;margin-top:3px;">⚠ Permission outstanding</div>`;
   }
   // sponsor + confirmation details
@@ -338,12 +339,12 @@ function buildModalHtml(p) {
     ${_row(_input('cf-school', 'School Name', p?.school_name || ''), `<label>Grade Level</label><select id="cf-grade">${GRADES.map(g => `<option${(p?.grade_level || p?.grade) === g ? ' selected' : ''}>${g}</option>`).join('')}</select>`)}
     ${_sectionHead('Parent / Guardian')}
     ${_input('cf-parent-name', 'Parent/Guardian Name', p?.parent_name || p?.parent1 || '')}
-    ${_row(_input('cf-parent-phone', 'Cell Phone', p?.parent_phone || ''), _input('cf-parent-email', 'Email', p?.parent_email || ''))}
+    ${_row(_input('cf-parent-phone', 'Cell Phone', p?.parent_phone || '', 'tel'), _input('cf-parent-email', 'Email', p?.parent_email || ''))}
     ${_toggle('cf-parent-perm', 'Permission Granted', !!p?.parent_permission_granted)}
     ${_input('cf-parent-permdate', 'Date Permission Received', p?.parent_permission_date || '', 'date')}
   </div>`;
   // adult contact block
-  h += `<div id="cf-adult-block" style="display:${isMinor ? 'none' : 'block'};">${_row(_input('cf-cell', 'Cell Phone', p?.candidate_phone || p?.phone || ''), _input('cf-email', 'Email', p?.candidate_email || p?.email || ''))}</div>`;
+  h += `<div id="cf-adult-block" style="display:${isMinor ? 'none' : 'block'};">${_row(_input('cf-cell', 'Cell Phone', p?.candidate_phone || p?.phone || '', 'tel'), _input('cf-email', 'Email', p?.candidate_email || p?.email || ''))}</div>`;
 
   // 5 — Confirmation details
   h += _sectionHead('Confirmation Details');
@@ -466,12 +467,12 @@ async function confSave() {
     cohort_id: cohortSel && cohortSel !== '__new' ? cohortSel : null, cohort_date: coh?.cohort_date || null,
     preparation_responsible_id: respSel && respSel !== '__other' ? respSel : null,
     preparation_responsible_override: respSel === '__other' ? (_v('cf-resp-other') || null) : null,
-    candidate_phone: minor ? null : (_v('cf-cell') || null),
+    candidate_phone: minor ? null : (normalizePhone(_v('cf-cell')) || null),
     candidate_email: minor ? (_v('cf-email-minor') || null) : (_v('cf-email') || null),
     school_name: minor ? (_v('cf-school') || null) : null,
     grade_level: minor ? (document.getElementById('cf-grade')?.value || null) : null,
     parent_name: minor ? (_v('cf-parent-name') || null) : null,
-    parent_phone: minor ? (_v('cf-parent-phone') || null) : null,
+    parent_phone: minor ? (normalizePhone(_v('cf-parent-phone')) || null) : null,
     parent_email: minor ? (_v('cf-parent-email') || null) : null,
     parent_permission_granted: minor ? _chk('cf-parent-perm') : false,
     parent_permission_date: minor ? (_v('cf-parent-permdate') || null) : null,

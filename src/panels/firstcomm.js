@@ -3,6 +3,7 @@ import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
+import { formatPhone, normalizePhone } from '../utils/phone.js';
 
 const FC_STATUS = {
   enrolled:    { label:'Enrolled',                  color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -173,7 +174,7 @@ function renderFcBody(p, docs, progress, done) {
   if (p.school_name) h += `<span class="detail-chip">🏫 ${_esc(p.school_name)}</span>`;
   h += `</div>`;
   const phone = p.parent1_phone || p.phone, email = p.parent1_email || p.email;
-  if (phone || email) { h += `<div style="margin-top:8px;">`; if (phone) h += `<a href="tel:${phone}" class="contact-chip">📞 ${_esc(phone)}</a>`; if (email) h += `<a href="mailto:${email}" class="contact-chip">✉️ ${_esc(email)}</a>`; h += `</div>`; }
+  if (phone || email) { h += `<div style="margin-top:8px;">`; if (phone) h += `<a href="tel:${normalizePhone(phone)}" class="contact-chip">📞 ${_esc(formatPhone(phone))}</a>`; if (email) h += `<a href="mailto:${email}" class="contact-chip">✉️ ${_esc(email)}</a>`; h += `</div>`; }
   const par1 = (p.parent1_first || p.parent1_last) ? `${p.parent1_first || ''} ${p.parent1_last || ''}`.trim() : (p.parent1 || p.parent2);
   if (par1) {
     h += `<div class="couple-section-label">Parent / Guardian</div>`;
@@ -300,7 +301,7 @@ function buildModalHtml(p) {
   // 4 — Parents
   h += _sectionHead('Parent / Guardian');
   h += _row(_input('ff-p1first', 'First Name', p?.parent1_first || ''), _input('ff-p1last', 'Last Name', p?.parent1_last || ''));
-  h += _row(_input('ff-p1phone', 'Cell Phone', p?.parent1_phone || p?.phone || ''), _input('ff-p1email', 'Email', p?.parent1_email || p?.email || ''));
+  h += _row(_input('ff-p1phone', 'Cell Phone', p?.parent1_phone || p?.phone || '', 'tel'), _input('ff-p1email', 'Email', p?.parent1_email || p?.email || ''));
 
   // 5 — Baptism
   h += _sectionHead('Baptism Information');
@@ -389,7 +390,7 @@ async function fcSave() {
     preparation_responsible_override: respSel === '__other' ? (_v('ff-resp-other') || null) : null,
     school_name: _v('ff-school') || null, grade_level: document.getElementById('ff-grade')?.value || null,
     child_street: _v('ff-street') || null, child_city: _v('ff-city') || null, child_state: _v('ff-state') || null, child_zip: _v('ff-zip') || null,
-    parent1_first: _v('ff-p1first') || null, parent1_last: _v('ff-p1last') || null, parent1_phone: _v('ff-p1phone') || null, parent1_email: _v('ff-p1email') || null,
+    parent1_first: _v('ff-p1first') || null, parent1_last: _v('ff-p1last') || null, parent1_phone: normalizePhone(_v('ff-p1phone')) || null, parent1_email: _v('ff-p1email') || null,
     baptism_church: _v('ff-bchurch') || null, baptism_city: _v('ff-bcity') || null, baptism_state: _v('ff-bstate') || null, baptism_country: _v('ff-bcountry') || null,
     communion_date: _v('ff-cdate') || null,
     communion_institution_id: churchSel && churchSel !== '__other' ? churchSel : null,

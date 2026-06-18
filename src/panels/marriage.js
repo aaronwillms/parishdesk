@@ -4,6 +4,7 @@ import { store } from '../store.js';
 import { expandCase } from './annulments.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
+import { formatPhone, normalizePhone } from '../utils/phone.js';
 
 export const COUPLE_STATUS = {
   inprogress:{ label:'In progress', color:'#7D6608', bg:'#FEF9E7', dot:'#D4AC0D' },
@@ -229,7 +230,7 @@ function renderCoupleBody(c) {
   const contactBlock = (label, phone, email) => {
     if (!phone && !email) return '';
     return `<div style="font-size:11px;color:#AAA;text-transform:uppercase;letter-spacing:.05em;margin:6px 0 4px;">${_esc(label)}</div>`
-      + (phone ? `<a href="tel:${phone}" class="contact-chip">📞 ${_esc(phone)}</a>` : '')
+      + (phone ? `<a href="tel:${normalizePhone(phone)}" class="contact-chip">📞 ${_esc(formatPhone(phone))}</a>` : '')
       + (email ? `<a href="mailto:${email}" class="contact-chip">✉️ ${_esc(email)}</a>` : '');
   };
   if (c.groom_phone || c.groom_email || c.bride_phone || c.bride_email) {
@@ -496,7 +497,7 @@ function renderSpouseSection(c, n) {
   const p = n === 1 ? 's1' : 's2';
   let h = _sectionHead(n === 1 ? 'Groom' : 'Bride');
   h += _row(_input(`mf-${p}-first`, 'First Name', c?.[`spouse${n}_first`] || ''), _input(`mf-${p}-middle`, 'Middle', c?.[`spouse${n}_middle`] || ''), _input(`mf-${p}-last`, 'Last Name', c?.[`spouse${n}_last`] || ''));
-  h += _row(_input(`mf-${p}-cell`, 'Cell Phone', c?.[`${n === 1 ? 'groom' : 'bride'}_phone`] || ''), _input(`mf-${p}-email`, 'Email', c?.[`${n === 1 ? 'groom' : 'bride'}_email`] || ''));
+  h += _row(_input(`mf-${p}-cell`, 'Cell Phone', c?.[`${n === 1 ? 'groom' : 'bride'}_phone`] || '', 'tel'), _input(`mf-${p}-email`, 'Email', c?.[`${n === 1 ? 'groom' : 'bride'}_email`] || ''));
   h += _input(`mf-${p}-dob`, 'Date of Birth', c?.[`spouse${n}_dob`] || '', 'date');
   h += _toggle(`mf-${p}-unbap`, 'Unbaptized?', s.unbaptized, `marSpouseToggle(${n})`);
   h += `<div id="mf-${p}-noncath-wrap" style="display:${s.unbaptized ? 'none' : 'block'};">${_toggle(`mf-${p}-noncath`, 'Non-Catholic?', s.nonCatholic, `marSpouseToggle(${n})`)}</div>`;
@@ -763,8 +764,8 @@ async function marSaveCouple() {
     spouse2_baptism_church: _M.s2.unbaptized ? null : (_v('mf-s2-bchurch') || null), spouse2_baptism_city: _M.s2.unbaptized ? null : (_v('mf-s2-bcity') || null), spouse2_baptism_state: _M.s2.unbaptized ? null : (_v('mf-s2-bstate') || null),
     spouse2_prior_marriages: _M.s2Prior,
     // contact fields (legacy columns)
-    groom_phone: _v('mf-s1-cell') || null, groom_email: _v('mf-s1-email') || null,
-    bride_phone: _v('mf-s2-cell') || null, bride_email: _v('mf-s2-email') || null,
+    groom_phone: normalizePhone(_v('mf-s1-cell')) || null, groom_email: _v('mf-s1-email') || null,
+    bride_phone: normalizePhone(_v('mf-s2-cell')) || null, bride_email: _v('mf-s2-email') || null,
     // wedding details (kept for external)
     wedding_date: _v('mf-wd') || null,
     wedding_time: _M.nonChurch ? null : (_v('mf-wt') || null),

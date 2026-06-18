@@ -1,5 +1,6 @@
 import { store } from '../store.js';
 import { personTitle } from '../utils.js';
+import { formatPhone, normalizePhone } from '../utils/phone.js';
 
 let _institutionId = null;
 let _activeTab = 'overview';
@@ -127,7 +128,7 @@ function _directoryTab(personnel, instName) {
         ${title ? `<div style="font-size:12px;color:#6B7280;">${title}</div>` : ''}
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;">
-        ${p.phone ? `<a href="tel:${p.phone}" style="font-size:12px;color:#8FA8BF;text-decoration:none;">📞 ${p.phone}</a>` : ''}
+        ${p.phone ? `<a href="tel:${normalizePhone(p.phone)}" style="font-size:12px;color:#8FA8BF;text-decoration:none;">📞 ${formatPhone(p.phone)}</a>` : ''}
         ${p.email ? `<a href="mailto:${p.email}" style="font-size:12px;color:#8FA8BF;text-decoration:none;">✉️ ${p.email}</a>` : ''}
       </div>
     </div>

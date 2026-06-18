@@ -3,6 +3,7 @@ import { notifyUsers } from '../notifications.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
+import { normalizePhone } from '../utils/phone.js';
 
 // ── Status (legacy codes preserved for backward compatibility) ───────────────
 export const CASE_STATUS = {
@@ -442,7 +443,7 @@ function buildCaseModalHtml(c) {
   h += _row(_input('am-pet-first', 'First Name', c?.petitioner_first || ''), _input('am-pet-middle', 'Middle', c?.petitioner_middle || ''), _input('am-pet-last', 'Last Name', c?.petitioner_last || ''), _input('am-pet-maiden', 'Maiden', c?.petitioner_maiden || ''));
   h += _input('am-pet-street', 'Street Address', c?.petitioner_street || '');
   h += _row(_input('am-pet-city', 'City', c?.petitioner_city || ''), _stateSelect('am-pet-state', c?.petitioner_state || ''), _input('am-pet-zip', 'ZIP', c?.petitioner_zip || ''));
-  h += _row(_input('am-pet-cell', 'Cell Phone', c?.petitioner_cell || c?.contact_phone || ''), _input('am-pet-email', 'Email', c?.petitioner_email || c?.contact_email || ''));
+  h += _row(_input('am-pet-cell', 'Cell Phone', c?.petitioner_cell || c?.contact_phone || '', 'tel'), _input('am-pet-email', 'Email', c?.petitioner_email || c?.contact_email || ''));
   h += _input('am-pet-dob', 'Date of Birth', c?.petitioner_dob && /^\d{4}-\d{2}-\d{2}/.test(c.petitioner_dob) ? c.petitioner_dob.slice(0, 10) : '', 'date');
   h += _row(_input('am-pet-bchurch', 'Church of Baptism', c?.petitioner_baptism_church || ''), _input('am-pet-bcity', 'Baptism City', c?.petitioner_baptism_city || ''), _stateSelect('am-pet-bstate', c?.petitioner_baptism_state || ''), `<label>Country</label><select id="am-pet-bcountry">${COUNTRIES.map(co => `<option${(c?.petitioner_baptism_country || 'United States of America') === co ? ' selected' : ''}>${co}</option>`).join('')}</select>`);
 
@@ -640,7 +641,7 @@ async function anlSaveCase() {
     petitioner_last: _v('am-pet-last') || null, petitioner_maiden: _v('am-pet-maiden') || null,
     petitioner_street: _v('am-pet-street') || null, petitioner_city: _v('am-pet-city') || null,
     petitioner_state: _v('am-pet-state') || null, petitioner_zip: _v('am-pet-zip') || null,
-    petitioner_cell: _v('am-pet-cell') || null, petitioner_email: _v('am-pet-email') || null,
+    petitioner_cell: normalizePhone(_v('am-pet-cell')) || null, petitioner_email: _v('am-pet-email') || null,
     petitioner_dob: _v('am-pet-dob') || null,
     petitioner_baptism_church: _v('am-pet-bchurch') || null, petitioner_baptism_city: _v('am-pet-bcity') || null, petitioner_baptism_state: _v('am-pet-bstate') || null, petitioner_baptism_country: _v('am-pet-bcountry') || null,
     respondent_first: _v('am-resp-first') || null, respondent_middle: _v('am-resp-middle') || null,

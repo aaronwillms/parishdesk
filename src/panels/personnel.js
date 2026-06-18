@@ -2,6 +2,7 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin, isSuperAdmin } from '../roles.js';
 import { logActivity, personTitle } from '../utils.js';
+import { formatPhone, normalizePhone } from '../utils/phone.js';
 
 // Clergy/religious types appear first, in this fixed order
 const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
@@ -80,7 +81,7 @@ function buildPersonTitles(rows) {
 
 function contactChips(p) {
   let chips = '';
-  if (p.phone) chips += `<a href="tel:${p.phone}" style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:#8FA8BF;text-decoration:none;">📞 ${p.phone}</a>`;
+  if (p.phone) chips += `<a href="tel:${normalizePhone(p.phone)}" style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:#8FA8BF;text-decoration:none;">📞 ${formatPhone(p.phone)}</a>`;
   if (p.email) chips += `<a href="mailto:${p.email}" style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:#8FA8BF;text-decoration:none;">✉️ ${p.email}</a>`;
   return chips ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:3px;">${chips}</div>` : '';
 }
@@ -370,7 +371,7 @@ function personnelForm(data) {
   return `<div class="modal-title">${data ? 'Edit person' : 'Add person'}</div>
   <label>Name</label><input id="pf-name" value="${data?.name || ''}" />
   <label>Date of Birth</label><input type="date" id="pf-dob" value="${data?.date_of_birth || ''}" />
-  <label>Phone</label><input id="pf-phone" value="${data?.phone || ''}" placeholder="e.g. (601) 555-0100" />
+  <label>Phone</label><input type="tel" id="pf-phone" value="${formatPhone(data?.phone || '')}" placeholder="e.g. (601) 555-0100" />
   <label>Email</label><input id="pf-email" value="${data?.email || ''}" />
   <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:.75rem;">
     <input type="checkbox" id="pf-clergy" ${data?.clergy ? 'checked' : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />
@@ -430,7 +431,7 @@ async function savePersonnel(id) {
   const type = document.getElementById('pf-type').value;
   const payload = {
     name:        document.getElementById('pf-name').value.trim(),
-    phone:       document.getElementById('pf-phone').value.trim() || null,
+    phone:       normalizePhone(document.getElementById('pf-phone').value.trim()) || null,
     email:       document.getElementById('pf-email').value.trim() || null,
     institution: document.getElementById('pf-inst').value || null,
     type,

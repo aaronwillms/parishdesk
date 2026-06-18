@@ -1,6 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { todayCST, fmtDateYear, PANEL_TITLES } from '../utils.js';
+import { formatPhone, normalizePhone } from '../utils/phone.js';
 
 let coordData = {};
 let scheduleData = {};
@@ -45,7 +46,7 @@ function renderCoordCard(prog) {
     nameEl.innerHTML = `<div style="font-size:10.5px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">${heading}</div>` +
     coords.map((c, i) => {
       const contacts = [
-        c.phone ? `<a href="tel:${c.phone}" style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:#8FA8BF;text-decoration:none;">📞 ${c.phone}</a>` : '',
+        c.phone ? `<a href="tel:${normalizePhone(c.phone)}" style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:#8FA8BF;text-decoration:none;">📞 ${formatPhone(c.phone)}</a>` : '',
         c.email ? `<a href="mailto:${c.email}" style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:#8FA8BF;text-decoration:none;">✉️ ${c.email}</a>` : '',
       ].filter(Boolean).join('');
       return `<div style="${i > 0 ? 'margin-top:8px;padding-top:8px;border-top:.5px solid rgba(255,255,255,.1);' : ''}">
