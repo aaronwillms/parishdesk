@@ -4,6 +4,7 @@ import { createAvatar } from '../ui/avatar.js';
 import { applyParishName } from '../ui/navigation.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { fetchAllGrants, revokeGrant, setGrantNote, labelForGrant, userName, ensureIdentities, recordTypeLabel, PRIORITY_TYPES } from '../ui/grants.js';
+import { personTitle } from '../utils.js';
 
 const SACRAMENTS = ['baptism', 'first_communion', 'confirmation', 'ocia', 'marriage', 'annulments'];
 const SACRAMENT_LABELS = { baptism: 'Baptism', first_communion: 'First Communion', confirmation: 'Confirmation', ocia: 'OCIA', marriage: 'Marriage', annulments: 'Annulments' };
@@ -35,7 +36,7 @@ export async function loadAdmin() {
 
 async function _loadUsers() {
   const [profilesRes, rolesRes, sacramentRes, grantsRes, teamMembersRes, authRes, coordRes] = await Promise.all([
-    sb.from('user_profiles').select('user_id, personnel_id, avatar_url, personnel(id,name,title)'),
+    sb.from('user_profiles').select('user_id, personnel_id, avatar_url, personnel(id,name)'),
     sb.from('user_roles').select('user_id, role'),
     sb.from('sacramental_roles').select('user_id, sacrament'),
     sb.from('panel_grants').select('user_id, panel'),
@@ -45,6 +46,9 @@ async function _loadUsers() {
   ]);
 
   const profiles   = profilesRes.data  || [];
+  // personnel.title was retired in the HR Stage 1 collapse — derive the title
+  // shown under each user's name from their current HR positions.
+  profiles.forEach(p => { if (p.personnel) p.personnel.title = personTitle(p.personnel.id); });
   const roles      = rolesRes.data     || [];
   const sacraments = sacramentRes.data || [];
   const grants     = grantsRes.data    || [];

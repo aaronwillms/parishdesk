@@ -1,7 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { createContactPicker } from '../ui/contactPicker.js';
-import { logActivity, fmtDate, todayCST } from '../utils.js';
+import { logActivity, fmtDate, todayCST, personTitle } from '../utils.js';
 import { isTeamAdmin, isSuperAdmin, isAdmin } from '../roles.js';
 import { notifyUsers, getUserIdForPersonnel } from '../notifications.js';
 import { createAvatar } from '../ui/avatar.js';
@@ -39,7 +39,7 @@ async function _loadData() {
   const [teamRes, membersRes] = await Promise.all([
     sb.from('teams').select('*').eq('id', _currentTeamId).single(),
     sb.from('team_members')
-      .select('*, personnel(id,name,title,phone,email,institution,employment)')
+      .select('*, personnel(id,name,phone,email,institution,employment)')
       .eq('team_id', _currentTeamId)
       .order('sort_order', { nullsFirst: false }),
   ]);
@@ -51,6 +51,9 @@ async function _loadData() {
     const bName = b.personnel?.name || '';
     return aName.localeCompare(bName);
   });
+  // personnel.title was retired in the HR Stage 1 collapse — derive the
+  // directory title from current HR positions so the member rows still show it.
+  _members.forEach(m => { if (m.personnel) m.personnel.title = personTitle(m.personnel.id); });
 }
 
 // ── Render ─────────────────────────────────────────────────────────────────

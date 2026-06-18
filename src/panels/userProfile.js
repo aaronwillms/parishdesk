@@ -13,7 +13,7 @@ export async function loadUserProfile() {
   if (!user) return;
 
   const { data } = await sb.from('user_profiles')
-    .select('*, personnel(id,name,title,phone,email,date_of_birth)')
+    .select('*, personnel(id,name,phone,email,date_of_birth)')
     .eq('user_id', user.id)
     .maybeSingle();
   _profile = data || null;
