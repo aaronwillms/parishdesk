@@ -234,19 +234,30 @@ columns.)
 
 ## Institution address
 
-An institution's mailing address (`institutions.street` / `city` / `state` /
-`zip`) lives on the **institution record** and is the **single source of truth**;
-every institution has the same fields (the principal "The Basilica of Saint Mary"
-is not special-cased). It is edited in the **Directory's institution
-create/settings dialog** ([src/panels/personnel.js](src/panels/personnel.js),
-admin/super-admin only, same surface as institution name/icon/order). Consumers —
-the sacrament file address display — read it through the shared
-`getInstitutionAddress(institutionId)` helper in
-[src/ui/directory.js](src/ui/directory.js) (alongside `getInstitutionClergy`),
-which returns `{ street, city, state, zip, cityStateZip, full, has }`. The four
-columns are added by a proposed/paused migration
-(`20260618_institutions_address.sql`) — apply it before/with the UI change, since
-the create/settings save writes these columns.
+An institution's mailing address is resolved by source: the **principal
+institution** uses the canonical **parish address in `parish_settings.address`**
+(a single formatted string, set in Admin > Parish Settings); **every other
+institution** uses its own `institutions.street` / `city` / `state` / `zip`
+columns. This avoids a dual source of truth for the Basilica's address.
+
+The **principal institution is identified structurally** via
+`parish_settings.primary_institution` (a configured parish-name field) matched
+against the institution's name — not a hardcoded literal.
+
+`getInstitutionAddress(institutionId)` in [src/ui/directory.js](src/ui/directory.js)
+**encapsulates that resolution** — callers (the sacrament file address display)
+stay agnostic. It returns a uniform `{ street, city, state, zip, cityStateZip,
+full, has, source }` for both branches (`source` is `'parish_settings'` or
+`'institution'`); for the principal, parish_settings ALWAYS wins even if its own
+row's address columns are populated. The institution address columns come from
+`20260618_institutions_address.sql` (additive).
+
+Editing ([src/panels/personnel.js](src/panels/personnel.js), admin/super-admin):
+non-principal institutions edit street/city/state/zip in the Directory
+create/settings dialog; the **principal institution's address fields are shown
+read-only**, mirroring `parish_settings`, with a note that the parish address is
+set in Admin > Parish Settings, and its save never writes address columns to the
+institution row.
 
 ## Directory clergy field
 

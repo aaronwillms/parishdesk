@@ -3,6 +3,7 @@ import { store } from '../store.js';
 import { isAdmin, isSuperAdmin, coordinatorChipLabels } from '../roles.js';
 import { logActivity, personTitle, reportWriteError } from '../utils.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
+import { getInstitutionAddress, isPrincipalInstitution } from '../ui/directory.js';
 
 // Institution membership and employment are DERIVED from HR (person_positions →
 // positions.institution_id, plus person_positions.employment_type). HR is the
@@ -306,16 +307,25 @@ function _instIconPickerHtml(currentIcon) {
     <input type="hidden" id="if-icon" value="${selected}" />`;
 }
 
-// Shared address inputs for the institution create/settings dialogs (plain text;
-// the institution record is the single source of truth — see getInstitutionAddress).
-function _instAddressFieldsHtml(inst = null) {
+// Shared address inputs for the institution create/settings dialogs (plain text).
+// For the PRINCIPAL institution the address is the canonical parish address (set
+// in Admin > Parish Settings), so the fields are shown READ-ONLY (disabled),
+// mirroring parish_settings, with a note — the institution record never becomes a
+// second source. For every other institution the fields are editable.
+function _instAddressFieldsHtml(inst = null, { principal = false, addr = null } = {}) {
+  const a = addr || inst || {};
   const v = (x) => (x == null ? '' : String(x)).replace(/"/g, '&quot;');
-  return `
-    <label>Street</label><input id="if-street" value="${v(inst?.street)}" placeholder="123 Main St" />
+  const dis = principal ? 'disabled' : '';
+  const bg  = principal ? 'background:#F0EDE8;color:#6B7280;' : '';
+  const note = principal
+    ? `<div style="font-size:11.5px;color:#9CA3AF;margin-bottom:.4rem;line-height:1.5;">This is the parish's principal institution — its address is the <strong>parish address</strong>, set in <strong>Admin &gt; Parish Settings</strong>.</div>`
+    : '';
+  return `${note}
+    <label>Street</label><input id="if-street" value="${v(a.street)}" placeholder="123 Main St" ${dis} style="${bg}" />
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      <div style="flex:2;min-width:120px;"><label>City</label><input id="if-city" value="${v(inst?.city)}" /></div>
-      <div style="flex:1;min-width:70px;"><label>State</label><input id="if-state" value="${v(inst?.state)}" maxlength="2" placeholder="MS" /></div>
-      <div style="flex:1;min-width:80px;"><label>ZIP</label><input id="if-zip" value="${v(inst?.zip)}" /></div>
+      <div style="flex:2;min-width:120px;"><label>City</label><input id="if-city" value="${v(a.city)}" ${dis} style="${bg}" /></div>
+      <div style="flex:1;min-width:70px;"><label>State</label><input id="if-state" value="${v(a.state)}" maxlength="2" placeholder="MS" ${dis} style="${bg}" /></div>
+      <div style="flex:1;min-width:80px;"><label>ZIP</label><input id="if-zip" value="${v(a.zip)}" ${dis} style="${bg}" /></div>
     </div>`;
 }
 
@@ -378,7 +388,7 @@ function openInstitutionSettingsModal(id, currentName) {
     <label>Name</label>
     <input id="if-rename" value="${currentName}" />
     ${_instIconPickerHtml(currentIcon)}
-    ${_instAddressFieldsHtml(inst)}
+    ${_instAddressFieldsHtml(inst, isPrincipalInstitution(id) ? { principal: true, addr: getInstitutionAddress(id) } : {})}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn-primary" onclick="saveInstitutionSettings('${id}','${safeName}')">Save</button>
@@ -395,13 +405,17 @@ async function saveInstitutionSettings(id, oldName) {
   const icon    = document.getElementById('if-icon')?.value || 'fa-building';
   if (!newName) { alert('Name is required.'); return; }
   // Order is managed by the HR arrows, not here — leave sort_order untouched.
-  const { error: instErr } = await sb.from('institutions').update({
-    name: newName, icon,
-    street: document.getElementById('if-street')?.value.trim() || null,
-    city:   document.getElementById('if-city')?.value.trim() || null,
-    state:  document.getElementById('if-state')?.value.trim() || null,
-    zip:    document.getElementById('if-zip')?.value.trim() || null,
-  }).eq('id', id);
+  // The principal institution's address is the parish address (Admin > Parish
+  // Settings) — never write address columns to its row (parish_settings is the
+  // single source). Other institutions persist their own address.
+  const update = { name: newName, icon };
+  if (!isPrincipalInstitution(id)) {
+    update.street = document.getElementById('if-street')?.value.trim() || null;
+    update.city   = document.getElementById('if-city')?.value.trim() || null;
+    update.state  = document.getElementById('if-state')?.value.trim() || null;
+    update.zip    = document.getElementById('if-zip')?.value.trim() || null;
+  }
+  const { error: instErr } = await sb.from('institutions').update(update).eq('id', id);
   if (instErr) { alert('Save failed: ' + instErr.message); return; }
   if (newName !== oldName) {
     const { error: persErr } = await sb.from('personnel')
