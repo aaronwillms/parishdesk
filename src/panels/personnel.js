@@ -38,10 +38,15 @@ function fmtDob(dob) {
 
 // ── Data loading ───────────────────────────────────────────────────────────────
 
-// personnel.id → [sacrament keys] coordinated by that person's LINKED USER.
-// Source: user_profiles (personnel_id ↔ user_id) joined to sacramental_roles.
-// A person with no linked user simply isn't in the map → no coordinator chip.
+// personnel.id → [coordinator label-keys] from the ACTUAL coordinator assignment
+// (program_coordinators.coordinator_ids), keyed directly by personnel id — NOT
+// panel access / sacramental_roles. Access != coordination.
 let _coordByPersonnel = new Map();
+
+// program_coordinators.program uses 'firstcomm'; the shared label map keys First
+// Communion as 'first_communion'. Translate so the existing map (unchanged)
+// resolves. Other programs already match the map keys.
+const PROGRAM_TO_LABEL_KEY = { firstcomm: 'first_communion' };
 
 // HR-derived institution membership (the directory no longer stores its own):
 //   _byInstitution: institution_id → Map(personnel_id → best employment_type)
@@ -52,12 +57,11 @@ let _byInstitution = new Map();
 let _personHasPosition = new Set();
 
 export async function loadPersonnel() {
-  const [{ data: instData, error: instErr }, { data: persData, error: persErr }, { data: titleData }, profRes, sacRes, ppRes, posRes] = await Promise.all([
+  const [{ data: instData, error: instErr }, { data: persData, error: persErr }, { data: titleData }, pcRes, ppRes, posRes] = await Promise.all([
     sb.from('institutions').select('*').order('sort_order').order('name'),
     sb.from('personnel').select('*').neq('active', false).order('name'),
     sb.from('person_current_titles').select('*'),
-    sb.from('user_profiles').select('user_id, personnel_id'),
-    sb.from('sacramental_roles').select('user_id, sacrament'),
+    sb.from('program_coordinators').select('program, coordinator_ids'),
     sb.from('person_positions').select('person_id, position_id, employment_type').is('unlinked_at', null),
     sb.from('positions').select('id, institution_id').is('archived_at', null),
   ]);
@@ -67,12 +71,16 @@ export async function loadPersonnel() {
   store.personnel     = persData || [];
   store.personTitles  = buildPersonTitles(titleData || []);
 
-  // Build the coordinator map: group sacramental_roles by user, then key by the
-  // linked personnel_id.
-  const sacByUser = {};
-  (sacRes.data || []).forEach(r => { (sacByUser[r.user_id] = sacByUser[r.user_id] || []).push(r.sacrament); });
+  // Build the coordinator map from the actual assignment: every personnel id in a
+  // program's coordinator_ids gets that program's chip (label-key translated).
   _coordByPersonnel = new Map();
-  (profRes.data || []).forEach(pr => { if (pr.personnel_id) _coordByPersonnel.set(pr.personnel_id, sacByUser[pr.user_id] || []); });
+  (pcRes.data || []).forEach(row => {
+    const key = PROGRAM_TO_LABEL_KEY[row.program] || row.program;
+    (row.coordinator_ids || []).forEach(pid => {
+      if (!_coordByPersonnel.has(pid)) _coordByPersonnel.set(pid, []);
+      _coordByPersonnel.get(pid).push(key);
+    });
+  });
 
   // Derive institution membership from active HR occupancy.
   const posInst = new Map();   // active position_id → institution_id
@@ -125,8 +133,8 @@ function personCard(p, instName = null) {
     : '';
   const title = personTitle(p.id, instName);
   const clergyChip = p.clergy ? ` <span class="badge badge-pending" style="vertical-align:middle;">Clergy</span>` : '';
-  // Coordinator chips: one per mapped sacramental_roles coordinator role held by
-  // the person's linked user. Wrap after the clergy chip; existing badge styling.
+  // Coordinator chips: one per program the person actually coordinates
+  // (program_coordinators). Wrap after the clergy chip; existing badge styling.
   const coordChips = coordinatorChipLabels(_coordByPersonnel.get(p.id))
     .map(label => ` <span class="badge badge-active" style="vertical-align:middle;">${label}</span>`).join('');
   return `<div class="evt-item" style="cursor:default;">

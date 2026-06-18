@@ -181,14 +181,18 @@ order and no manual sort-order field. New institutions **append to the end**
 
 ## Coordinator chip labels
 
-A directory person shows a coordinator chip for each sacramental coordinator role
-held by their **linked user** (`user_profiles.personnel_id` → `user_id` →
-`sacramental_roles.sacrament`; no linked user → no chip). The chip wording lives
-in a single shared map, `SACRAMENT_COORDINATOR_LABELS` in
-[src/roles.js](src/roles.js) (with `coordinatorChipLabels()`), so every surface
-uses the exact same labels — e.g. Marriage → "Wedding Coordinator". The map is
-the complete set; a role with no entry (annulments) produces no chip by design,
-with no generic fallback.
+A directory person shows a coordinator chip for each program they **actually
+coordinate** — sourced from `program_coordinators.coordinator_ids` (an array of
+personnel ids), keyed **directly by personnel id, no user link required**. Panel
+access (`sacramental_roles` / `panel_grants`) does NOT grant a chip — access is
+not coordination. The chip wording lives in a single shared map,
+`SACRAMENT_COORDINATOR_LABELS` in [src/roles.js](src/roles.js) (with
+`coordinatorChipLabels()`), so every surface uses the exact same labels — e.g.
+Marriage → "Wedding Coordinator". The map is the complete set; a program with no
+entry (annulments) produces no chip by design, with no generic fallback. (The
+map keys First Communion as `first_communion`; `program_coordinators` uses
+`firstcomm`, so the directory translates that one key when building the source.)
+Chips are person-level: they render on every directory appearance of the person.
 
 ## Permission basis model (Admin > Users)
 
