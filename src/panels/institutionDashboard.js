@@ -1,4 +1,5 @@
 import { store } from '../store.js';
+import { personTitle } from '../utils.js';
 
 let _institutionId = null;
 let _activeTab = 'overview';
@@ -84,7 +85,7 @@ function _render(container) {
 
 function _tabContent(tabId, inst, personnel, teams) {
   if (tabId === 'overview')  return _overviewTab(inst, personnel, teams);
-  if (tabId === 'directory') return _directoryTab(personnel);
+  if (tabId === 'directory') return _directoryTab(personnel, inst.name);
   return _stubTab();
 }
 
@@ -111,24 +112,27 @@ function _statCard(label, value, icon) {
     </div>`;
 }
 
-function _directoryTab(personnel) {
+function _directoryTab(personnel, instName) {
   if (!personnel.length) {
     return '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No personnel assigned to this institution.</div>';
   }
 
   const alpha = (a, b) => a.name.localeCompare(b.name);
-  const rows = [...personnel].sort(alpha).map(p => `
+  const rows = [...personnel].sort(alpha).map(p => {
+    const title = personTitle(p.id, instName);
+    return `
     <div style="display:flex;align-items:center;gap:12px;padding:.7rem 0;border-bottom:.5px solid #F0EDE8;">
       <div style="flex:1;min-width:0;">
         <div style="font-weight:500;font-size:14px;color:#1C2B3A;">${p.name}</div>
-        ${p.title ? `<div style="font-size:12px;color:#6B7280;">${p.title}</div>` : ''}
+        ${title ? `<div style="font-size:12px;color:#6B7280;">${title}</div>` : ''}
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;">
         ${p.phone ? `<a href="tel:${p.phone}" style="font-size:12px;color:#8FA8BF;text-decoration:none;">📞 ${p.phone}</a>` : ''}
         ${p.email ? `<a href="mailto:${p.email}" style="font-size:12px;color:#8FA8BF;text-decoration:none;">✉️ ${p.email}</a>` : ''}
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   return `<div class="card">${rows}</div>`;
 }

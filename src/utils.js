@@ -17,6 +17,20 @@ export async function logActivity({ action, entityType, entityName, contextType 
   }
 }
 
+// Resolve a person's directory title(s) from their CURRENT HR positions.
+// Titles derive from person_positions -> positions (the title field on the
+// personnel row was retired in the HR-module Stage 1 collapse). store.personTitles
+// is populated by loadPersonnel() from the person_current_titles view, shaped:
+//   { [personId]: { byInstitution: { [instName]: title }, all: [title, ...] } }
+// With an institution name, returns that institution's collapsed title; without
+// one, joins all current titles. Empty string when the person holds no position.
+export function personTitle(personId, institutionName = null) {
+  const m = (store.personTitles || {})[personId];
+  if (!m) return '';
+  if (institutionName) return m.byInstitution[institutionName] || '';
+  return (m.all || []).join(' · ');
+}
+
 export function todayCST() {
   const tz = store.parishSettings?.timezone || 'America/Chicago';
   const n = new Date(new Date().toLocaleString('en-US', { timeZone: tz }));

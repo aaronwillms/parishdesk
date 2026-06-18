@@ -1,7 +1,7 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin, isSuperAdmin } from '../roles.js';
-import { logActivity } from '../utils.js';
+import { logActivity, personTitle } from '../utils.js';
 
 // Clergy/religious types appear first, in this fixed order
 const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
@@ -48,15 +48,29 @@ function fmtDob(dob) {
 // ── Data loading ───────────────────────────────────────────────────────────────
 
 export async function loadPersonnel() {
-  const [{ data: instData, error: instErr }, { data: persData, error: persErr }] = await Promise.all([
+  const [{ data: instData, error: instErr }, { data: persData, error: persErr }, { data: titleData }] = await Promise.all([
     sb.from('institutions').select('*').order('sort_order').order('name'),
     sb.from('personnel').select('*').neq('active', false).order('name'),
+    sb.from('person_current_titles').select('*'),
   ]);
   if (instErr) console.error('[institutions]', instErr);
   if (persErr) console.error('[personnel]', persErr);
-  store.institutions = instData || [];
-  store.personnel    = persData || [];
+  store.institutions  = instData || [];
+  store.personnel     = persData || [];
+  store.personTitles  = buildPersonTitles(titleData || []);
   renderPersonnel();
+}
+
+// Shape person_current_titles rows into the map personTitle() consumes:
+//   { [personId]: { byInstitution: { [instName]: title }, all: [title, ...] } }
+function buildPersonTitles(rows) {
+  const map = {};
+  rows.forEach(r => {
+    if (!map[r.person_id]) map[r.person_id] = { byInstitution: {}, all: [] };
+    if (r.institution_name) map[r.person_id].byInstitution[r.institution_name] = r.title;
+    if (r.title) map[r.person_id].all.push(r.title);
+  });
+  return map;
 }
 
 // ── Render ─────────────────────────────────────────────────────────────────────
@@ -68,7 +82,7 @@ function contactChips(p) {
   return chips ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:3px;">${chips}</div>` : '';
 }
 
-function personCard(p) {
+function personCard(p, instName = null) {
   const controls = isAdmin() ? `
     <div style="display:flex;gap:6px;flex-shrink:0;">
       <button class="card-action" onclick="openPersonnelModal('${p.id}')">Edit</button>
@@ -77,10 +91,11 @@ function personCard(p) {
   const dobLine = p.date_of_birth
     ? `<div style="font-size:11.5px;color:#9CA3AF;margin-top:2px;">🎂 ${fmtDob(p.date_of_birth)}</div>`
     : '';
+  const title = personTitle(p.id, instName);
   return `<div class="evt-item" style="cursor:default;">
     <div style="flex:1;min-width:0;">
       <div style="font-weight:500;font-size:14px;color:var(--navy);">${p.name}</div>
-      ${p.title ? `<div style="font-size:12px;color:#6B7280;margin-top:1px;">${p.title}</div>` : ''}
+      ${title ? `<div style="font-size:12px;color:#6B7280;margin-top:1px;">${title}</div>` : ''}
       ${dobLine}
       ${contactChips(p)}
     </div>
@@ -155,7 +170,7 @@ function renderPersonnel() {
         if (!clergyGroup.length) return;
         html += `<div style="${i > 0 ? 'margin-top:.75rem;' : ''}">`;
         html += groupPill(CLERGY_LABELS[type]);
-        clergyGroup.forEach(p => { html += personCard(p); });
+        clergyGroup.forEach(p => { html += personCard(p, inst.name); });
         html += `</div>`;
       });
 
@@ -164,7 +179,7 @@ function renderPersonnel() {
         if (!empGroup.length) return;
         html += `<div style="${clergy.length || i > 0 ? 'margin-top:.75rem;' : ''}">`;
         html += groupPill(EMPLOYMENT_LABELS[emp]);
-        empGroup.forEach(p => { html += personCard(p); });
+        empGroup.forEach(p => { html += personCard(p, inst.name); });
         html += `</div>`;
       });
 
@@ -172,7 +187,7 @@ function renderPersonnel() {
       if (unclassified.length) {
         html += `<div style="margin-top:.75rem;">`;
         html += groupPill('Other Staff');
-        unclassified.forEach(p => { html += personCard(p); });
+        unclassified.forEach(p => { html += personCard(p, inst.name); });
         html += `</div>`;
       }
     }
@@ -347,9 +362,6 @@ function personnelForm(data) {
   const isNa = !inst;
   return `<div class="modal-title">${data ? 'Edit person' : 'Add person'}</div>
   <label>Name</label><input id="pf-name" value="${data?.name || ''}" />
-  <div id="pf-title-row"${isNa ? ' style="display:none;"' : ''}>
-    <label>Title / role</label><input id="pf-title" value="${data?.title || ''}" />
-  </div>
   <label>Date of Birth</label><input type="date" id="pf-dob" value="${data?.date_of_birth || ''}" />
   <label>Phone</label><input id="pf-phone" value="${data?.phone || ''}" placeholder="e.g. (601) 555-0100" />
   <label>Email</label><input id="pf-email" value="${data?.email || ''}" />
@@ -396,7 +408,6 @@ function personnelTypeToggle() {
 
 window.personnelInstToggle = function() {
   const isNa = !document.getElementById('pf-inst').value;
-  document.getElementById('pf-title-row').style.display = isNa ? 'none' : '';
   if (isNa) {
     const typeEl = document.getElementById('pf-type');
     if (typeEl) typeEl.value = 'volunteer';
@@ -408,7 +419,6 @@ async function savePersonnel(id) {
   const type = document.getElementById('pf-type').value;
   const payload = {
     name:        document.getElementById('pf-name').value.trim(),
-    title:       document.getElementById('pf-title').value.trim() || null,
     phone:       document.getElementById('pf-phone').value.trim() || null,
     email:       document.getElementById('pf-email').value.trim() || null,
     institution: document.getElementById('pf-inst').value || null,
