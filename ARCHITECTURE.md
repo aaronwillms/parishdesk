@@ -143,10 +143,23 @@ determination.)
 
 Institutions render in a single **global, parish-wide order** held in
 `institutions.sort_order` (everyone sees the same order; HR and the directory
-both load `.order('sort_order')`). The order is arranged from the **HR panel's
-‹ › arrows** (gated to admin/super-admin) — the one canonical control; there is
-no manual sort-order field in the directory modals. New institutions **append to
-the end** (`max(sort_order)+1`).
+both load `.order('sort_order')`). It is **one value editable from two places** —
+the **HR panel's ‹ › arrows** and the **Directory's ▲▼ arrows** — both gated to
+admin/super-admin and both renumbering the same `sort_order` column (reorder in
+either surface is reflected in the other). There is no second Directory-specific
+order and no manual sort-order field. New institutions **append to the end**
+(`max(sort_order)+1`).
+
+## Coordinator chip labels
+
+A directory person shows a coordinator chip for each sacramental coordinator role
+held by their **linked user** (`user_profiles.personnel_id` → `user_id` →
+`sacramental_roles.sacrament`; no linked user → no chip). The chip wording lives
+in a single shared map, `SACRAMENT_COORDINATOR_LABELS` in
+[src/roles.js](src/roles.js) (with `coordinatorChipLabels()`), so every surface
+uses the exact same labels — e.g. Marriage → "Wedding Coordinator". The map is
+the complete set; a role with no entry (annulments) produces no chip by design,
+with no generic fallback.
 
 ## Permission basis model (Admin > Users)
 

@@ -14,7 +14,7 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin, isSuperAdmin } from '../roles.js';
 import { closeModal } from '../ui/modal.js';
-import { logActivity, todayCST } from '../utils.js';
+import { logActivity, todayCST, compareByLastName } from '../utils.js';
 import { ensureIdentities, userName, fetchGrantRow } from '../ui/grants.js';
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -531,6 +531,8 @@ async function hrSaveMove(posId) {
 
 function personPickerOptions(selectedId) {
   return _people.filter(p => p.active !== false)
+    .slice()
+    .sort((a, b) => compareByLastName(a.name, b.name))   // by last name, then given names
     .map(p => `<option value="${p.id}"${p.id === selectedId ? ' selected' : ''}>${esc(p.name)}</option>`)
     .join('');
 }

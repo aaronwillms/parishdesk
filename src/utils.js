@@ -67,6 +67,22 @@ export function parseDateInput(displayDate) {
   return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
 }
 
+// Sort key for a single full-name string (personnel store full names, not
+// discrete first/last). Last whitespace token = surname; the remainder = given
+// names (tiebreak). Single-token names and multi-word surnames ("van der Berg")
+// are handled gracefully — never crash or drop a name.
+export function lastNameKey(fullName) {
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return { last: '', first: '' };
+  if (parts.length === 1) return { last: parts[0].toLowerCase(), first: '' };
+  return { last: parts[parts.length - 1].toLowerCase(), first: parts.slice(0, -1).join(' ').toLowerCase() };
+}
+// Compare two full-name strings by last name, then given names.
+export function compareByLastName(a, b) {
+  const ka = lastNameKey(a), kb = lastNameKey(b);
+  return ka.last.localeCompare(kb.last) || ka.first.localeCompare(kb.first);
+}
+
 export function daysUntil(iso) {
   if (!iso) return null;
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: store.parishSettings?.timezone || 'America/Chicago' }));

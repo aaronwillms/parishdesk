@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { isAdmin, isSuperAdmin } from '../roles.js';
+import { isAdmin, isSuperAdmin, coordinatorChipLabels } from '../roles.js';
 import { logActivity, personTitle } from '../utils.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 
@@ -51,17 +51,32 @@ function fmtDob(dob) {
 
 // ── Data loading ───────────────────────────────────────────────────────────────
 
+// personnel.id → [sacrament keys] coordinated by that person's LINKED USER.
+// Source: user_profiles (personnel_id ↔ user_id) joined to sacramental_roles.
+// A person with no linked user simply isn't in the map → no coordinator chip.
+let _coordByPersonnel = new Map();
+
 export async function loadPersonnel() {
-  const [{ data: instData, error: instErr }, { data: persData, error: persErr }, { data: titleData }] = await Promise.all([
+  const [{ data: instData, error: instErr }, { data: persData, error: persErr }, { data: titleData }, profRes, sacRes] = await Promise.all([
     sb.from('institutions').select('*').order('sort_order').order('name'),
     sb.from('personnel').select('*').neq('active', false).order('name'),
     sb.from('person_current_titles').select('*'),
+    sb.from('user_profiles').select('user_id, personnel_id'),
+    sb.from('sacramental_roles').select('user_id, sacrament'),
   ]);
   if (instErr) console.error('[institutions]', instErr);
   if (persErr) console.error('[personnel]', persErr);
   store.institutions  = instData || [];
   store.personnel     = persData || [];
   store.personTitles  = buildPersonTitles(titleData || []);
+
+  // Build the coordinator map: group sacramental_roles by user, then key by the
+  // linked personnel_id.
+  const sacByUser = {};
+  (sacRes.data || []).forEach(r => { (sacByUser[r.user_id] = sacByUser[r.user_id] || []).push(r.sacrament); });
+  _coordByPersonnel = new Map();
+  (profRes.data || []).forEach(pr => { if (pr.personnel_id) _coordByPersonnel.set(pr.personnel_id, sacByUser[pr.user_id] || []); });
+
   renderPersonnel();
 }
 
@@ -97,9 +112,13 @@ function personCard(p, instName = null) {
     : '';
   const title = personTitle(p.id, instName);
   const clergyChip = p.clergy ? ` <span class="badge badge-pending" style="vertical-align:middle;">Clergy</span>` : '';
+  // Coordinator chips: one per mapped sacramental_roles coordinator role held by
+  // the person's linked user. Wrap after the clergy chip; existing badge styling.
+  const coordChips = coordinatorChipLabels(_coordByPersonnel.get(p.id))
+    .map(label => ` <span class="badge badge-active" style="vertical-align:middle;">${label}</span>`).join('');
   return `<div class="evt-item" style="cursor:default;">
     <div style="flex:1;min-width:0;">
-      <div style="font-weight:500;font-size:14px;color:var(--navy);">${p.name}${clergyChip}</div>
+      <div style="font-weight:500;font-size:14px;color:var(--navy);">${p.name}${clergyChip}${coordChips}</div>
       ${title ? `<div style="font-size:12px;color:#6B7280;margin-top:1px;">${title}</div>` : ''}
       ${dobLine}
       ${contactChips(p)}
@@ -138,7 +157,7 @@ function renderPersonnel() {
 
   let html = '';
 
-  insts.forEach(inst => {
+  insts.forEach((inst, i) => {
     const group = all.filter(p => p.institution === inst.name);
 
     // Fix 5: basic users skip institutions with no visible personnel
@@ -157,9 +176,16 @@ function renderPersonnel() {
     const cogwheel = isSuperAdmin()
       ? `<button onclick="openInstitutionSettingsModal('${safeId}','${safeName}')" title="Institution settings" style="background:none;border:none;cursor:pointer;font-size:15px;color:#9CA3AF;padding:2px 4px;line-height:1;flex-shrink:0;" onmouseover="this.style.color='var(--navy)'" onmouseout="this.style.color='#9CA3AF'">⚙</button>`
       : '';
+    // Reorder controls write the SAME global institutions.sort_order HR uses.
+    // Admin/super-admin only; others see the order read-only.
+    const reorder = isAdmin()
+      ? `<span onclick="reorderInstitutionDir('${safeId}','up')" title="Move up" style="cursor:pointer;color:#9CA3AF;padding:0 3px;font-size:14px;${i === 0 ? 'visibility:hidden;' : ''}" onmouseover="this.style.color='var(--navy)'" onmouseout="this.style.color='#9CA3AF'">▲</span>
+         <span onclick="reorderInstitutionDir('${safeId}','down')" title="Move down" style="cursor:pointer;color:#9CA3AF;padding:0 3px;font-size:14px;${i === insts.length - 1 ? 'visibility:hidden;' : ''}" onmouseover="this.style.color='var(--navy)'" onmouseout="this.style.color='#9CA3AF'">▼</span>`
+      : '';
     html += `<div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:2px solid var(--navy);">
       <i class="fa-solid ${instIcon}" style="font-size:17px;color:#8B1A2F;flex-shrink:0;"></i>
       <span style="font-size:17px;font-weight:700;color:var(--navy);letter-spacing:-.01em;flex:1;">${inst.name}</span>
+      ${reorder}
       ${cogwheel}
     </div>`;
 
@@ -346,6 +372,22 @@ async function saveInstitutionSettings(id, oldName) {
   await loadPersonnel();
 }
 
+// Reorder the GLOBAL parish-wide institution order (institutions.sort_order) —
+// the SAME column + renumber path HR uses. One source of truth: reordering here
+// is reflected in HR and vice-versa. Admin/super-admin only.
+async function reorderInstitutionDir(id, dir) {
+  if (!isAdmin()) return;
+  const ordered = [...(store.institutions || [])];
+  const idx = ordered.findIndex(i => i.id === id);
+  const swap = dir === 'up' ? idx - 1 : idx + 1;
+  if (idx < 0 || swap < 0 || swap >= ordered.length) return;
+  [ordered[idx], ordered[swap]] = [ordered[swap], ordered[idx]];
+  await Promise.all(ordered.map((inst, i) =>
+    inst.sort_order === i ? null : sb.from('institutions').update({ sort_order: i }).eq('id', inst.id)
+  ).filter(Boolean));
+  await loadPersonnel();
+}
+
 async function deleteInstitution(id, name) {
   if (!confirm(`Deleting "${name}" will remove it from all personnel records. This cannot be undone. Continue?`)) return;
   const { error: persErr } = await sb.from('personnel')
@@ -463,4 +505,5 @@ Object.assign(window, {
   openPersonnelModal, savePersonnel, deletePersonnel, personnelTypeToggle,
   openInstitutionModal, saveInstitution,
   openInstitutionSettingsModal, saveInstitutionSettings, deleteInstitution,
+  reorderInstitutionDir,
 });

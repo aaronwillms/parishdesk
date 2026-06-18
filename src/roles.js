@@ -194,6 +194,29 @@ export function computePermissionBasis({ kind, isAdmin = false, hasManual = fals
   return { granted: bases.size > 0, bases, locked, lockedBy, lockLabel };
 }
 
+// ── Coordinator chip labels (shared, explicit per-sacrament wording) ─────────
+// Single source of truth for the coordinator label shown wherever a directory
+// person's coordinator role is surfaced. Keyed by the sacrament key as stored in
+// sacramental_roles. NOT a templated "{Sacrament} Coordinator" string — Marriage
+// is labeled "Wedding Coordinator". This map is the COMPLETE set: a coordinator
+// role with no entry here (e.g. annulments) produces NO chip, by design.
+export const SACRAMENT_COORDINATOR_LABELS = {
+  baptism:         'Baptismal Preparation Coordinator',
+  first_communion: 'First Communion Coordinator',
+  confirmation:    'Confirmation Coordinator',
+  ocia:            'OCIA Coordinator',
+  marriage:        'Wedding Coordinator',
+  // annulments: intentionally absent → no chip
+};
+
+// Map a person's coordinator sacrament keys to their chip labels, dropping any
+// key with no mapped label (no generic fallback). Deduped, order preserved.
+export function coordinatorChipLabels(sacramentKeys) {
+  return [...new Set(sacramentKeys || [])]
+    .map(k => SACRAMENT_COORDINATOR_LABELS[k])
+    .filter(Boolean);
+}
+
 export function isTeamAdmin(teamId) {
   if (isAdmin()) return true;  // admin and super_admin can manage all teams
   return store.currentUserRoles?.teamIds.includes(teamId) || false;
