@@ -19,8 +19,17 @@ const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 const STATUS_TONE = { inprogress: 'active', complete: 'complete', external: 'neutral', inactive: 'neutral' };
+// Explicit per-status chip colors (light mode): In Progress = yellow, Complete =
+// green, External = blue, Archived/Inactive = grey. Dark mode's !important badge
+// rule overrides these to slate, consistent with every other badge.
+const STATUS_STYLE = {
+  inprogress: 'background:#FEF9E7;color:#7D6608;',  // yellow
+  complete:   'background:#D8F3DC;color:#2D6A4F;',  // green
+  external:   'background:#D6EAF8;color:#1B4F72;',  // blue
+  inactive:   'background:#F2F3F4;color:#616A6B;',  // grey (archived/inactive)
+};
 function statusKey(c) { return c.archived ? 'inactive' : (c.status_code || 'inprogress'); }
-function statusChip(c) { const k = statusKey(c); return { label: (COUPLE_STATUS[k] || {}).label || k, tone: STATUS_TONE[k] || 'neutral' }; }
+function statusChip(c) { const k = statusKey(c); return { label: (COUPLE_STATUS[k] || {}).label || k, tone: STATUS_TONE[k] || 'neutral', style: STATUS_STYLE[k] }; }
 function typeChip(c) { return { label: MTYPE_BADGE[marType(c)] || 'Marriage', tone: 'neutral' }; }
 function ini(name) { const p = String(name || '').trim().split(/\s+/).filter(Boolean); return ((p[0]?.[0] || '') + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase(); }
 function coupleInitials(c) { const a = ini(s1Name(c)) || '?', b = ini(s2Name(c)) || '?'; return `${a}·${b}`; }
