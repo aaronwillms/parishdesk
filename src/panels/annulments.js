@@ -714,6 +714,7 @@ function buildTemplateModalHtml() {
   const tabs = ANNULMENT_TYPES.map(t => `<button class="anl-tpl-tab${_tplActive === t.v ? ' active' : ''}" onclick="anlTplTab('${t.v}')">${t.badge}</button>`).join('');
   return `<div class="modal-title">Document Templates</div>
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:1rem;border-bottom:.5px solid var(--stone);padding-bottom:8px;">${tabs}</div>
+    <div style="font-size:12px;color:#6B7280;margin-bottom:8px;">🔒 Locked documents are required and cannot be removed.</div>
     <div id="anl-tpl-docs"></div>
     <div style="display:flex;gap:6px;margin-top:8px;">
       <input type="text" id="anl-tpl-new" placeholder="Add document…" style="flex:1;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" onkeydown="if(event.key==='Enter'){event.preventDefault();anlTplAddDoc();}" />

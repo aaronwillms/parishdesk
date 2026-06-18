@@ -573,6 +573,7 @@ function renderTplBody() {
   const el = document.getElementById('conf-tpl-body'); if (!el) return;
   const t = _tpl();
   el.innerHTML = `${_sectionHead('Documents')}
+    <div style="font-size:12px;color:#6B7280;margin-bottom:8px;">🔒 Locked documents are required and cannot be removed.</div>
     <div id="conf-tpl-docs">${(t.documents || []).map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;"><span style="flex:1;font-size:13px;">${_esc(d.name)}</span>${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;"></i>` : `<button onclick="confTplRemove(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:14px;">×</button>`}</div>`).join('') || '<div style="font-size:12px;color:#9CA3AF;font-style:italic;">None.</div>'}</div>
     <div style="display:flex;gap:6px;margin-top:6px;"><input type="text" id="conf-tpl-new" placeholder="Add document…" style="flex:1;border-radius:6px;border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;background:#fff;" onkeydown="if(event.key==='Enter'){event.preventDefault();confTplAdd();}" /><button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="confTplAdd()">+ Add</button></div>
     ${_sectionHead('Service Hours')}

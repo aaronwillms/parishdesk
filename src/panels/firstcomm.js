@@ -474,6 +474,7 @@ async function openFcTemplate() {
 function buildTplHtml() {
   return `<div class="modal-title">First Communion Template</div>
     ${_sectionHead('Documents')}
+    <div style="font-size:12px;color:#6B7280;margin-bottom:8px;">🔒 Locked documents are required and cannot be removed.</div>
     <div id="fc-tpl-docs">${renderTplDocs()}</div>
     <div style="display:flex;gap:6px;margin-top:6px;"><input type="text" id="fc-tpl-new" placeholder="Add document…" style="flex:1;border-radius:6px;border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;background:#fff;" onkeydown="if(event.key==='Enter'){event.preventDefault();fcTplAdd();}" /><button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="fcTplAdd()">+ Add</button></div>
     <div style="font-size:12px;color:#6B7280;font-style:italic;margin-top:1rem;">Changes apply to new files only.</div>

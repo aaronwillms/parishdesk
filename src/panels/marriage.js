@@ -19,6 +19,16 @@ const MARRIAGE_TYPES = [
   { v:'sanatio',       label:'Sanatio in Radice',     badge:'Sanatio' },
 ];
 const MTYPE_BADGE = { nuptial_mass:'Nuptial Mass', outside_mass:'Outside Mass', convalidation:'Convalidation', sanatio:'Sanatio', external:'External' };
+// Required documents auto-added to new files based on each couple's situation (see autoDocList).
+// Shown read-only/locked in template editors so admins see the full picture of what will appear.
+const MARRIAGE_AUTO_DOCS = [
+  'Prenuptial Inquiry',
+  'Groom / Bride Baptismal Record (each baptized party)',
+  'Permission for Mixed Marriage (if applicable)',
+  'Dispensation for Disparity of Cult (if applicable)',
+  'Dispensation from Canonical Form (if non-church)',
+  'Death Certificate (if a prior marriage ended in death)',
+];
 const HOW_ENDED = ['Death', 'Annulment', 'Civil Divorce Only'];
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
 const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
@@ -413,9 +423,9 @@ function buildCoupleModalHtml(c) {
     <div id="mf-resp-other-wrap" style="display:${_M.respOther ? 'block' : 'none'};">${_input('mf-resp-other', 'Name', c?.preparation_responsible_override || '')}</div>`;
   h += _toggle('mf-external', 'External (preparation handled elsewhere)', _M.external, 'marOnExternalToggle()');
 
-  // Section 2 — Marriage type
+  // Section 2 — Marriage type (kept for external — type still matters for record keeping)
   h += _sectionHead('Marriage Type');
-  h += `<div id="mf-type-wrap" style="display:${_M.external ? 'none' : 'block'};">
+  h += `<div id="mf-type-wrap" style="display:block;">
     <label>Type</label><select id="mf-type" onchange="marOnTypeChange(this.value)">${MARRIAGE_TYPES.map(t => `<option value="${t.v}"${_M.type === t.v ? ' selected' : ''}>${t.label}</option>`).join('')}</select>
     <div id="mf-sanatio-note" class="anl-info-box" style="display:${_M.type === 'sanatio' ? 'block' : 'none'};">Sanatio in Radice does not require consent to be exchanged again.</div>
     <div id="mf-civil-wrap" style="display:${(_M.type === 'convalidation' || _M.type === 'sanatio') ? 'block' : 'none'};">${_input('mf-civil-date', 'Civil Marriage Date', c?.civil_marriage_date || '', 'date')}</div>
@@ -426,8 +436,8 @@ function buildCoupleModalHtml(c) {
   h += renderSpouseSection(c, 1);
   h += renderSpouseSection(c, 2);
 
-  // Section 5 — Wedding details (hidden if external)
-  h += `<div id="mf-wedding-section" style="display:${_M.external ? 'none' : 'block'};">`;
+  // Section 5 — Wedding details (kept for external)
+  h += `<div id="mf-wedding-section" style="display:block;">`;
   h += _sectionHead('Wedding Details');
   h += _input('mf-wd', 'Date of Marriage', c?.wedding_date || '', 'date');
   h += _toggle('mf-nonchurch', 'Non-Church Wedding?', _M.nonChurch, 'marOnNonChurchToggle()');
@@ -518,8 +528,8 @@ function autoDocList() {
   const docs = [];
   docs.push({ name: 'Prenuptial Inquiry', auto: true, deletable: false });
   const s1u = _M.s1.unbaptized, s2u = _M.s2.unbaptized, s1nc = _M.s1.nonCatholic, s2nc = _M.s2.nonCatholic;
-  if (!s1u) docs.push({ name: 'Spouse 1 Baptismal Record', auto: true, deletable: false, baptism: 1 });
-  if (!s2u) docs.push({ name: 'Spouse 2 Baptismal Record', auto: true, deletable: false, baptism: 2 });
+  if (!s1u) docs.push({ name: 'Groom Baptismal Record', auto: true, deletable: false, baptism: 1 });
+  if (!s2u) docs.push({ name: 'Bride Baptismal Record', auto: true, deletable: false, baptism: 2 });
   if (((s1nc && !s2nc) || (s2nc && !s1nc)) && !s1u && !s2u) docs.push({ name: 'Permission for Mixed Marriage', auto: true, deletable: false });
   if (s1u || s2u) docs.push({ name: 'Dispensation for Disparity of Cult', auto: true, deletable: false });
   if (_M.nonChurch) docs.push({ name: 'Dispensation from Canonical Form', auto: true, deletable: false });
@@ -597,7 +607,8 @@ function renderOciaChip(n) {
 function marOnRespChange(v) { _M.respOther = v === '__other'; document.getElementById('mf-resp-other-wrap').style.display = _M.respOther ? 'block' : 'none'; }
 function marOnExternalToggle() {
   _M.external = document.getElementById('mf-external').checked;
-  ['mf-type-wrap', 'mf-wedding-section', 'mf-docs-section', 'mf-steps-section'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = _M.external ? 'none' : 'block'; });
+  // External only removes Documents + Steps of Preparation; Type, Wedding Details, Fees stay.
+  ['mf-docs-section', 'mf-steps-section'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = _M.external ? 'none' : 'block'; });
 }
 function marOnTypeChange(v) {
   _M.type = v;
@@ -741,7 +752,7 @@ async function marSaveCouple() {
     is_external: external,
     preparation_responsible_id: respSel && respSel !== '__other' ? respSel : null,
     preparation_responsible_override: respSel === '__other' ? (_v('mf-resp-other') || null) : null,
-    marriage_type: external ? null : _M.type,
+    marriage_type: _M.type,
     civil_marriage_date: (_M.type === 'convalidation' || _M.type === 'sanatio') ? (_v('mf-civil-date') || null) : null,
     sanatio_faculty: _M.type === 'sanatio' ? (_v('mf-faculty') || null) : null,
     spouse1_first: s1first || null, spouse1_middle: _v('mf-s1-middle') || null, spouse1_last: s1last || null, spouse1_dob: _v('mf-s1-dob') || null,
@@ -755,17 +766,17 @@ async function marSaveCouple() {
     // contact fields (legacy columns)
     groom_phone: _v('mf-s1-cell') || null, groom_email: _v('mf-s1-email') || null,
     bride_phone: _v('mf-s2-cell') || null, bride_email: _v('mf-s2-email') || null,
-    // wedding details
-    wedding_date: external ? (prior?.wedding_date || null) : (_v('mf-wd') || null),
-    wedding_time: (external || _M.nonChurch) ? null : (_v('mf-wt') || null),
-    non_church_wedding: external ? false : _M.nonChurch,
-    wedding_institution_id: (!external && instSel && instSel !== '__other') ? instSel : null,
-    wedding_church_override: (!external && instSel === '__other') ? (_v('mf-church-override') || null) : null,
-    wedding_city: external ? null : (_v('mf-wcity') || null),
-    wedding_state: external ? null : (_v('mf-wstate') || null),
-    officiant_id: (!external && offSel && offSel !== '__other') ? offSel : null,
-    officiant_override: (!external && offSel === '__other') ? (_v('mf-officiant-override') || null) : null,
-    delegation_given: (!external && offSel === '__other') ? _chk('mf-delegation') : false,
+    // wedding details (kept for external)
+    wedding_date: _v('mf-wd') || null,
+    wedding_time: _M.nonChurch ? null : (_v('mf-wt') || null),
+    non_church_wedding: _M.nonChurch,
+    wedding_institution_id: (instSel && instSel !== '__other') ? instSel : null,
+    wedding_church_override: instSel === '__other' ? (_v('mf-church-override') || null) : null,
+    wedding_city: _v('mf-wcity') || null,
+    wedding_state: _v('mf-wstate') || null,
+    officiant_id: (offSel && offSel !== '__other') ? offSel : null,
+    officiant_override: offSel === '__other' ? (_v('mf-officiant-override') || null) : null,
+    delegation_given: offSel === '__other' ? _chk('mf-delegation') : false,
     documents: finalDocs,
     steps: external ? [] : _M.steps,
     fees: _M.fees,
@@ -820,8 +831,12 @@ function buildTplHtml() {
 function renderTplBody() {
   const el = document.getElementById('mar-tpl-body'); if (!el) return;
   const t = _tplState[_tplActive] || { documents: [], steps: [], fees_enabled: true, fees: [] };
+  // Read-only reference list of auto-added required documents (none for external prep).
+  const autoDocsHtml = _tplActive === 'external' ? '' : MARRIAGE_AUTO_DOCS.map(name => `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;"><span style="flex:1;font-size:13px;color:#6B7280;">${_esc(name)}</span><i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required (auto-added)"></i></div>`).join('');
   el.innerHTML = `
     ${_sectionHead('Documents')}
+    <div style="font-size:12px;color:#6B7280;margin-bottom:8px;">🔒 Locked documents are required and cannot be removed.</div>
+    ${autoDocsHtml}
     <div id="mar-tpl-docs">${(t.documents || []).map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;"><span style="flex:1;font-size:13px;">${_esc(d.name)}</span>${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;"></i>` : `<button onclick="marTplRemoveDoc(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;">×</button>`}</div>`).join('') || '<div style="font-size:12px;color:#9CA3AF;font-style:italic;">None.</div>'}</div>
     <div style="display:flex;gap:6px;margin-top:6px;"><input type="text" id="mar-tpl-doc-new" placeholder="Add document…" style="flex:1;border-radius:6px;border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;background:#fff;" /><button class="btn-secondary" style="padding:.3rem .8rem;font-size:12px;" onclick="marTplAddDoc()">+ Add</button></div>
     ${_sectionHead('Steps')}

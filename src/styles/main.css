@@ -308,10 +308,6 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
   /* Unread dot: navy #1C2B3A would vanish on the dark row — make it a gold accent */
   body.dark-mode #chat-drop .chat-drop-row [style*="width:8px"]{background:#C9A84C !important;}
   /* Message bubbles */
-  body.dark-mode .message-bubble-incoming,body.dark-mode .msg-bubble.incoming,
-  body.dark-mode [class*="bubble"]:not([class*="outgoing"]):not([class*="sent"]){background:#243447 !important;color:#F8F7F4 !important;}
-  body.dark-mode .message-bubble-outgoing,body.dark-mode .msg-bubble.outgoing,
-  body.dark-mode [class*="bubble"][class*="outgoing"],body.dark-mode [class*="bubble"][class*="sent"]{background:#1C2B3A !important;color:#F8F7F4 !important;}
   body.dark-mode .message-input-area,body.dark-mode [class*="msg-input"],body.dark-mode [class*="message-input"]{background:#1A2634 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
   body.dark-mode .message-timestamp,body.dark-mode [class*="msg-time"],body.dark-mode [class*="message-time"]{color:#9CA3AF !important;}
   /* Mobile Settings card */
@@ -416,12 +412,12 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
     border-color: #2D3F50 !important;
   }
 
-  /* Incoming chat bubbles → slate; outgoing stays navy */
+  /* Incoming chat bubbles → dark grey (distinct from #0F1923 bg); outgoing navy */
   body.dark-mode .msg-bubble,
-  body.dark-mode [class*="bubble"],
-  body.dark-mode [class*="message-bubble"] {
-    background: #243447 !important;
+  body.dark-mode [class*="bubble"]:not([class*="out"]):not([class*="sent"]):not([class*="self"]) {
+    background: #2D3F50 !important;
     color: #F8F7F4 !important;
+    border: 1px solid #3D5068 !important;
   }
   body.dark-mode .msg-bubble.outgoing,
   body.dark-mode [class*="bubble"][class*="out"],

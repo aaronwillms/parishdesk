@@ -46,7 +46,7 @@ function ageFlag(p) { const a = ageOf(dobOf(p)); return a !== null && a > 7; }
 // ── Data ─────────────────────────────────────────────────────────────────────
 async function loadTemplate() {
   const { data } = await sb.from('baptism_templates').select('*').limit(1);
-  _tplRow = (data && data[0]) || { fees_enabled: false, fees: [] };
+  _tplRow = (data && data[0]) || { documents: [], steps: [{ step: 'Parent Preparation Complete', deletable: true }] };
 }
 export async function loadBaptism() {
   await loadTemplate();

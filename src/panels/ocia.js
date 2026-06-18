@@ -576,6 +576,7 @@ function buildTplHtml() {
   const tabs = [['catechumen', 'Catechumen'], ['candidate', 'Candidate']].map(([v, l]) => `<button class="anl-tpl-tab${_tplActive === v ? ' active' : ''}" data-v="${v}" onclick="ociaTplTab('${v}')">${l}</button>`).join('');
   return `<div class="modal-title">OCIA Templates</div>
     <div style="display:flex;gap:4px;margin-bottom:1rem;border-bottom:.5px solid var(--stone);padding-bottom:8px;">${tabs}</div>
+    <div style="font-size:12px;color:#6B7280;margin-bottom:8px;">🔒 Locked documents are required and cannot be removed.</div>
     <div id="ocia-tpl-docs"></div>
     <div style="display:flex;gap:6px;margin-top:8px;"><input type="text" id="ocia-tpl-new" placeholder="Add document…" style="flex:1;border-radius:6px;border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;background:#fff;" onkeydown="if(event.key==='Enter'){event.preventDefault();ociaTplAdd();}" /><button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="ociaTplAdd()">+ Add</button></div>
     <div style="font-size:12px;color:#6B7280;font-style:italic;margin-top:1rem;">Changes apply to new files only.</div>

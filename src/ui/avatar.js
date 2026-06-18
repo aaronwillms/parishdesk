@@ -47,7 +47,7 @@ function _applyInitials(el, size, name, userId) {
     : `<span style="color:rgba(255,255,255,.7);font-size:${Math.round(size * 0.5)}px;line-height:1;">👤</span>`;
 }
 
-export function createAvatar({ container, userId, name, size = 32 }) {
+export function createAvatar({ container, userId, name, avatarUrl = null, size = 32 }) {
   container.innerHTML = '';
 
   // Check store first
@@ -55,11 +55,13 @@ export function createAvatar({ container, userId, name, size = 32 }) {
     ? store.currentUserProfile
     : null;
 
-  const el = _buildEl(size, profile?.avatar_url || null, name, userId);
+  // Prefer a pre-fetched avatarUrl (avoids an N+1 query), then the store hit.
+  const effectiveUrl = avatarUrl || profile?.avatar_url || null;
+  const el = _buildEl(size, effectiveUrl, name, userId);
   container.appendChild(el);
 
-  // If no store hit and we have a userId, fetch the profile
-  if (!profile && userId) {
+  // Only hit the DB when we have neither a provided URL nor a store hit.
+  if (!effectiveUrl && !profile && userId) {
     sb.from('user_profiles').select('avatar_url,initials_color').eq('user_id', userId).maybeSingle()
       .then(({ data }) => {
         if (data?.avatar_url) {

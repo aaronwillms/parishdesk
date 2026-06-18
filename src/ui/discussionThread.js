@@ -526,7 +526,7 @@ function _renderMsgs(discId, msgs, currentUserId, profileMap) {
         ${!isMine ? avatarSlot : ''}
         <div style="max-width:72%;display:flex;flex-direction:column;${isMine ? 'align-items:flex-end;' : 'align-items:flex-start;'}">
           ${!isMine && isFirst ? `<div style="font-size:11px;color:${labelColor};margin-bottom:2px;margin-left:4px;font-weight:600;">${_esc(name)}</div>` : ''}
-          <div style="
+          <div class="msg-bubble ${isMine ? 'outgoing' : 'incoming'}" style="
             background:${bubbleBg};
             color:${bubbleColor};
             border-radius:18px;

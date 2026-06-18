@@ -152,8 +152,8 @@ async function _renderDrop(drop) {
   const profMap  = {};
   if (otherIds.length) {
     const { data: profs } = await sb.from('user_profiles')
-      .select('user_id, personnel_id, personnel(name)').in('user_id', otherIds);
-    (profs || []).forEach(p => { profMap[p.user_id] = { name: p.personnel?.name || 'User', pid: p.personnel_id }; });
+      .select('user_id, personnel_id, avatar_url, personnel(name)').in('user_id', otherIds);
+    (profs || []).forEach(p => { profMap[p.user_id] = { name: p.personnel?.name || 'User', pid: p.personnel_id, avatar: p.avatar_url || null }; });
   }
 
   const lrMap = {};
@@ -183,7 +183,8 @@ async function _renderDrop(drop) {
       pid = uid ? (profMap[uid]?.pid || null) : null;
       displayName = uid ? (profMap[uid]?.name || 'Unknown') : 'Unknown';
     }
-    return { id: cid, isGroup: !!info.is_group, displayName, uid, pid, otherParticipants, lastMsg, unread, updatedAt: lastMsg?.created_at || '' };
+    const avatar = uid ? (profMap[uid]?.avatar || null) : null;
+    return { id: cid, isGroup: !!info.is_group, displayName, uid, pid, avatar, otherParticipants, lastMsg, unread, updatedAt: lastMsg?.created_at || '' };
   }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8);
 
   const rows = convs.map(c => {
@@ -191,7 +192,7 @@ async function _renderDrop(drop) {
     const ts      = c.lastMsg ? _relTime(c.lastMsg.created_at) : '';
     const avatar  = c.isGroup
       ? _groupAvatarClusterHtml(c.otherParticipants, 3, 28, 10)
-      : `<div class="cd-avatar" data-uid="${c.uid}" data-name="${_esc(c.displayName)}" data-pid="${c.pid || ''}" style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;"></div>`;
+      : `<div class="cd-avatar" data-uid="${c.uid}" data-name="${_esc(c.displayName)}" data-pid="${c.pid || ''}" data-avatar="${_esc(c.avatar || '')}" style="width:28px;height:28px;border-radius:50%;background:#E2DDD6;flex-shrink:0;"></div>`;
     return `
       <div class="chat-drop-row" data-conv-id="${c.id}" style="
         display:flex;align-items:center;gap:10px;padding:.65rem 1rem;cursor:pointer;
@@ -223,8 +224,8 @@ async function _renderDrop(drop) {
     </div>`;
 
   drop.querySelectorAll('.cd-avatar').forEach(slot => {
-    const { uid, name, pid } = slot.dataset;
-    createAvatar({ container: slot, userId: pid || uid, name: name || uid, size: 28 });
+    const { uid, name, avatar } = slot.dataset;
+    createAvatar({ container: slot, userId: uid, name: name || uid, avatarUrl: avatar || null, size: 28 });
   });
   drop.querySelectorAll('.msg-group-av-slot').forEach(slot => {
     createAvatar({ container: slot, userId: slot.dataset.uid, name: slot.dataset.name || slot.dataset.uid, size: 28 });
@@ -285,10 +286,10 @@ async function _loadConversations() {
 
   if (otherUserIds.length) {
     const { data: profiles } = await sb.from('user_profiles')
-      .select('user_id, personnel_id, personnel(id,name)')
+      .select('user_id, personnel_id, avatar_url, personnel(id,name)')
       .in('user_id', otherUserIds);
     (profiles || []).forEach(p => {
-      _userProfileMap[p.user_id] = { name: p.personnel?.name || 'User', personnelId: p.personnel_id };
+      _userProfileMap[p.user_id] = { name: p.personnel?.name || 'User', personnelId: p.personnel_id, avatarUrl: p.avatar_url || null };
     });
   }
 
@@ -322,7 +323,7 @@ async function _loadConversations() {
       personnelId: _userProfileMap[p.user_id]?.personnelId || null,
     }));
 
-    let otherUserId = null, otherName = 'Unknown', otherPersonnelId = null, displayName;
+    let otherUserId = null, otherName = 'Unknown', otherPersonnelId = null, otherAvatar = null, displayName;
     if (info.is_group) {
       const others = participants.filter(p => p.userId !== _currentUserId);
       displayName = info.name || _truncate(others.map(p => p.name).join(', '), 30);
@@ -332,6 +333,7 @@ async function _loadConversations() {
       const otherProfile = otherUserId ? _userProfileMap[otherUserId] : null;
       otherName = otherProfile?.name || 'Unknown';
       otherPersonnelId = otherProfile?.personnelId || null;
+      otherAvatar = otherProfile?.avatarUrl || null;
       displayName = otherName;
     }
 
@@ -352,6 +354,7 @@ async function _loadConversations() {
       otherUserId,
       otherName,
       otherPersonnelId,
+      otherAvatar,
       lastMsg,
       unreadCount,
       updatedAt:  lastMsg?.created_at || '',
@@ -490,7 +493,7 @@ function _convRowHtml(c) {
   const others   = c.isGroup ? c.participants.filter(p => p.userId !== _currentUserId) : [];
   const avatarEl = c.isGroup
     ? _groupAvatarClusterHtml(others, 3, 28, 10)
-    : `<div class="msg-avatar-slot" data-uid="${c.otherUserId || ''}" data-name="${_esc(c.otherName)}" style="flex-shrink:0;width:36px;height:36px;border-radius:50%;background:#E2DDD6;"></div>`;
+    : `<div class="msg-avatar-slot" data-uid="${c.otherUserId || ''}" data-name="${_esc(c.otherName)}" data-avatar="${_esc(c.otherAvatar || '')}" style="flex-shrink:0;width:36px;height:36px;border-radius:50%;background:#E2DDD6;"></div>`;
 
   return `
     <div class="msg-conv-row" data-conv-id="${c.id}" style="
@@ -646,7 +649,7 @@ function _renderMessages() {
         ${!isMine ? avatarSlot : ''}
         <div style="max-width:70%;display:flex;flex-direction:column;${isMine ? 'align-items:flex-end;' : 'align-items:flex-start;'}">
           ${showSenderName ? `<div style="font-size:11px;color:${labelColor};margin-bottom:2px;margin-left:4px;font-weight:600;">${_esc(name)}</div>` : ''}
-          <div style="
+          <div class="msg-bubble ${isMine ? 'outgoing' : 'incoming'}" style="
             background:${bubbleBg};
             color:${bubbleColor};
             border-radius:18px;
@@ -694,8 +697,8 @@ function _groupMessages(msgs) {
 
 function _hydrateConvList() {
   document.querySelectorAll('.msg-avatar-slot').forEach(slot => {
-    const { uid, name } = slot.dataset;
-    createAvatar({ container: slot, userId: uid, name: name || uid, size: 36 });
+    const { uid, name, avatar } = slot.dataset;
+    createAvatar({ container: slot, userId: uid, name: name || uid, avatarUrl: avatar || null, size: 36 });
   });
   document.querySelectorAll('.msg-group-av-slot').forEach(slot => {
     createAvatar({ container: slot, userId: slot.dataset.uid, name: slot.dataset.name || slot.dataset.uid, size: 28 });

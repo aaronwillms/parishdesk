@@ -243,10 +243,12 @@ export function updateProjectStats() {
 // ── Projects & Tasks ───────────────────────────────────────────────────────
 
 const _PROJ_STATUS = {
-  in_progress: { label: 'In Progress', color: '#1565C0', bg: '#EFF6FF', border: '#1565C0' },
-  blocked:     { label: 'Blocked',     color: '#8B1A2F', bg: '#FEF2F2', border: '#8B1A2F' },
-  not_started: { label: 'Not Started', color: '#6A1B9A', bg: '#F5F3FF', border: '#6A1B9A' },
-  complete:    { label: 'Complete',    color: '#2E7D32', bg: '#F0FDF4', border: '#2E7D32' },
+  planning:    { label: 'Planning',    color: '#00695C', bg: '#E0F7FA', border: '#00695C' }, // Teal
+  not_started: { label: 'Not Started', color: '#6A1B9A', bg: '#F5F3FF', border: '#6A1B9A' }, // Purple
+  in_progress: { label: 'In Progress', color: '#1565C0', bg: '#EFF6FF', border: '#1565C0' }, // Blue
+  blocked:     { label: 'Blocked',     color: '#8B1A2F', bg: '#FEF2F2', border: '#8B1A2F' }, // Cardinal
+  complete:    { label: 'Complete',    color: '#2E7D32', bg: '#F0FDF4', border: '#2E7D32' }, // Green
+  task:        { label: 'Task',        color: '#B45309', bg: '#FFFBEB', border: '#C9A84C' }, // Gold
 };
 const _TASK_BORDER = '#C9A84C';
 
@@ -330,7 +332,7 @@ export function renderDashProjects() {
             <input type="checkbox" class="dash-task-cb" data-task-id="${item.id}"
               style="flex-shrink:0;width:14px;height:14px;accent-color:#1C2B3A;cursor:pointer;" />
             <span style="font-size:13px;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
-            <span style="font-size:9.5px;font-weight:700;background:#FFFBEB;color:#B45309;border:1px solid #C9A84C;border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">Task</span>
+            <span style="font-size:9.5px;font-weight:700;background:${_PROJ_STATUS.task.bg};color:${_PROJ_STATUS.task.color};border:1px solid ${_PROJ_STATUS.task.border};border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">${_PROJ_STATUS.task.label}</span>
           </div>
           ${item.dueDate ? `<div style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};padding-left:22px;">${fmtDate(item.dueDate)}</div>` : ''}
         </div>`;
@@ -854,20 +856,14 @@ export async function loadInit() {
     _dashPersonnelId = scope.personnelId || null;
     _checkGcalButton();
 
-    // Skip project/task fetches if already loaded (e.g. called a second time)
-    const projectsAlreadyLoaded = store.allProjects?.length > 0 && store._projectScopeReady !== undefined;
-    const tasksAlreadyLoaded    = store.allTasks?.length > 0    && store._taskScopeReady    !== undefined;
-
+    // Always re-fetch projects and tasks so dashboard status chips reflect current data
+    // (status changes made on the Projects/Tasks panels must show here without a stale cache).
     const [projRes, caseRes, coupleRes, alertRes, tasksRes] = await Promise.all([
-      projectsAlreadyLoaded
-        ? Promise.resolve({ data: null, error: null })
-        : sb.from('projects').select('*').order('due_date', { nullsFirst: false }),
+      sb.from('projects').select('*').order('due_date', { nullsFirst: false }),
       sb.from('annulment_cases').select('id,status_code,archived,petitioner,respondent,judgement_finalized'),
       sb.from('couples').select('id,status_code,archived'),
       sb.from('alerts').select('*').eq('active', true),
-      tasksAlreadyLoaded
-        ? Promise.resolve({ data: null, error: null })
-        : sb.from('tasks').select('id,title,due_date,completed,assigned_to,team_id,visibility').order('due_date', { nullsFirst: false }),
+      sb.from('tasks').select('id,title,due_date,completed,status,assigned_to,team_id,visibility').order('due_date', { nullsFirst: false }),
     ]);
 
     if (projRes.error)   console.error('projects error:',   projRes.error.message);
@@ -876,7 +872,7 @@ export async function loadInit() {
     if (alertRes.error)  console.error('alerts error:',     alertRes.error.message);
     if (tasksRes.error)  console.error('tasks error:',      tasksRes.error.message);
 
-    if (!projectsAlreadyLoaded && projRes.data) {
+    if (projRes.data) {
       store.allProjects = projRes.data.filter(p => isVisible(p, scope));
       store._projectScopeReady = scope.ready;
     }
@@ -895,7 +891,7 @@ export async function loadInit() {
     set('stat-nearly',          activeCouples.filter(c => c.status_code === 'complete').length);
     set('stat-needs-attention', activeCouples.filter(c => c.status_code === 'inprogress').length);
 
-    if (!tasksAlreadyLoaded && tasksRes.data) {
+    if (tasksRes.data) {
       store.allTasks = tasksRes.data.filter(t => isVisible(t, scope));
       store._taskScopeReady = scope.ready;
     } else if (!store.allTasks) {
