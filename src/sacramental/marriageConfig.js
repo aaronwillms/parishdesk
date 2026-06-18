@@ -6,7 +6,6 @@
 
 import { fmtDate, formatDateDisplay } from '../utils.js';
 import { formatPhone } from '../utils/phone.js';
-import { todayCST } from '../utils.js';
 import {
   getCouples, getCouple, marCanManage, COUPLE_STATUS, MTYPE_BADGE,
   marType, coupleLabel, s1Name, s2Name, normDocs, normSteps, normFees, notesOf,
@@ -104,21 +103,13 @@ function emailCouple(c) {
   window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join('\n'))}`;
 }
 
-// Upcoming-first sort: date-not-set (active work) at the very top, then upcoming
-// soonest→latest, then past most-recent→oldest, then archived/inactive last.
-function sortRank(c) {
-  if (c.archived || c.status_code === 'inactive') return 3;
-  const d = weddingDateOf(c);
-  if (!d) return 0;                       // date not set → top of active
-  return d >= todayCST() ? 1 : 2;         // upcoming : past
-}
-
 // ── Config object ───────────────────────────────────────────────────────────
 export const marriageConfig = {
   panelKey: 'marriage',
   title: 'Marriage Prep',
   newLabel: '+ New File',
-  groupBy: null,   // flat list (a SORT, not a grouping layer)
+  groupBy: null,            // flat list
+  sortByDate: 'wedding_date',   // shell handles upcoming-first + archived-last
 
   canManage: () => marCanManage(),
   openCreate: () => window.openCoupleAdd?.(),
@@ -126,14 +117,8 @@ export const marriageConfig = {
   fetchRecords: async () => getCouples(),
   fetchRecord: (id) => getCouple(id),
   searchText: (c) => coupleLabel(c),
-  compare: (a, b) => {
-    const ra = sortRank(a), rb = sortRank(b);
-    if (ra !== rb) return ra - rb;
-    const da = weddingDateOf(a) || '', db = weddingDateOf(b) || '';
-    if (ra === 1) return da.localeCompare(db);     // upcoming: soonest first
-    if (ra === 2) return db.localeCompare(da);     // past: most recent first
-    return coupleLabel(a).toLowerCase().localeCompare(coupleLabel(b).toLowerCase());  // date-not-set / archived: alpha
-  },
+  // Tiebreak only (same date / both undated / within the archived cluster).
+  compare: (a, b) => coupleLabel(a).toLowerCase().localeCompare(coupleLabel(b).toLowerCase()),
 
   statusFilters: [
     { key: 'all',        label: 'All',         match: () => true },

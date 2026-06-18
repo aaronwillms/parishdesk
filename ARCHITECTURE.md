@@ -85,6 +85,26 @@ don't set it (Baptism, etc.) are unaffected. The **Add Student** modal only
 cohorts it shows a disabled empty state pointing to Manage Cohorts — Add Student
 is never a back-door to cohort creation.
 
+### Shell sort — upcoming-date + archived-last
+
+Two parameterized, shell-level sort behaviors (in `panelShell.js`), keyed to the
+**existing `archived` boolean** that every sacramental table already uses
+(`couples`, `sacramental_baptism`, `sacramental_firstcomm`) — the shell never
+invents a new archive flag:
+
+- **`sortByDate: '<field>'`** (flat panels) — sorts the active list by that date
+  field: records with **no date at the top** (active work needing scheduling),
+  then **upcoming soonest-first**, then **past most-recent-first**. Marriage uses
+  `wedding_date`, Baptism uses `baptism_date`.
+- **Archived-last** (automatic, every panel) — `archived` records always sort
+  **below** active ones. On flat panels they form a bottom **"Archived"** cluster
+  (most-recent first); within First Communion's groups, archived records sink to
+  the bottom of their group while non-archived order is unchanged.
+
+A flat panel with neither `sortByDate` nor any archived records renders the exact
+old flat list; First Communion's grouped output is unchanged except that archived
+records (if any) move to the end of their group.
+
 ### Sacramental preparer vs. officiant
 
 `officiant` is a per-record field for **Baptism and Marriage only** (the minister

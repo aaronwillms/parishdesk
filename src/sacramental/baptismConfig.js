@@ -99,6 +99,7 @@ export const baptismConfig = {
   title: 'Baptismal Preparation',
   newLabel: '+ Add Child',
   groupBy: null,
+  sortByDate: 'baptism_date',   // shell: upcoming-first + archived-last
 
   canManage: () => bapCanManage(),
   canManageTemplate: () => isSacramentCoordinator('baptism'),

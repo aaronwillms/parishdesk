@@ -6,8 +6,30 @@
 // panel-specific (queries, fields, status logic, edit form, save) comes from the
 // config — see baptismConfig.js and the schema in ARCHITECTURE.md.
 
+import { todayCST } from '../utils.js';
+
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+// ── Shared sort behaviors (sortByDate + archived-last) ──────────────────────
+// Archive is the EXISTING per-record `archived` boolean (couples / sacramental_*);
+// the shell never invents a new flag. Archived records always sort below active.
+const isArchived = (r) => !!(r && r.archived);
+// Active date order: records with NO date at the TOP (active work needing
+// scheduling), then UPCOMING soonest-first, then past most-recent-first.
+function dateActiveCompare(a, b, field) {
+  const da = a[field] || '', db = b[field] || '', today = todayCST();
+  const rank = (d) => !d ? 0 : (d >= today ? 1 : 2);   // 0 no-date, 1 upcoming, 2 past
+  const ra = rank(da), rb = rank(db);
+  if (ra !== rb) return ra - rb;
+  if (ra === 1) return da.localeCompare(db);            // upcoming: soonest first
+  if (ra === 2) return db.localeCompare(da);            // past: most recent first
+  return 0;                                             // both no-date → caller tiebreak
+}
+function archivedDivider() {
+  return `<div style="display:flex;align-items:center;gap:8px;margin:14px 0 6px;font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#9CA3AF;">
+    <div style="flex:1;height:1px;background:var(--stone);"></div>Archived<div style="flex:1;height:1px;background:var(--stone);"></div></div>`;
+}
 
 // Map a chip/flag tone to an existing badge token class (dark-mode handled in CSS).
 const TONE_CLASS = { pending: 'badge-pending', active: 'badge-active', urgent: 'badge-urgent', complete: 'badge-complete', neutral: 'badge-complete' };
@@ -132,7 +154,23 @@ function listBodyHtml() {
   const s = _active, cfg = s.config;
   const recs = visibleRecords();
   if (!recs.length) return `<div style="font-size:13px;color:#6B7280;padding:.5rem;">No records match.</div>`;
-  if (!cfg.groupBy) return recs.map(itemHtml).join('');
+
+  // Flat path (Baptism, Marriage). With no date sort and no archived records the
+  // output is byte-for-byte the old flat list. Otherwise: active records (sorted
+  // by sortByDate when set) above, then an "Archived" cluster (most recent first).
+  if (!cfg.groupBy) {
+    const hasArchived = recs.some(isArchived);
+    if (!cfg.sortByDate && !hasArchived) return recs.map(itemHtml).join('');
+    const active = recs.filter(r => !isArchived(r));
+    const archived = recs.filter(isArchived);
+    if (cfg.sortByDate) {
+      active.sort((a, b) => dateActiveCompare(a, b, cfg.sortByDate) || (cfg.compare ? cfg.compare(a, b) : 0));
+      archived.sort((a, b) => ((b[cfg.sortByDate] || '').localeCompare(a[cfg.sortByDate] || '')) || (cfg.compare ? cfg.compare(a, b) : 0));
+    }
+    let html = active.map(itemHtml).join('');
+    if (archived.length) html += archivedDivider() + archived.map(itemHtml).join('');
+    return html;
+  }
 
   // Group, then order keys: "__none" (Unassigned) always last; otherwise by the
   // config's groupCompare (most-recent first) so the newest cohort leads.
@@ -152,12 +190,14 @@ function listBodyHtml() {
   return keys.map(k => {
     const rows = groups.get(k);
     const collapsed = !searching && s.groupsCollapsed.has(k);
+    // Archived-last within the group (stable — non-archived keep their order).
+    const ordered = [...rows.filter(r => !isArchived(r)), ...rows.filter(isArchived)];
     return `<div class="sac-group">
       <div class="sac-group-head" data-act="toggle-group" data-key="${esc(k)}">
         <i class="fa-solid fa-chevron-${collapsed ? 'right' : 'down'}" style="font-size:10px;"></i>
         ${esc(label(k))} <span style="color:#9CA3AF;font-weight:400;">(${rows.length})</span>
       </div>
-      ${collapsed ? '' : rows.map(itemHtml).join('')}
+      ${collapsed ? '' : ordered.map(itemHtml).join('')}
     </div>`;
   }).join('');
 }
