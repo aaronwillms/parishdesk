@@ -157,6 +157,22 @@ new officiant field replaced the legacy inline select and is seeded from the
 legacy `officiant_id`/`officiant_override`, which (with `officiant_override`)
 become dead columns for a later cleanup.
 
+**Wedding location address — derived, not file-stored.** An institution-based
+wedding location stores only `couples.wedding_institution_id`; its address is
+**derived read-only** from the institution record via `getInstitutionAddress()`
+(which resolves the principal institution to `parish_settings` internally — the
+marriage file stays agnostic). The edit form shows a read-only "Address (from
+institution record)" block, not editable city/state. The one case the file keeps
+its own address is an explicit **"Other location"** (non-institution venue, e.g.
+Outside Mass): `wedding_church_override` + `wedding_city` + `wedding_state` are
+stored on the file. `weddingLocation(c)` ([src/panels/marriage.js](src/panels/marriage.js))
+encapsulates the two cases (distinguished by `wedding_institution_id`) and feeds
+the detail read view and the Email-couple summary. Consequently
+`couples.wedding_city` / `wedding_state` are **no longer written for
+institution-based locations** (they previously held a stale per-file copy — the
+source of the "locked but empty city/state" bug); they remain in use **only** for
+the "Other location" path, so they are not fully dead — do not drop them.
+
 ### Config schema (the contract a panel implements)
 
 | Key | Type | Purpose |

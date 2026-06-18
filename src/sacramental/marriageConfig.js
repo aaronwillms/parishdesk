@@ -9,7 +9,7 @@ import { formatPhone } from '../utils/phone.js';
 import {
   getCouples, getCouple, marCanManage, COUPLE_STATUS, MTYPE_BADGE,
   marType, coupleLabel, s1Name, s2Name, normDocs, normSteps, normFees, notesOf,
-  progressOf, feeTotals, weddingDateOf, officiantOf, preparerOf, weddingChurch,
+  progressOf, feeTotals, weddingDateOf, officiantOf, preparerOf, weddingLocation,
   buildMarEditForm, marSaveEdit, marDeleteRec, marBulkStatus,
 } from '../panels/marriage.js';
 
@@ -35,13 +35,15 @@ function spouseLine(c, n) {
 }
 function fileDetails(c) {
   const wd = weddingDateOf(c);
+  const loc = weddingLocation(c);
   const dateLine = wd ? `${esc(formatDateDisplay(wd))}${c.wedding_time ? ' · ' + esc(c.wedding_time) : ''}` : '<span style="color:#9CA3AF;">Not set</span>';
   return [
     row('Spouse 1', spouseLine(c, 1)),
     row('Spouse 2', spouseLine(c, 2)),
     row('Type', esc(MTYPE_BADGE[marType(c)] || '') + (c.is_external ? ' · External' : '')),
     row('Wedding', dateLine),
-    row('Church', weddingChurch(c) ? esc(weddingChurch(c)) : (c.non_church_wedding ? 'Non-church wedding' : '')),
+    row('Location', loc.name ? esc(loc.name) : (c.non_church_wedding ? 'Non-church wedding' : '')),
+    row('Address', loc.lines.length ? esc(loc.lines.join(', ')) : ''),
     row('Officiant', officiantOf(c) ? esc(officiantOf(c)) + (c.delegation_given ? ' · delegation given' : '') : ''),
     row('Preparer', preparerOf(c) ? esc(preparerOf(c)) : ''),
     row('Civil marriage', c.civil_marriage_date ? esc(formatDateDisplay(c.civil_marriage_date)) : ''),
@@ -94,12 +96,14 @@ function emailCouple(c) {
   const to = [c.groom_email, c.bride_email].filter(Boolean).join(',');
   const subject = `Marriage Preparation — ${coupleLabel(c)}`;
   const wd = weddingDateOf(c);
+  const loc = weddingLocation(c);
   const lines = [
     `Re: Marriage preparation for ${coupleLabel(c)}`,
     ``,
     `Status: ${(COUPLE_STATUS[statusKey(c)] || {}).label || statusKey(c)}`,
     wd ? `Wedding date: ${formatDateDisplay(wd)}` : `Wedding date: not yet set`,
-  ];
+    loc.full ? `Location: ${loc.full}` : '',
+  ].filter(Boolean);
   window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join('\n'))}`;
 }
 

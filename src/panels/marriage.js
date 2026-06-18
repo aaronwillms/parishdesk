@@ -8,6 +8,7 @@ import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { buildPreparerField, readPreparerValue, clergyNames } from '../sacramental/preparerField.js';
 import { buildOfficiantField, readOfficiantValue, officiantIsOther } from '../sacramental/officiantField.js';
+import { getInstitutionAddress } from '../ui/directory.js';
 
 export const COUPLE_STATUS = {
   inprogress:{ label:'In progress', color:'#7D6608', bg:'#FEF9E7', dot:'#D4AC0D' },
@@ -160,6 +161,30 @@ export function preparerOf(c) {
 export function weddingChurch(c) {
   if (c?.wedding_institution_id) return (store.institutions || []).find(i => i.id === c.wedding_institution_id)?.name || '';
   return c?.wedding_church_override || '';
+}
+
+// Resolved wedding location for read views / PDF / email. Distinguishes the two
+// cases at render time by `wedding_institution_id`:
+//   • institution-based → name + address DERIVED from the institution record via
+//     getInstitutionAddress (principal resolves to parish_settings inside it);
+//     `derived: true`.
+//   • "Other location" (or none set) → the file's own name/city/state;
+//     `derived: false`.
+export function weddingLocation(c) {
+  if (c?.wedding_institution_id) {
+    const name = (store.institutions || []).find(i => i.id === c.wedding_institution_id)?.name || '';
+    const a = getInstitutionAddress(c.wedding_institution_id);
+    const lines = [a.street, a.cityStateZip].filter(Boolean);
+    return { name, lines, full: [name, ...lines].filter(Boolean).join(', '), derived: true };
+  }
+  if (c?.wedding_church_override || c?.wedding_city || c?.wedding_state) {
+    const csz = [c.wedding_city, c.wedding_state].filter(Boolean).join(', ');
+    const name = c.wedding_church_override || '';
+    const lines = [csz].filter(Boolean);
+    return { name, lines, full: [name, ...lines].filter(Boolean).join(', '), derived: false };
+  }
+  if (c?.non_church_wedding) return { name: 'Non-church wedding', lines: [], full: 'Non-church wedding', derived: false };
+  return { name: '', lines: [], full: '', derived: false };
 }
 
 function updateCoupleStats() {
@@ -346,12 +371,19 @@ function buildCoupleModalHtml(c, opts = {}) {
   h += _input('mf-wd', 'Date of Marriage', c?.wedding_date || '', 'date');
   h += _toggle('mf-nonchurch', 'Non-Church Wedding?', _M.nonChurch, 'marOnNonChurchToggle()');
   h += `<div id="mf-time-wrap" style="display:${_M.nonChurch ? 'none' : 'block'};">${_input('mf-wt', 'Time of Marriage', c?.wedding_time || '', 'text')}</div>`;
+  // Church of Marriage. An institution-based location DERIVES its address from the
+  // institution record (read-only, via getInstitutionAddress) — the file stores
+  // only wedding_institution_id, never a per-file copy. "Other location…" is the
+  // one case the file keeps its own free-text address (name/city/state).
   h += `<label>Church of Marriage</label>
     <select id="mf-inst" onchange="marOnInstitutionChange(this.value)">
-      <option value="">— Select —</option>${instOpts}<option value="__other"${_M.instMode === 'other' ? ' selected' : ''}>Other…</option>
+      <option value="">— Select —</option>${instOpts}<option value="__other"${_M.instMode === 'other' ? ' selected' : ''}>Other location…</option>
     </select>
-    <div id="mf-inst-other-wrap" style="display:${_M.instMode === 'other' ? 'block' : 'none'};">${_input('mf-church-override', 'Church name', c?.wedding_church_override || '')}</div>
-    ${_row(_input('mf-wcity', 'City', c?.wedding_city || ''), _stateSelect('mf-wstate', c?.wedding_state || ''))}`;
+    <div id="mf-inst-addr" style="display:${_M.instMode === 'inst' ? 'block' : 'none'};">${_instAddrBlock(c?.wedding_institution_id)}</div>
+    <div id="mf-other-wrap" style="display:${_M.instMode === 'other' ? 'block' : 'none'};">
+      ${_input('mf-church-override', 'Location name', c?.wedding_church_override || '')}
+      ${_row(_input('mf-wcity', 'City', c?.wedding_city || ''), _stateSelect('mf-wstate', c?.wedding_state || ''))}
+    </div>`;
   // Officiant — shared clergy dropdown (institution clergy + Other). Seeded from
   // the new column or the legacy officiant_id/_override so saved values persist.
   const offValue = officiantOf(c);
@@ -536,26 +568,27 @@ function marOnNonChurchToggle() {
 }
 function marOnInstitutionChange(v) {
   _M.instMode = v === '__other' ? 'other' : (v ? 'inst' : '');
-  document.getElementById('mf-inst-other-wrap').style.display = _M.instMode === 'other' ? 'block' : 'none';
-  const cityEl = document.getElementById('mf-wcity'), stateEl = document.getElementById('mf-wstate');
-  if (_M.instMode === 'inst') {
-    const inst = (store.institutions || []).find(x => x.id === v);
-    const cs = parseCityState(inst?.address || '');
-    if (cityEl) { cityEl.value = cs.city || cityEl.value; cityEl.readOnly = true; cityEl.style.background = '#F0EDE8'; }
-    if (stateEl) { if (cs.state) stateEl.value = cs.state; stateEl.disabled = true; stateEl.style.background = '#F0EDE8'; }
-  } else {
-    if (cityEl) { cityEl.readOnly = false; cityEl.style.background = '#fff'; }
-    if (stateEl) { stateEl.disabled = false; stateEl.style.background = '#fff'; }
+  const otherWrap = document.getElementById('mf-other-wrap');
+  const addrBox = document.getElementById('mf-inst-addr');
+  if (otherWrap) otherWrap.style.display = _M.instMode === 'other' ? 'block' : 'none';
+  if (addrBox) {
+    addrBox.style.display = _M.instMode === 'inst' ? 'block' : 'none';
+    addrBox.innerHTML = _M.instMode === 'inst' ? _instAddrBlock(v) : '';
   }
 }
-function parseCityState(addr) {
-  if (!addr) return {};
-  const parts = addr.split(',').map(s => s.trim()).filter(Boolean);
-  if (parts.length < 2) return {};
-  const city = parts[parts.length - 2];
-  const stateZip = parts[parts.length - 1].split(/\s+/);
-  const state = US_STATES.includes(stateZip[0]) ? stateZip[0] : '';
-  return { city, state };
+// Read-only address DERIVED from the institution record — single source of truth
+// via getInstitutionAddress (which resolves the principal to parish_settings
+// internally; the file stays agnostic and stores no per-file copy).
+function _instAddrBlock(instId) {
+  if (!instId) return '';
+  const a = getInstitutionAddress(instId);
+  const body = a.has
+    ? [a.street, a.cityStateZip].filter(Boolean).map(l => `<div>${_esc(l)}</div>`).join('')
+    : `<div style="font-style:italic;color:#9CA3AF;">No address on file — set it in the Directory (institution settings).</div>`;
+  return `<div style="background:#F0EDE8;border-radius:6px;padding:.5rem .7rem;margin-top:.4rem;font-size:12.5px;color:#4B5563;line-height:1.5;">
+    <div style="font-size:10.5px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Address (from institution record)</div>
+    ${body}
+  </div>`;
 }
 // Show the Delegation toggle only when the officiant is a free-text "Other".
 function marOnOfficiantOtherToggle() { const w = document.getElementById('mf-delegation-wrap'); if (w) w.style.display = officiantIsOther('mf-officiant') ? 'block' : 'none'; }
@@ -678,9 +711,12 @@ function _marReadPayload() {
     wedding_time: _M.nonChurch ? null : (_v('mf-wt') || null),
     non_church_wedding: _M.nonChurch,
     wedding_institution_id: (instSel && instSel !== '__other') ? instSel : null,
+    // "Other location" is the ONLY case the file stores its own address; an
+    // institution-based location derives its address from the institution record
+    // (read-only), so we do NOT write a per-file city/state copy for it.
     wedding_church_override: instSel === '__other' ? (_v('mf-church-override') || null) : null,
-    wedding_city: _v('mf-wcity') || null,
-    wedding_state: _v('mf-wstate') || null,
+    wedding_city:  instSel === '__other' ? (_v('mf-wcity') || null) : null,
+    wedding_state: instSel === '__other' ? (_v('mf-wstate') || null) : null,
     // Officiant + preparer via the shared clergy helpers (name strings).
     officiant: readOfficiantValue('mf-officiant'),
     delegation_given: officiantIsOther('mf-officiant') ? _chk('mf-delegation') : false,
