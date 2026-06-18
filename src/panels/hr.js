@@ -14,7 +14,7 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin, isSuperAdmin } from '../roles.js';
 import { closeModal } from '../ui/modal.js';
-import { logActivity } from '../utils.js';
+import { logActivity, todayCST } from '../utils.js';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -30,13 +30,59 @@ const EMP_COLOR = {
   contract:  { bg: '#EEEAF6', fg: '#5B4A8A' },
 };
 
-// HR record types that apply per employment type (Phase 6 feature-gating).
-// Contract excludes performance review / comp; full & part get the full set.
-function applicableRecordTypes(empType) {
+// Record-type registry. Keys match the Stage 1 record_grants / RLS record_type
+// values. `banner` = whether the on-screen per-file banner shows on its view.
+const RECORD_META = {
+  review:       { table: 'performance_reviews',  label: 'Performance Review',  banner: true  },
+  disciplinary: { table: 'disciplinary_records', label: 'Disciplinary Record', banner: true  },
+  incident:     { table: 'incident_reports',     label: 'Incident Report',     banner: true  },
+  memo:         { table: 'memos',                label: 'Memo',                banner: false },
+};
+
+// Employment-type feature-gating for the CREATE surface (Stage 3 definition):
+// contract → incident + memo ONLY (no performance review/comp, no disciplinary).
+function creatableRecordTypes(empType) {
   return empType === 'contract'
-    ? ['Duties', 'Incident Report', 'Memo']
-    : ['Performance Review', 'Disciplinary Record', 'Incident Report', 'Memo'];
+    ? ['incident', 'memo']
+    : ['review', 'disciplinary', 'incident', 'memo'];
 }
+
+// Live settings reads — never hardcode (Phase 3 severity ladder, Phase 5 banner).
+function severityLadder() {
+  const l = store.parishSettings?.hr_severity_ladder;
+  return Array.isArray(l) && l.length ? l : ['verbal', 'written', 'final', 'termination'];
+}
+function bannerText() {
+  return store.parishSettings?.hr_banner_text
+    || "ParishDesk should not replace an employee's physical personnel file.";
+}
+
+// Starter review-template library (constant — NEVER mutated; picking one only
+// PRE-FILLS the builder, which then saves a NEW parish-scoped review_templates
+// row). Minimal, clearly-refinable seed content; the field machinery matters
+// more than the text.
+const STARTER_TEMPLATES = [
+  {
+    name: 'General Staff — Annual',
+    definition: [
+      { type: 'descriptive', prompt: 'Overall performance this period', labels: ['Below', 'Meets', 'Exceeds'] },
+      { type: 'numeric', prompt: 'Reliability & punctuality', min: 1, max: 5, allow_na: false },
+      { type: 'numeric', prompt: 'Quality of work', min: 1, max: 5, allow_na: false },
+      { type: 'selective', prompt: 'Recommended for continued service?', options: ['yes', 'no'] },
+      { type: 'text', prompt: 'Strengths and areas for growth' },
+    ],
+  },
+  {
+    name: '90-Day Introductory',
+    definition: [
+      { type: 'selective', prompt: 'Meeting expectations for the role?', options: ['yes', 'no'] },
+      { type: 'numeric', prompt: 'Integration with the team', min: 1, max: 5, allow_na: true },
+      { type: 'text', prompt: 'Goals for the next period' },
+    ],
+  },
+];
+
+function genId() { return 'f_' + Math.random().toString(36).slice(2, 10); }
 
 // ── Module state ────────────────────────────────────────────────────────────
 
@@ -45,6 +91,12 @@ const _expanded = new Set();   // expanded position ids; persists across reloads
 let _ctx = null;               // built context (see buildContext)
 let _insts = [];
 let _people = [];              // all personnel (incl. inactive, for name lookup)
+let _authUserId = null;        // current auth user id (record author + RLS mirror)
+let _profilesByUser = new Map(); // auth user_id -> personnel_id (author names)
+let _templates = [];           // review_templates rows (parish-scoped)
+let _templatePositions = [];   // review_template_positions rows
+let _builder = null;           // active template-builder working state
+let _card = null;              // active occupancy-card context for record modals
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -61,6 +113,23 @@ function empBadge(v) {
 }
 function adminBadge() {
   return `<span title="Administrator seat" style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:3px;background:#FDEAED;color:#8B1A2F;">Administrator</span>`;
+}
+
+// Resolve a record's author_id (auth user id) to a display name via
+// user_profiles -> personnel.
+function authorName(userId) {
+  if (!userId) return 'Unknown';
+  if (userId === _authUserId && store.currentUserProfile?.personnel?.name) {
+    return store.currentUserProfile.personnel.name;
+  }
+  const personnelId = _profilesByUser.get(userId);
+  const p = personnelId && _people.find(x => x.id === personnelId);
+  return p ? p.name : 'Staff member';
+}
+
+// UI mirror of the Stage 1 UPDATE/DELETE RLS (author OR super_admin).
+function canModifyRecord(rec) {
+  return isSuperAdmin() || (rec.author_id && rec.author_id === _authUserId);
 }
 
 // ── Data ────────────────────────────────────────────────────────────────────
@@ -89,6 +158,18 @@ export async function loadHr() {
   _insts  = instRes.data || [];
   _people = peopleRes.data || [];
   _ctx    = buildContext(posRes.data || [], occRes.data || []);
+
+  // Identity, author-name map, and review templates (for the record surface).
+  const [authRes, profRes, tmplRes, tmplPosRes] = await Promise.all([
+    sb.auth.getUser(),
+    sb.from('user_profiles').select('user_id, personnel_id'),
+    sb.from('review_templates').select('*').order('name'),
+    sb.from('review_template_positions').select('*'),
+  ]);
+  _authUserId        = authRes.data?.user?.id || null;
+  _profilesByUser    = new Map((profRes.data || []).map(p => [p.user_id, p.personnel_id]));
+  _templates         = tmplRes.data || [];
+  _templatePositions = tmplPosRes.data || [];
 
   if (!_activeInstId || !_insts.some(i => i.id === _activeInstId)) {
     _activeInstId = _insts[0]?.id || null;
@@ -183,7 +264,10 @@ function render() {
 
   root.innerHTML = `
     <div style="padding:1.1rem 1.1rem 0;">
-      <h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-size:22px;font-weight:700;color:var(--navy);margin:0 0 1rem;">Human Resources</h1>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 1rem;">
+        <h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-size:22px;font-weight:700;color:var(--navy);margin:0;">Human Resources</h1>
+        ${isAdmin() ? `<button class="btn-secondary" data-action="open-templates">Review Templates</button>` : ''}
+      </div>
       <div style="display:flex;align-items:flex-end;gap:0;border-bottom:.5px solid var(--stone);margin-bottom:1.1rem;overflow-x:auto;">
         ${tabs || '<span style="font-size:13px;color:#6B7280;padding:.5rem 0;">No institutions yet.</span>'}
         ${addInst}
@@ -291,6 +375,7 @@ function onHrClick(e) {
     case 'move-inst':   reorderInstitution(instId, t.dataset.dir); break;
     case 'rename-inst': openInstitutionModal(instId); break;
     case 'add-inst':    openInstitutionModal(null); break;
+    case 'open-templates': openTemplateManager(); break;
     case 'toggle':      _expanded.has(posId) ? _expanded.delete(posId) : _expanded.add(posId); renderTree(); break;
     case 'add-root':    openPositionModal(null, null); break;
     case 'add-child':   openPositionModal(null, posId); break;
@@ -609,7 +694,7 @@ async function deletePosition(posId) {
 
 // ── PHASE 6 — occupancy card (read view + feature-gating display) ────────────
 
-function openOccupancyCard(occId) {
+async function openOccupancyCard(occId) {
   // Locate the occupancy and its position.
   let occ = null, posId = null;
   for (const [pid, list] of _ctx.allByPos) {
@@ -619,6 +704,8 @@ function openOccupancyCard(occId) {
   if (!occ) return;
   const pos = _ctx.posById.get(posId);
   const personName = _ctx.personName(occ.person_id);
+  // Card context for record modals (record binds to THIS person_position id = occ.id).
+  _card = { occId, ppId: occ.id, positionId: posId, empType: occ.employment_type };
 
   // Full link/unlink history for THIS position (succession).
   const history = [...(_ctx.allByPos.get(posId) || [])]
@@ -631,14 +718,19 @@ function openOccupancyCard(occId) {
       </div>`;
     }).join('');
 
-  // Feature-gating outcome (records UI deferred to Stage 3).
-  const gated = applicableRecordTypes(occ.employment_type).map(rt =>
-    `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:.4rem .6rem;background:#F8F7F4;border:.5px solid var(--stone);border-radius:6px;margin-bottom:.4rem;">
-      <span style="font-size:12.5px;color:var(--navy);font-weight:500;">${rt}</span>
-      <span style="font-size:10.5px;color:#9CA3AF;font-style:italic;">coming in records stage</span>
-    </div>`).join('');
-  const excluded = occ.employment_type === 'contract'
-    ? `<div style="font-size:11.5px;color:#9CA3AF;margin-top:.3rem;">Performance review &amp; compensation do not apply to contract occupancies.</div>` : '';
+  // Records on THIS occupancy the viewer may see (RLS returns only the permitted).
+  const records = await fetchOccupancyRecords(occ.id);
+  const recordsHtml = records.length
+    ? records.map(r => recordRow(r)).join('')
+    : `<div style="font-size:12.5px;color:#6B7280;font-style:italic;padding:.3rem 0;">No records on this occupancy yet.</div>`;
+
+  // Create surface — admin/super-admin only, gated by employment_type.
+  const createBtns = isAdmin()
+    ? creatableRecordTypes(occ.employment_type).map(rt =>
+        `<button class="btn-secondary" style="font-size:12px;" onclick="window.hrNewRecord('${rt}')">+ ${RECORD_META[rt].label}</button>`).join(' ')
+    : '';
+  const contractNote = (isAdmin() && occ.employment_type === 'contract')
+    ? `<div style="font-size:11px;color:#9CA3AF;margin-top:.35rem;">Contract occupancy — performance review &amp; disciplinary records do not apply.</div>` : '';
 
   openModalHtml(`
     <div class="modal-title">${esc(personName)}</div>
@@ -649,12 +741,45 @@ function openOccupancyCard(occId) {
     <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.3rem;">Occupancy history</div>
     <div style="margin-bottom:1rem;">${history}</div>
 
-    <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.4rem;">Applicable HR records</div>
-    ${gated}${excluded}
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:.5rem;">
+      <span style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;">HR records</span>
+    </div>
+    ${createBtns ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:.7rem;">${createBtns}</div>${contractNote}` : ''}
+    <div style="margin-bottom:1rem;">${recordsHtml}</div>
 
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">Close</button>
     </div>`);
+}
+
+// Fetch the four record types for a person_position; tag each with its record
+// type. RLS scopes the result to what the viewer may see.
+async function fetchOccupancyRecords(ppId) {
+  const [rev, dis, inc, mem] = await Promise.all([
+    sb.from('performance_reviews').select('*').eq('person_position_id', ppId),
+    sb.from('disciplinary_records').select('*').eq('person_position_id', ppId),
+    sb.from('incident_reports').select('*').eq('person_position_id', ppId),
+    sb.from('memos').select('*').eq('person_position_id', ppId),
+  ]);
+  const tag = (res, type) => (res.data || []).map(r => ({ ...r, _type: type }));
+  return [...tag(rev, 'review'), ...tag(dis, 'disciplinary'), ...tag(inc, 'incident'), ...tag(mem, 'memo')]
+    .sort((a, b) => new Date(b.record_date || b.created_at) - new Date(a.record_date || a.created_at));
+}
+
+function recordRow(r) {
+  const meta = RECORD_META[r._type];
+  const date = r.record_date ? fmtDay(r.record_date) : fmtDay(r.created_at);
+  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:.45rem .6rem;background:#F8F7F4;border:.5px solid var(--stone);border-radius:6px;margin-bottom:.4rem;">
+    <div style="min-width:0;">
+      <div style="font-size:12.5px;color:var(--navy);font-weight:600;">${meta.label}</div>
+      <div style="font-size:11px;color:#6B7280;">${date} · ${esc(authorName(r.author_id))}</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-shrink:0;">
+      <button class="card-action" onclick="window.hrViewRecord('${r._type}','${r.id}')">View</button>
+      ${canModifyRecord(r) ? `<button class="card-action" onclick="window.hrEditRecord('${r._type}','${r.id}')">Edit</button>
+      <button class="card-action" style="color:#A32D2D;" onclick="window.hrDeleteRecord('${r._type}','${r.id}')">Delete</button>` : ''}
+    </div>
+  </div>`;
 }
 
 function fmtDay(iso) {
@@ -663,9 +788,685 @@ function fmtDay(iso) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-// ── Expose modal-button handlers (tree actions use delegation) ──────────────
+// ════════════════════════════════════════════════════════════════════════════
+// STAGE 3 — RECORDS, CROSS-LINKING, TEMPLATE BUILDER, SNAPSHOT, BANNER
+// ════════════════════════════════════════════════════════════════════════════
+
+const val     = (id) => document.getElementById(id)?.value ?? '';
+const checked = (id) => !!document.getElementById(id)?.checked;
+const nowIso  = () => new Date().toISOString();
+const todayISO = () => todayCST();
+
+// Phase 5 banner — placed in disciplinary / incident / review VIEWS only.
+// Rendered as text (textContent) after the modal HTML is set, never innerHTML.
+function bannerBlock() {
+  return `<div class="hr-banner" style="font-size:10.5px;color:#B9A88F;font-style:italic;border-top:.5px solid var(--stone);margin-top:1rem;padding-top:.55rem;line-height:1.5;"></div>`;
+}
+function showRecordModal(html) {
+  openModalHtml(html);
+  document.querySelectorAll('#modal-content .hr-banner').forEach(el => { el.textContent = bannerText(); });
+}
+function metaLine(rec) {
+  const date = rec.record_date ? fmtDay(rec.record_date) : fmtDay(rec.created_at);
+  return `<div style="font-size:11.5px;color:#6B7280;margin-bottom:1rem;">${date} · ${esc(authorName(rec.author_id))}</div>`;
+}
+function reopenCard() { if (_card) openOccupancyCard(_card.occId); }
+
+// ── Dispatch (called from card / record-row buttons) ────────────────────────
+
+function hrNewRecord(type) {
+  if (!isAdmin() || !_card) return;
+  if (!creatableRecordTypes(_card.empType).includes(type)) return;
+  if (type === 'memo')              openMemoForm(null);
+  else if (type === 'incident')     openIncidentForm(null);
+  else if (type === 'disciplinary') openDisciplinaryForm(null);
+  else if (type === 'review')       openReviewCreate();
+}
+async function fetchRecord(type, id) {
+  const { data } = await sb.from(RECORD_META[type].table).select('*').eq('id', id).maybeSingle();
+  return data;
+}
+async function hrViewRecord(type, id) {
+  const rec = await fetchRecord(type, id);
+  if (!rec) return;
+  if (type === 'memo')              viewMemo(rec);
+  else if (type === 'incident')     viewIncident(rec);
+  else if (type === 'disciplinary') viewDisciplinary(rec);
+  else if (type === 'review')       viewReview(rec);
+}
+async function hrEditRecord(type, id) {
+  const rec = await fetchRecord(type, id);
+  if (!rec || !canModifyRecord(rec)) return;
+  if (type === 'memo')              openMemoForm(rec);
+  else if (type === 'incident')     openIncidentForm(rec);
+  else if (type === 'disciplinary') openDisciplinaryForm(rec);
+  else if (type === 'review')       openReviewEdit(rec);
+}
+async function hrDeleteRecord(type, id) {
+  const meta = RECORD_META[type];
+  if (!confirm(`Delete this ${meta.label.toLowerCase()}? This cannot be undone.`)) return;
+  const { error } = await sb.from(meta.table).delete().eq('id', id);
+  if (error) { alert('Delete failed: ' + error.message); return; }
+  logActivity({ action: `deleted ${meta.label.toLowerCase()}`, entityType: 'hr_record', entityName: meta.label });
+  reopenCard();
+}
+
+// ── PHASE 2 — MEMO (no banner) ──────────────────────────────────────────────
+
+function openMemoForm(rec) {
+  openModalHtml(`
+    <div class="modal-title">${rec ? 'Edit memo' : 'New memo'}</div>
+    <label>Subject</label><input id="hr-memo-subject" value="${esc(rec?.subject || '')}" />
+    <label>Body</label><textarea id="hr-memo-body" rows="5">${esc(rec?.body || '')}</textarea>
+    <label>Date</label><input type="date" id="hr-memo-date" value="${rec?.record_date || todayISO()}" />
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="window.hrReopenCard()">Cancel</button>
+      <button class="btn-primary" onclick="window.hrSaveMemo(${rec ? `'${rec.id}'` : 'null'})">Save</button>
+    </div>`);
+}
+async function hrSaveMemo(id) {
+  const subject = val('hr-memo-subject').trim();
+  const body    = val('hr-memo-body').trim();
+  const record_date = val('hr-memo-date') || null;
+  if (!subject && !body) { alert('Enter a subject or body.'); return; }
+  const fields = { subject: subject || null, body: body || null, record_date };
+  let error;
+  if (id) ({ error } = await sb.from('memos').update({ ...fields, updated_at: nowIso() }).eq('id', id));
+  else    ({ error } = await sb.from('memos').insert({ ...fields, person_position_id: _card.ppId, author_id: _authUserId }));
+  if (error) { alert('Save failed: ' + error.message); return; }
+  reopenCard();
+}
+function viewMemo(rec) {
+  openModalHtml(`
+    <div class="modal-title">${esc(rec.subject || 'Memo')}</div>
+    ${metaLine(rec)}
+    <div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;">${esc(rec.body || '')}</div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="window.hrReopenCard()">Back</button>
+      ${canModifyRecord(rec) ? `<button class="btn-primary" onclick="window.hrEditRecord('memo','${rec.id}')">Edit</button>` : ''}
+    </div>`);
+}
+
+// ── PHASE 3 — INCIDENT REPORT (banner; cross-link to disciplinary) ──────────
+
+function openIncidentForm(rec) {
+  openModalHtml(`
+    <div class="modal-title">${rec ? 'Edit incident report' : 'New incident report'}</div>
+    <label>Description</label><textarea id="hr-inc-desc" rows="6">${esc(rec?.description || '')}</textarea>
+    <label>Date</label><input type="date" id="hr-inc-date" value="${rec?.record_date || todayISO()}" />
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="window.hrReopenCard()">Cancel</button>
+      <button class="btn-primary" onclick="window.hrSaveIncident(${rec ? `'${rec.id}'` : 'null'})">Save</button>
+    </div>`);
+}
+async function hrSaveIncident(id) {
+  const description = val('hr-inc-desc').trim();
+  const record_date = val('hr-inc-date') || null;
+  if (!description) { alert('A description is required.'); return; }
+  let error;
+  if (id) ({ error } = await sb.from('incident_reports').update({ description, record_date, updated_at: nowIso() }).eq('id', id));
+  else    ({ error } = await sb.from('incident_reports').insert({ description, record_date, person_position_id: _card.ppId, author_id: _authUserId }));
+  if (error) { alert('Save failed: ' + error.message); return; }
+  reopenCard();
+}
+async function viewIncident(rec) {
+  const linked = await fetchLinks('incident', rec.id);
+  showRecordModal(`
+    <div class="modal-title">Incident Report</div>
+    ${metaLine(rec)}
+    <div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;margin-bottom:1rem;">${esc(rec.description || '')}</div>
+    ${crossLinkSection('incident', rec.id, linked)}
+    ${bannerBlock()}
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="window.hrReopenCard()">Back</button>
+      ${canModifyRecord(rec) ? `<button class="btn-primary" onclick="window.hrEditRecord('incident','${rec.id}')">Edit</button>` : ''}
+    </div>`);
+}
+
+// ── PHASE 3 — DISCIPLINARY RECORD (banner; severity ladder; cross-link) ─────
+
+function openDisciplinaryForm(rec) {
+  const ladder = severityLadder();
+  const sevOpts = ['<option value="">— Select —</option>']
+    .concat(ladder.map(s => `<option value="${esc(s)}"${rec?.severity === s ? ' selected' : ''}>${esc(s.charAt(0).toUpperCase() + s.slice(1))}</option>`))
+    .join('');
+  openModalHtml(`
+    <div class="modal-title">${rec ? 'Edit disciplinary record' : 'New disciplinary record'}</div>
+    <label>Narrative</label><textarea id="hr-dis-narr" rows="5">${esc(rec?.narrative || '')}</textarea>
+    <label>Severity</label><select id="hr-dis-sev">${sevOpts}</select>
+    <label>Corrective action</label><textarea id="hr-dis-corr" rows="3">${esc(rec?.corrective_action || '')}</textarea>
+    <label>Date</label><input type="date" id="hr-dis-date" value="${rec?.record_date || todayISO()}" />
+    <label style="display:flex;align-items:center;gap:8px;margin-top:.6rem;cursor:pointer;">
+      <input type="checkbox" id="hr-dis-signed" ${rec?.signed_on_file ? 'checked' : ''} style="width:auto;margin:0;" onchange="window.hrDisSignedToggle()" />
+      <span>Signed physical copy on file</span>
+    </label>
+    <div id="hr-dis-signedwrap" style="display:${rec?.signed_on_file ? '' : 'none'};">
+      <label>Signed date</label><input type="date" id="hr-dis-signeddate" value="${rec?.signed_date || ''}" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="window.hrReopenCard()">Cancel</button>
+      <button class="btn-primary" onclick="window.hrSaveDisciplinary(${rec ? `'${rec.id}'` : 'null'})">Save</button>
+    </div>`);
+}
+function hrDisSignedToggle() {
+  document.getElementById('hr-dis-signedwrap').style.display = checked('hr-dis-signed') ? '' : 'none';
+}
+async function hrSaveDisciplinary(id) {
+  const narrative = val('hr-dis-narr').trim();
+  if (!narrative) { alert('A narrative is required.'); return; }
+  const signed = checked('hr-dis-signed');
+  const fields = {
+    narrative,
+    severity: val('hr-dis-sev') || null,
+    corrective_action: val('hr-dis-corr').trim() || null,
+    record_date: val('hr-dis-date') || null,
+    signed_on_file: signed,
+    signed_date: signed ? (val('hr-dis-signeddate') || null) : null,
+  };
+  let error;
+  if (id) ({ error } = await sb.from('disciplinary_records').update({ ...fields, updated_at: nowIso() }).eq('id', id));
+  else    ({ error } = await sb.from('disciplinary_records').insert({ ...fields, person_position_id: _card.ppId, author_id: _authUserId }));
+  if (error) { alert('Save failed: ' + error.message); return; }
+  reopenCard();
+}
+async function viewDisciplinary(rec) {
+  const linked = await fetchLinks('disciplinary', rec.id);
+  const field = (label, value) => value
+    ? `<div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.2rem;">${label}</div><div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;margin-bottom:.85rem;">${esc(value)}</div>` : '';
+  const signed = rec.signed_on_file
+    ? `<div style="font-size:12px;color:#2E6B43;margin-bottom:.85rem;">✓ Signed physical copy on file${rec.signed_date ? ` (${fmtDay(rec.signed_date)})` : ''}</div>`
+    : `<div style="font-size:12px;color:#9CA3AF;margin-bottom:.85rem;">Signed copy not yet on file</div>`;
+  showRecordModal(`
+    <div class="modal-title">Disciplinary Record</div>
+    ${metaLine(rec)}
+    ${rec.severity ? `<div style="margin-bottom:.85rem;"><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:3px;background:#FDEAED;color:#8B1A2F;">${esc(rec.severity.toUpperCase())}</span></div>` : ''}
+    ${field('Narrative', rec.narrative)}
+    ${field('Corrective action', rec.corrective_action)}
+    ${signed}
+    ${crossLinkSection('disciplinary', rec.id, linked)}
+    ${bannerBlock()}
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="window.hrReopenCard()">Back</button>
+      ${canModifyRecord(rec) ? `<button class="btn-primary" onclick="window.hrEditRecord('disciplinary','${rec.id}')">Edit</button>` : ''}
+    </div>`);
+}
+
+// ── Cross-linking (incident_disciplinary_links, read both directions) ───────
+
+// For a record of `type` ('incident'|'disciplinary') return the linked records
+// of the OPPOSITE type (full rows), via the single join table.
+async function fetchLinks(type, id) {
+  const col = type === 'incident' ? 'incident_id' : 'disciplinary_id';
+  const otherCol = type === 'incident' ? 'disciplinary_id' : 'incident_id';
+  const otherTable = type === 'incident' ? 'disciplinary_records' : 'incident_reports';
+  const { data: links } = await sb.from('incident_disciplinary_links').select('*').eq(col, id);
+  const otherIds = (links || []).map(l => l[otherCol]);
+  let rows = [];
+  if (otherIds.length) {
+    const { data } = await sb.from(otherTable).select('*').in('id', otherIds);
+    rows = (data || []).map(r => {
+      const link = links.find(l => l[otherCol] === r.id);
+      return { ...r, _linkId: link?.id };
+    });
+  }
+  return rows;
+}
+function linkLabel(otherType, rec) {
+  const who = labelForPP(rec.person_position_id);
+  const date = rec.record_date ? fmtDay(rec.record_date) : fmtDay(rec.created_at);
+  const head = otherType === 'incident' ? (rec.description || 'Incident') : (rec.severity ? rec.severity + ' — ' : '') + (rec.narrative || 'Disciplinary');
+  return `${who} · ${date} · ${esc(String(head).slice(0, 50))}`;
+}
+function labelForPP(ppId) {
+  for (const [pid, list] of _ctx.allByPos) {
+    const o = list.find(x => x.id === ppId);
+    if (o) { const pos = _ctx.posById.get(pid); return esc(_ctx.personName(o.person_id)) + (pos ? ' — ' + esc(pos.title) : ''); }
+  }
+  return 'Record';
+}
+function crossLinkSection(type, id, linkedRows) {
+  const otherType  = type === 'incident' ? 'disciplinary' : 'incident';
+  const otherLabel = type === 'incident' ? 'disciplinary records' : 'incident reports';
+  const rows = linkedRows.length
+    ? linkedRows.map(r => `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:.35rem 0;font-size:12px;border-bottom:.5px solid #F0EDE8;">
+        <span style="cursor:pointer;color:var(--navy);text-decoration:underline;text-decoration-color:#D6CEC2;" onclick="window.hrViewRecord('${otherType}','${r.id}')">${linkLabel(otherType, r)}</span>
+        ${isAdmin() ? `<span title="Remove link" style="cursor:pointer;color:#B45309;flex-shrink:0;" onclick="window.hrRemoveLink('${r._linkId}','${type}','${id}')">✕</span>` : ''}
+      </div>`).join('')
+    : `<div style="font-size:12px;color:#9CA3AF;font-style:italic;">None linked.</div>`;
+  const adder = isAdmin()
+    ? `<button class="card-action" style="margin-top:.4rem;" onclick="window.hrOpenLinkPicker('${type}','${id}')">+ Link ${otherLabel}</button>` : '';
+  return `<div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.3rem;margin-top:.4rem;">Linked ${otherLabel}</div>${rows}${adder}`;
+}
+// Picker: opposite-type records the viewer can see (RLS-scoped), not already linked.
+async function hrOpenLinkPicker(type, id) {
+  const otherType  = type === 'incident' ? 'disciplinary' : 'incident';
+  const otherTable = type === 'incident' ? 'disciplinary_records' : 'incident_reports';
+  const existing = (await fetchLinks(type, id)).map(r => r.id);
+  const { data } = await sb.from(otherTable).select('*');
+  const candidates = (data || []).filter(r => !existing.includes(r.id));
+  const opts = candidates.length
+    ? candidates.map(r => `<option value="${r.id}">${linkLabel(otherType, r)}</option>`).join('')
+    : '';
+  openModalHtml(`
+    <div class="modal-title">Link ${otherType === 'incident' ? 'incident report' : 'disciplinary record'}</div>
+    ${candidates.length
+      ? `<label>Choose a record</label><select id="hr-link-target">${opts}</select>`
+      : `<div style="font-size:13px;color:#6B7280;">No other records are available to link.</div>`}
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="window.hrViewRecord('${type}','${id}')">Cancel</button>
+      ${candidates.length ? `<button class="btn-primary" onclick="window.hrAddLink('${type}','${id}')">Link</button>` : ''}
+    </div>`);
+}
+async function hrAddLink(type, id) {
+  const targetId = val('hr-link-target');
+  if (!targetId) return;
+  const row = type === 'incident'
+    ? { incident_id: id, disciplinary_id: targetId }
+    : { disciplinary_id: id, incident_id: targetId };
+  const { error } = await sb.from('incident_disciplinary_links').insert(row);
+  if (error) { alert('Link failed: ' + error.message); return; }
+  hrViewRecord(type, id);   // reopen the originating record's view
+}
+async function hrRemoveLink(linkId, type, id) {
+  const { error } = await sb.from('incident_disciplinary_links').delete().eq('id', linkId);
+  if (error) { alert('Remove failed: ' + error.message); return; }
+  hrViewRecord(type, id);
+}
+
+// ── PHASE 4b/4c — PERFORMANCE REVIEW (create with snapshot, view from snapshot)
+
+let _reviewDraft = null;   // { templateId, definition, editingId }
+
+function openReviewCreate() {
+  const posId = _card.positionId;
+  const assignedIds = new Set(_templatePositions.filter(tp => tp.position_id === posId).map(tp => tp.template_id));
+  const assigned = _templates.filter(t => assignedIds.has(t.id));
+  if (!assigned.length) {
+    openModalHtml(`
+      <div class="modal-title">Performance Review</div>
+      <div style="font-size:13px;color:#6B7280;line-height:1.6;">No review templates are assigned to this position. Assign one via <strong>Review Templates</strong> first.</div>
+      <div class="modal-actions"><button class="btn-secondary" onclick="window.hrReopenCard()">Back</button></div>`);
+    return;
+  }
+  if (assigned.length === 1) { renderReviewForm(assigned[0]); return; }
+  openModalHtml(`
+    <div class="modal-title">Choose a review template</div>
+    <div style="font-size:12px;color:#6B7280;margin-bottom:.6rem;">This position has multiple templates.</div>
+    ${assigned.map(t => `<button class="btn-secondary" style="display:block;width:100%;text-align:left;margin-bottom:6px;" onclick="window.hrPickReviewTemplate('${t.id}')">${esc(t.name)}</button>`).join('')}
+    <div class="modal-actions"><button class="btn-secondary" onclick="window.hrReopenCard()">Cancel</button></div>`);
+}
+function hrPickReviewTemplate(id) { renderReviewForm(_templates.find(t => t.id === id)); }
+
+// Editing a saved review renders from its FROZEN definition (never the live
+// template), preserving the snapshot.
+function openReviewEdit(rec) {
+  renderReviewForm(
+    { id: rec.template_id, name: 'Saved review', definition: Array.isArray(rec.frozen_definition) ? rec.frozen_definition : [] },
+    rec
+  );
+}
+
+function fieldInput(f, existingAnswer) {
+  const aid = `hr-ans-${f.id}`;
+  const head = `<label style="font-weight:600;">${esc(f.prompt || '(no prompt)')}</label>`;
+  if (f.type === 'numeric') {
+    const naId = `hr-na-${f.id}`;
+    const isNa = existingAnswer === 'N/A';
+    const naBox = f.allow_na
+      ? `<label style="display:inline-flex;align-items:center;gap:5px;font-weight:400;margin-left:10px;cursor:pointer;"><input type="checkbox" id="${naId}" ${isNa ? 'checked' : ''} style="width:auto;margin:0;" onchange="document.getElementById('${aid}').disabled=this.checked" /> N/A</label>` : '';
+    return `${head}<div style="display:flex;align-items:center;gap:4px;margin-bottom:.6rem;">
+      <input type="number" id="${aid}" min="${f.min}" max="${f.max}" step="1" value="${isNa ? '' : esc(existingAnswer ?? '')}" ${isNa ? 'disabled' : ''} style="width:90px;" />
+      <span style="font-size:11px;color:#9CA3AF;">(${f.min}–${f.max})</span>${naBox}
+    </div>`;
+  }
+  if (f.type === 'descriptive') {
+    return `${head}<select id="${aid}" style="margin-bottom:.6rem;"><option value="">— Select —</option>${(f.labels || []).map(l => `<option value="${esc(l)}"${existingAnswer === l ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+  }
+  if (f.type === 'selective') {
+    return `${head}<select id="${aid}" style="margin-bottom:.6rem;"><option value="">— Select —</option>${(f.options || []).map(o => `<option value="${esc(o)}"${existingAnswer === o ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+  }
+  return `${head}<textarea id="${aid}" rows="3" style="margin-bottom:.6rem;">${esc(existingAnswer ?? '')}</textarea>`;
+}
+
+function renderReviewForm(template, existing) {
+  const definition = Array.isArray(template.definition) ? template.definition : [];
+  _reviewDraft = { templateId: template.id || null, definition, editingId: existing?.id || null };
+  const answers = existing?.answers || {};
+  const fields = definition.map(f => fieldInput(f, answers[f.id])).join('');
+  openModalHtml(`
+    <div class="modal-title">${existing ? 'Edit' : 'New'} Performance Review</div>
+    <div style="font-size:12px;color:#6B7280;margin-bottom:.7rem;">Template: ${esc(template.name || '')}${existing ? ' (structure frozen at creation)' : ''}</div>
+    ${fields || '<div style="font-size:12.5px;color:#9CA3AF;">This template has no fields.</div>'}
+    <div style="border-top:.5px solid var(--stone);margin:.6rem 0 .4rem;padding-top:.6rem;"></div>
+    <div style="display:flex;gap:10px;">
+      <div style="flex:1;"><label>Period start</label><input type="date" id="hr-rev-start" value="${existing?.review_period_start || ''}" /></div>
+      <div style="flex:1;"><label>Period end</label><input type="date" id="hr-rev-end" value="${existing?.review_period_end || ''}" /></div>
+    </div>
+    <label>Review date</label><input type="date" id="hr-rev-date" value="${existing?.review_date || todayISO()}" />
+    <label style="display:flex;align-items:center;gap:8px;margin-top:.6rem;cursor:pointer;">
+      <input type="checkbox" id="hr-rev-signed" ${existing?.signed_on_file ? 'checked' : ''} style="width:auto;margin:0;" onchange="document.getElementById('hr-rev-signedwrap').style.display=this.checked?'':'none'" />
+      <span>Signed physical copy on file</span>
+    </label>
+    <div id="hr-rev-signedwrap" style="display:${existing?.signed_on_file ? '' : 'none'};">
+      <label>Signed date</label><input type="date" id="hr-rev-signeddate" value="${existing?.signed_date || ''}" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="window.hrReopenCard()">Cancel</button>
+      <button class="btn-primary" onclick="window.hrSaveReview()">Save</button>
+    </div>`);
+}
+
+async function hrSaveReview() {
+  const def = _reviewDraft.definition;
+  const answers = {};
+  for (const f of def) {
+    const aid = `hr-ans-${f.id}`;
+    if (f.type === 'numeric') {
+      if (f.allow_na && checked(`hr-na-${f.id}`)) { answers[f.id] = 'N/A'; continue; }
+      const raw = val(aid);
+      if (raw === '') { answers[f.id] = null; continue; }
+      const n = parseInt(raw, 10);
+      if (Number.isNaN(n) || n < f.min || n > f.max) { alert(`“${f.prompt}” must be a whole number from ${f.min} to ${f.max}.`); return; }
+      answers[f.id] = n;
+    } else {
+      answers[f.id] = val(aid) || null;
+    }
+  }
+  const signed = checked('hr-rev-signed');
+  const meta = {
+    review_period_start: val('hr-rev-start') || null,
+    review_period_end:   val('hr-rev-end') || null,
+    review_date:         val('hr-rev-date') || null,
+    record_date:         val('hr-rev-date') || todayISO(),
+    signed_on_file:      signed,
+    signed_date:         signed ? (val('hr-rev-signeddate') || null) : null,
+    answers,
+  };
+  let error;
+  if (_reviewDraft.editingId) {
+    // Update answers + meta ONLY — frozen_definition stays immutable.
+    ({ error } = await sb.from('performance_reviews').update({ ...meta, updated_at: nowIso() }).eq('id', _reviewDraft.editingId));
+  } else {
+    // THE SNAPSHOT: deep-copy the live definition into frozen_definition now.
+    const frozen_definition = JSON.parse(JSON.stringify(def));
+    ({ error } = await sb.from('performance_reviews').insert({
+      ...meta,
+      person_position_id: _card.ppId,
+      author_id: _authUserId,
+      template_id: _reviewDraft.templateId,
+      frozen_definition,
+    }));
+  }
+  if (error) { alert('Save failed: ' + error.message); return; }
+  reopenCard();
+}
+
+function renderAnswer(f, a) {
+  if (a === null || a === undefined || a === '') return '<span style="color:#9CA3AF;">—</span>';
+  return esc(String(a));
+}
+function viewReview(rec) {
+  const def = Array.isArray(rec.frozen_definition) ? rec.frozen_definition : [];
+  const ans = rec.answers || {};
+  const rows = def.map(f => `
+    <div style="padding:.4rem 0;border-bottom:.5px solid #F0EDE8;">
+      <div style="font-size:12px;color:#6B7280;margin-bottom:1px;">${esc(f.prompt || '')}</div>
+      <div style="font-size:13.5px;color:var(--navy);font-weight:500;">${renderAnswer(f, ans[f.id])}</div>
+    </div>`).join('');
+  const period = (rec.review_period_start || rec.review_period_end)
+    ? `<div style="font-size:12px;color:#6B7280;margin-bottom:.6rem;">Period: ${rec.review_period_start ? fmtDay(rec.review_period_start) : '…'} – ${rec.review_period_end ? fmtDay(rec.review_period_end) : '…'}</div>` : '';
+  const signed = rec.signed_on_file
+    ? `<div style="font-size:12px;color:#2E6B43;margin-top:.6rem;">✓ Signed physical copy on file${rec.signed_date ? ` (${fmtDay(rec.signed_date)})` : ''}</div>` : '';
+  showRecordModal(`
+    <div class="modal-title">Performance Review</div>
+    ${metaLine(rec)}
+    ${period}
+    ${rows || '<div style="font-size:12.5px;color:#9CA3AF;">No fields.</div>'}
+    ${signed}
+    ${bannerBlock()}
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="window.hrReopenCard()">Back</button>
+      ${canModifyRecord(rec) ? `<button class="btn-primary" onclick="window.hrEditRecord('review','${rec.id}')">Edit</button>` : ''}
+    </div>`);
+}
+
+// ── PHASE 4a — REVIEW TEMPLATE MANAGER + BUILDER (admin+) ───────────────────
+
+async function refreshTemplates() {
+  const [tmplRes, tmplPosRes] = await Promise.all([
+    sb.from('review_templates').select('*').order('name'),
+    sb.from('review_template_positions').select('*'),
+  ]);
+  _templates = tmplRes.data || [];
+  _templatePositions = tmplPosRes.data || [];
+}
+
+function openTemplateManager() {
+  if (!isAdmin()) return;
+  const rows = _templates.length
+    ? _templates.map(t => {
+        const count = _templatePositions.filter(tp => tp.template_id === t.id).length;
+        return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:.5rem .6rem;background:#F8F7F4;border:.5px solid var(--stone);border-radius:6px;margin-bottom:.4rem;">
+          <div><div style="font-size:13px;color:var(--navy);font-weight:600;">${esc(t.name)}</div>
+          <div style="font-size:11px;color:#6B7280;">${(t.definition || []).length} field${(t.definition || []).length !== 1 ? 's' : ''} · ${count} position${count !== 1 ? 's' : ''}</div></div>
+          <div style="display:flex;gap:8px;flex-shrink:0;">
+            <button class="card-action" onclick="window.hrEditTemplate('${t.id}')">Edit</button>
+            <button class="card-action" style="color:#A32D2D;" onclick="window.hrDeleteTemplate('${t.id}')">Delete</button>
+          </div>
+        </div>`;
+      }).join('')
+    : `<div style="font-size:12.5px;color:#6B7280;font-style:italic;margin-bottom:.6rem;">No templates yet.</div>`;
+  const starters = STARTER_TEMPLATES.map((s, i) =>
+    `<button class="btn-secondary" style="font-size:12px;" onclick="window.hrStartFromStarter(${i})">${esc(s.name)}</button>`).join(' ');
+  openModalHtml(`
+    <div class="modal-title">Review Templates</div>
+    ${rows}
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:.7rem;">
+      <button class="btn-primary" style="font-size:12px;" onclick="window.hrNewTemplate()">+ New blank</button>
+      ${starters}
+    </div>
+    <div style="font-size:11px;color:#9CA3AF;margin-top:.5rem;">Starters pre-fill the builder — edit, name, and save to create your own. The starter library is never modified.</div>
+    <div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Close</button></div>`);
+}
+
+function newBuilder(seed) {
+  // Ensure every field carries a stable id.
+  const definition = (seed?.definition || []).map(f => ({ ...f, id: f.id || genId() }));
+  return { id: seed?.id || null, name: seed?.name || '', definition, positionIds: new Set(seed?.positionIds || []) };
+}
+function hrNewTemplate() { _builder = newBuilder(null); renderBuilder(); }
+function hrStartFromStarter(i) {
+  const s = STARTER_TEMPLATES[i];
+  _builder = newBuilder({ name: s.name + ' (copy)', definition: JSON.parse(JSON.stringify(s.definition)) });
+  renderBuilder();
+}
+function hrEditTemplate(id) {
+  const t = _templates.find(x => x.id === id);
+  if (!t) return;
+  const positionIds = _templatePositions.filter(tp => tp.template_id === id).map(tp => tp.position_id);
+  _builder = newBuilder({ id: t.id, name: t.name, definition: JSON.parse(JSON.stringify(t.definition || [])), positionIds });
+  renderBuilder();
+}
+async function hrDeleteTemplate(id) {
+  if (!confirm('Delete this template? Saved reviews already created from it are unaffected (they keep their own frozen copy).')) return;
+  await sb.from('review_template_positions').delete().eq('template_id', id);
+  const { error } = await sb.from('review_templates').delete().eq('id', id);
+  if (error) { alert('Delete failed: ' + error.message); return; }
+  await refreshTemplates();
+  openTemplateManager();
+}
+
+// Read all builder inputs from the DOM into _builder before any re-render.
+function syncBuilderFromDom() {
+  if (!_builder) return;
+  _builder.name = val('hr-tb-name');
+  _builder.definition.forEach((f, idx) => {
+    f.prompt = val(`hr-tb-prompt-${idx}`);
+    if (f.type === 'numeric') {
+      let max = parseInt(val(`hr-tb-max-${idx}`), 10);
+      if (Number.isNaN(max)) max = 5;
+      f.max = Math.min(10, Math.max(2, max));   // HARD CAP 10, floor 2
+      f.min = 1;                                 // FIXED
+      f.allow_na = checked(`hr-tb-na-${idx}`);
+    } else if (f.type === 'descriptive') {
+      f.labels = val(`hr-tb-labels-${idx}`).split(',').map(s => s.trim()).filter(Boolean);
+    } else if (f.type === 'selective') {
+      f.options = val(`hr-tb-options-${idx}`).split(',').map(s => s.trim()).filter(Boolean);
+    }
+  });
+  const pos = new Set();
+  document.querySelectorAll('.hr-tb-pos:checked').forEach(el => pos.add(el.value));
+  _builder.positionIds = pos;
+}
+
+function builderFieldHtml(f, idx) {
+  let cfg = '';
+  if (f.type === 'numeric') {
+    cfg = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:#6B7280;">
+      <span>Min <strong>1</strong> (fixed)</span>
+      <label style="display:inline-flex;align-items:center;gap:4px;">Max <input type="number" id="hr-tb-max-${idx}" min="2" max="10" step="1" value="${f.max ?? 5}" style="width:64px;" /></label>
+      <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="hr-tb-na-${idx}" ${f.allow_na ? 'checked' : ''} style="width:auto;margin:0;" /> Allow N/A</label>
+      <span>Whole numbers only</span>
+    </div>`;
+  } else if (f.type === 'descriptive') {
+    cfg = `<label style="font-size:12px;color:#6B7280;">Labels (comma-separated, in order)</label>
+      <input id="hr-tb-labels-${idx}" value="${esc((f.labels || []).join(', '))}" placeholder="Below, Meets, Exceeds" />`;
+  } else if (f.type === 'selective') {
+    cfg = `<label style="font-size:12px;color:#6B7280;">Options (comma-separated)</label>
+      <input id="hr-tb-options-${idx}" value="${esc((f.options || []).join(', '))}" placeholder="yes, no" />`;
+  } else {
+    cfg = `<div style="font-size:12px;color:#9CA3AF;">Freeform text response.</div>`;
+  }
+  return `<div style="border:.5px solid var(--stone);border-radius:6px;padding:.6rem .7rem;margin-bottom:.5rem;background:#fff;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:.4rem;">
+      <span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8B1A2F;">${f.type}</span>
+      <div style="display:flex;gap:6px;">
+        <span title="Move up" style="cursor:pointer;color:#9CA3AF;" onclick="window.hrTbMove(${idx},-1)">▲</span>
+        <span title="Move down" style="cursor:pointer;color:#9CA3AF;" onclick="window.hrTbMove(${idx},1)">▼</span>
+        <span title="Delete field" style="cursor:pointer;color:#A32D2D;" onclick="window.hrTbDel(${idx})">✕</span>
+      </div>
+    </div>
+    <label>Prompt</label><input id="hr-tb-prompt-${idx}" value="${esc(f.prompt || '')}" placeholder="Question or criterion" />
+    <div style="margin-top:.4rem;">${cfg}</div>
+  </div>`;
+}
+
+function renderBuilder() {
+  // Positions grouped by institution for assignment.
+  const byInst = new Map();
+  for (const p of _ctx.posById.values()) {
+    if (!byInst.has(p.institution_id)) byInst.set(p.institution_id, []);
+    byInst.get(p.institution_id).push(p);
+  }
+  const instName = (id) => _insts.find(i => i.id === id)?.name || 'Institution';
+  const posChecks = [...byInst.entries()].map(([instId, list]) => `
+    <div style="margin-bottom:.4rem;">
+      <div style="font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.04em;margin-bottom:.2rem;">${esc(instName(instId))}</div>
+      ${list.sort((a, b) => a.title.localeCompare(b.title)).map(p => `
+        <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;padding:.15rem 0;cursor:pointer;">
+          <input type="checkbox" class="hr-tb-pos" value="${p.id}" ${_builder.positionIds.has(p.id) ? 'checked' : ''} style="width:auto;margin:0;" />
+          <span>${esc(p.title)}</span>
+        </label>`).join('')}
+    </div>`).join('') || '<div style="font-size:12px;color:#9CA3AF;">No positions to assign yet.</div>';
+
+  const fields = _builder.definition.map((f, idx) => builderFieldHtml(f, idx)).join('');
+  openModalHtml(`
+    <div class="modal-title">${_builder.id ? 'Edit' : 'New'} review template</div>
+    <label>Template name</label><input id="hr-tb-name" value="${esc(_builder.name)}" placeholder="e.g. Catechist — Annual" />
+    <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;margin:.9rem 0 .4rem;">Fields</div>
+    ${fields || '<div style="font-size:12.5px;color:#9CA3AF;margin-bottom:.4rem;">No fields yet.</div>'}
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:.4rem;">
+      <button class="btn-secondary" style="font-size:12px;" onclick="window.hrTbAdd('numeric')">+ Numeric</button>
+      <button class="btn-secondary" style="font-size:12px;" onclick="window.hrTbAdd('descriptive')">+ Descriptive</button>
+      <button class="btn-secondary" style="font-size:12px;" onclick="window.hrTbAdd('selective')">+ Selective</button>
+      <button class="btn-secondary" style="font-size:12px;" onclick="window.hrTbAdd('text')">+ Text</button>
+    </div>
+    <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;margin:.9rem 0 .4rem;">Assign to positions</div>
+    <div style="max-height:180px;overflow-y:auto;border:.5px solid var(--stone);border-radius:6px;padding:.5rem .6rem;">${posChecks}</div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="window.hrCloseBuilder()">Cancel</button>
+      <button class="btn-primary" onclick="window.hrSaveTemplate()">Save template</button>
+    </div>`);
+}
+function hrCloseBuilder() { _builder = null; openTemplateManager(); }
+function hrTbAdd(type) {
+  syncBuilderFromDom();
+  const base = { id: genId(), type, prompt: '' };
+  if (type === 'numeric')     Object.assign(base, { min: 1, max: 5, allow_na: false });
+  if (type === 'descriptive') base.labels = ['Below', 'Meets', 'Exceeds'];
+  if (type === 'selective')   base.options = ['yes', 'no'];
+  _builder.definition.push(base);
+  renderBuilder();
+}
+function hrTbMove(idx, dir) {
+  syncBuilderFromDom();
+  const j = idx + dir;
+  if (j < 0 || j >= _builder.definition.length) return;
+  const d = _builder.definition;
+  [d[idx], d[j]] = [d[j], d[idx]];
+  renderBuilder();
+}
+function hrTbDel(idx) {
+  syncBuilderFromDom();
+  _builder.definition.splice(idx, 1);
+  renderBuilder();
+}
+async function hrSaveTemplate() {
+  syncBuilderFromDom();
+  const name = (_builder.name || '').trim();
+  if (!name) { alert('Template name is required.'); return; }
+  if (!_builder.definition.length) { alert('Add at least one field.'); return; }
+  // Validation (mirrors build-time constraints).
+  for (const f of _builder.definition) {
+    if (!f.prompt || !f.prompt.trim()) { alert('Every field needs a prompt.'); return; }
+    if (f.type === 'numeric') {
+      if (!(Number.isInteger(f.max) && f.max >= 2 && f.max <= 10)) { alert(`Numeric max must be a whole number from 2 to 10 (“${f.prompt}”).`); return; }
+      f.min = 1;
+    }
+    if (f.type === 'descriptive' && (!f.labels || f.labels.length < 2)) { alert(`Descriptive field “${f.prompt}” needs at least two labels.`); return; }
+    if (f.type === 'selective' && (!f.options || f.options.length < 2)) { alert(`Selective field “${f.prompt}” needs at least two options.`); return; }
+  }
+  const definition = _builder.definition.map(f => {
+    const base = { id: f.id, type: f.type, prompt: f.prompt.trim() };
+    if (f.type === 'numeric')     return { ...base, min: 1, max: f.max, allow_na: !!f.allow_na };
+    if (f.type === 'descriptive') return { ...base, labels: f.labels };
+    if (f.type === 'selective')   return { ...base, options: f.options };
+    return base;
+  });
+
+  let templateId = _builder.id;
+  if (templateId) {
+    const { error } = await sb.from('review_templates').update({ name, definition, updated_at: nowIso() }).eq('id', templateId);
+    if (error) { alert('Save failed: ' + error.message); return; }
+  } else {
+    const { data, error } = await sb.from('review_templates').insert({ name, definition, created_by: _authUserId }).select('id').single();
+    if (error) { alert('Save failed: ' + error.message); return; }
+    templateId = data.id;
+  }
+  // Re-sync position assignments (delete-all + insert selected).
+  await sb.from('review_template_positions').delete().eq('template_id', templateId);
+  const ids = [..._builder.positionIds];
+  if (ids.length) {
+    await sb.from('review_template_positions').insert(ids.map(pid => ({ template_id: templateId, position_id: pid })));
+  }
+  logActivity({ action: _builder.id ? 'updated review template' : 'created review template', entityType: 'review_template', entityName: name });
+  _builder = null;
+  await refreshTemplates();
+  openTemplateManager();
+}
+
+// ── Expose modal-button + record handlers (tree actions use delegation) ─────
 
 Object.assign(window, {
-  hrSaveInstitution, hrSavePosition, hrSaveMove, hrSaveLink,
-  hrSaveFastAdd, hrFaToggle,
+  hrSaveInstitution, hrSavePosition, hrSaveMove, hrSaveLink, hrSaveFastAdd, hrFaToggle,
+  // records
+  hrReopenCard: reopenCard, hrNewRecord, hrViewRecord, hrEditRecord, hrDeleteRecord,
+  hrSaveMemo, hrSaveIncident, hrSaveDisciplinary, hrDisSignedToggle,
+  // cross-linking
+  hrOpenLinkPicker, hrAddLink, hrRemoveLink,
+  // reviews
+  hrPickReviewTemplate, hrSaveReview,
+  // template builder
+  hrNewTemplate, hrStartFromStarter, hrEditTemplate, hrDeleteTemplate,
+  hrCloseBuilder, hrTbAdd, hrTbMove, hrTbDel, hrSaveTemplate,
 });
