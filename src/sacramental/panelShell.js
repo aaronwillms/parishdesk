@@ -186,18 +186,40 @@ function listBodyHtml() {
   if (!s.groupInit) { s.groupsCollapsed = new Set(keys.slice(1)); s.groupInit = true; }
 
   const searching = !!s.search.trim();   // active search force-expands all groups
-  const label = (k) => k === '__none' ? 'Unassigned' : (cfg.groupLabel ? cfg.groupLabel(k) : k);
+  const label = (k) => k === '__none' ? (cfg.noneLabel || 'Unassigned') : (cfg.groupLabel ? cfg.groupLabel(k) : k);
+  // Archived-last within a list (stable — non-archived keep their order).
+  const archivedLast = (arr) => [...arr.filter(r => !isArchived(r)), ...arr.filter(isArchived)];
   return keys.map(k => {
     const rows = groups.get(k);
     const collapsed = !searching && s.groupsCollapsed.has(k);
-    // Archived-last within the group (stable — non-archived keep their order).
-    const ordered = [...rows.filter(r => !isArchived(r)), ...rows.filter(isArchived)];
+    let body = '';
+    if (!collapsed) {
+      if (cfg.subGroupBy) {
+        // Optional second-level sub-grouping (e.g. Confirmation youth/adult). Sub
+        // headers are a lighter, secondary treatment; archived-last per sub-section.
+        const subs = new Map();
+        rows.forEach(r => { const sk = cfg.subGroupBy(r) ?? '__sub'; if (!subs.has(sk)) subs.set(sk, []); subs.get(sk).push(r); });
+        const order = cfg.subGroupOrder || [...subs.keys()];
+        const subKeys = [...subs.keys()].sort((a, b) => {
+          const ia = order.indexOf(a), ib = order.indexOf(b);
+          return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+        });
+        body = subKeys.map(sk => {
+          const sub = archivedLast(subs.get(sk));
+          const sl = cfg.subGroupLabel ? cfg.subGroupLabel(sk, k) : sk;
+          return `<div style="font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin:8px 0 3px;padding-left:2px;">${esc(sl)} <span style="font-weight:400;">(${sub.length})</span></div>`
+            + sub.map(itemHtml).join('');
+        }).join('');
+      } else {
+        body = archivedLast(rows).map(itemHtml).join('');
+      }
+    }
     return `<div class="sac-group">
       <div class="sac-group-head" data-act="toggle-group" data-key="${esc(k)}">
         <i class="fa-solid fa-chevron-${collapsed ? 'right' : 'down'}" style="font-size:10px;"></i>
         ${esc(label(k))} <span style="color:#9CA3AF;font-weight:400;">(${rows.length})</span>
       </div>
-      ${collapsed ? '' : ordered.map(itemHtml).join('')}
+      ${body}
     </div>`;
   }).join('');
 }
@@ -251,7 +273,7 @@ function detailPaneHtml() {
   const canManage = cfg.canManage ? cfg.canManage() : true;
   const actions = (cfg.actions || []).map((a, i) =>
     `<button class="btn-secondary" style="padding:.3rem .8rem;font-size:12.5px;" data-act="action" data-i="${i}" data-id="${r.id}">${a.icon ? `<i class="fa-solid ${a.icon}"></i> ` : ''}${esc(a.label)}</button>`).join('');
-  const sections = (cfg.detailSections || []).map(sec =>
+  const sections = (cfg.detailSections || []).filter(sec => !sec.when || sec.when(r)).map(sec =>
     `<div class="sac-section"><div class="sac-section-title">${esc(sec.title)}</div><div>${sec.render(r)}</div></div>`).join('');
 
   return `

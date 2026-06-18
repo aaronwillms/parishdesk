@@ -68,9 +68,27 @@ flat list (First Communion groups by cohort; Baptism stays flat). The grouping
 path: groups are ordered by the config's `groupCompare` (most-recent first), the
 **newest group is expanded and older groups collapsed by default** (UI-only,
 not persisted), records with no group fall into an **"Unassigned" group pinned
-last** (never dropped), and an **active search auto-expands** so matches show
-across every group. Bulk-select works across groups and selection survives
-collapse toggles. The flat-list path (Baptism) is unchanged.
+last** (never dropped; a config may rename it via `noneLabel`), and an **active
+search auto-expands** so matches show across every group. Bulk-select works across
+groups and selection survives collapse toggles. The flat-list path (Baptism) is
+unchanged.
+
+**Two-level grouping (optional, live as of Confirmation).** A config may add a
+second level with `subGroupBy(record)` + `subGroupLabel(subKey, parentKey)` (and
+optional `subGroupOrder`). Each top-level group then renders **sub-sections** in
+`subGroupOrder`, with a lighter secondary header showing each sub-section's own
+count (the cohort header shows the group total); only sub-sections with members
+render. The parent group's collapse still collapses the whole group, and
+archived-last applies within each sub-section. Configs that don't set
+`subGroupBy` (First Communion) render exactly as before — single-level output is
+unchanged. Confirmation uses this: **cohort** (top) then **youth/adult** (sub);
+uncohorted candidates use `noneLabel: 'No Cohort'` with sub-sections "Youth
+Candidates" / "Adult Candidates" (never a bare "Unassigned").
+
+Detail sections may carry an optional `when(record)` predicate; a section renders
+only when it returns truthy. Confirmation's **Service Hours** section is
+`when: youth && hours-enabled` — shown for youth candidates only, hidden entirely
+for adults (the edit form's service-hours field is likewise youth-gated).
 
 ### First Communion cohorts — created in the panel, selected in Add Student
 
