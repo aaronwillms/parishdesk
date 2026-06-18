@@ -5,6 +5,7 @@ import { applyParishName } from '../ui/navigation.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { fetchAllGrants, revokeGrant, setGrantNote, labelForGrant, userName, ensureIdentities, recordTypeLabel, PRIORITY_TYPES } from '../ui/grants.js';
 import { personTitle } from '../utils.js';
+import { computePermissionBasis } from '../roles.js';
 
 const SACRAMENTS = ['baptism', 'first_communion', 'confirmation', 'ocia', 'marriage', 'annulments'];
 const SACRAMENT_LABELS = { baptism: 'Baptism', first_communion: 'First Communion', confirmation: 'Confirmation', ocia: 'OCIA', marriage: 'Marriage', annulments: 'Annulments' };
@@ -346,57 +347,46 @@ function _userDetail(u) {
         <div style="font-size:11.5px;color:#6B7280;margin-top:1px;">All sacramental roles, panel grants, and team memberships are granted automatically. Individual permissions cannot be edited.</div>
       </div>
     </div>` : (() => {
-    // Sacraments: always individually editable (admins don't get these by default)
+    // Three visually distinct toggle states (basis computed in roles.js):
+    //   editable           → normal interactive checkbox, no chip
+    //   locked by admin    → ON + disabled, navy "🔒 Admin" chip
+    //   locked by coordinator → ON + disabled, cardinal "🔒 [Sacrament] coordinator" chip
+    const adminChip = `<span title="Granted by Admin role" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:600;padding:1px 6px;border-radius:3px;background:#EEF1F5;color:var(--navy);border:.5px solid #C7D2DE;white-space:nowrap;">🔒 Admin</span>`;
+    const coordChip = (label) => `<span title="Granted by ${label} coordinator role" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:600;padding:1px 6px;border-radius:3px;background:#FDEAED;color:var(--cardinal);border:.5px solid #F2C9D1;white-space:nowrap;">🔒 ${label} coordinator</span>`;
+    const permRow = (inputClass, dataAttr, label, { granted, locked, lockedBy }, roleLabel) => {
+      const chip = locked ? (lockedBy === 'admin' ? adminChip : coordChip(roleLabel)) : '';
+      return `
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+        <input type="checkbox" class="${inputClass}" ${dataAttr} ${granted ? 'checked' : ''} ${locked ? 'disabled' : ''}
+          style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${locked ? 'not-allowed' : 'pointer'};flex-shrink:0;${locked ? 'opacity:0.45;' : ''}" />
+        <span style="font-size:13px;color:#1C2B3A;">${label}</span>
+        ${chip}
+      </div>`;
+    };
+
+    // Sacraments: manual grants stay EDITABLE; only the coordinator "role" basis
+    // locks. Admin does NOT lock sacraments.
     const coordinatorSacraments = u.coordinatorSacraments || [];
     const sacramentChecks = SACRAMENTS.map(s => {
-      const isGranted = u.sacraments.includes(s);
-      const isCoord   = coordinatorSacraments.includes(s);
-      const isLocked  = isGranted || isCoord;
-      const note = isGranted ? 'Granted via Sacramental Roles'
-                 : isCoord   ? 'Granted via coordinator assignment'
-                 : null;
-      return `
-      <div style="display:flex;flex-direction:column;padding:4px 0;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <input type="checkbox" class="au-sac-cb" data-sacrament="${s}" ${isLocked ? 'checked disabled' : ''}
-            style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${isLocked ? 'not-allowed' : 'pointer'};flex-shrink:0;${isLocked ? 'opacity:0.45;' : ''}" />
-          <span style="font-size:13px;color:#1C2B3A;">${SACRAMENT_LABELS[s]}</span>
-        </div>
-        ${note ? `<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">${note}</div>` : ''}
-      </div>`;
+      const state = computePermissionBasis({
+        kind: 'sacrament',
+        hasManual: u.sacraments.includes(s),
+        hasRole:   coordinatorSacraments.includes(s),
+        roleLabel: SACRAMENT_LABELS[s],
+      });
+      return permRow('au-sac-cb', `data-sacrament="${s}"`, SACRAMENT_LABELS[s], state, SACRAMENT_LABELS[s]);
     }).join('');
 
-    // Panel grants: locked+checked for admin users (they get all non-sacramental panels)
+    // Panel grants (institution permissions): manual stays editable; Admin locks all.
     const grantChecks = Object.entries(PANEL_LABELS).map(([p, label]) => {
-      const lockedByAdmin = isAdminRole;
-      const isChecked = u.grants.includes(p) || lockedByAdmin;
-      return `
-      <div style="display:flex;flex-direction:column;padding:4px 0;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <input type="checkbox" class="au-grant-cb" data-panel="${p}"
-            ${isChecked ? 'checked' : ''} ${lockedByAdmin ? 'disabled' : ''}
-            style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${lockedByAdmin ? 'not-allowed' : 'pointer'};flex-shrink:0;${lockedByAdmin ? 'opacity:0.45;' : ''}" />
-          <span style="font-size:13px;color:#1C2B3A;">${label}</span>
-        </div>
-        ${lockedByAdmin ? '<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">Granted via Admin role</div>' : ''}
-      </div>`;
+      const state = computePermissionBasis({ kind: 'panel', isAdmin: isAdminRole, hasManual: u.grants.includes(p) });
+      return permRow('au-grant-cb', `data-panel="${p}"`, label, state);
     }).join('');
 
-    // Team memberships: for admin users, all teams locked+checked; for basic, only actual memberships locked
+    // Team memberships: manual membership stays editable; Admin locks all.
     const teamChecks = teams.map(t => {
-      const isMember = (u.teamIds || []).includes(t.id);
-      const locked = isAdminRole || isMember;
-      const note = isAdminRole ? 'Granted via Admin role' : (isMember ? 'Access via team membership' : null);
-      return `
-      <div style="display:flex;flex-direction:column;padding:4px 0;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <input type="checkbox" class="au-team-cb" data-team-id="${t.id}" data-personnel-id="${u.profile?.personnel_id || ''}"
-            ${locked ? 'checked disabled' : ''}
-            style="width:14px;height:14px;accent-color:#8B1A2F;margin:0;cursor:${locked ? 'not-allowed' : 'pointer'};flex-shrink:0;${locked ? 'opacity:0.45;' : ''}" />
-          <span style="font-size:13px;color:#1C2B3A;">${t.name}</span>
-        </div>
-        ${note ? `<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-left:22px;">${note}</div>` : ''}
-      </div>`;
+      const state = computePermissionBasis({ kind: 'team', isAdmin: isAdminRole, hasManual: (u.teamIds || []).includes(t.id) });
+      return permRow('au-team-cb', `data-team-id="${t.id}" data-personnel-id="${u.profile?.personnel_id || ''}"`, t.name, state);
     }).join('');
 
     return `
@@ -510,30 +500,44 @@ async function _saveUser(userId) {
     }
   }
 
-  // Sacramental roles
-  const checkedSacraments = Array.from(detail.querySelectorAll('.au-sac-cb:checked')).map(cb => cb.dataset.sacrament);
+  // ── Manual-only persistence (non-destructive) ─────────────────────────────
+  // Only the MANUAL basis is ever written. Derived (admin/role) grants are never
+  // persisted, so we must never strip a manual row that a derived lock is masking.
+  // A disabled checkbox = a derived lock at render time → preserve its manual row
+  // as-is; an enabled checkbox expresses the user's manual intent directly.
+
+  // Sacramental roles (manual). Editable-checked = keep; coordinator-locked rows
+  // that already have a manual grant are preserved.
+  const sacCbs = Array.from(detail.querySelectorAll('.au-sac-cb'));
+  const desiredSac = new Set(sacCbs.filter(cb => !cb.disabled && cb.checked).map(cb => cb.dataset.sacrament));
+  u.sacraments.forEach(s => { const cb = sacCbs.find(c => c.dataset.sacrament === s); if (cb && cb.disabled) desiredSac.add(s); });
   await sb.from('sacramental_roles').delete().eq('user_id', userId);
-  if (checkedSacraments.length) {
-    await sb.from('sacramental_roles').insert(checkedSacraments.map(s => ({ user_id: userId, sacrament: s })));
+  if (desiredSac.size) {
+    await sb.from('sacramental_roles').insert([...desiredSac].map(s => ({ user_id: userId, sacrament: s })));
   }
 
-  // Panel grants — exclude locked (derived) checkboxes so we don't write implied access to panel_grants
-  const checkedGrants = Array.from(detail.querySelectorAll('.au-grant-cb:checked:not(:disabled)')).map(cb => cb.dataset.panel);
+  // Panel grants (manual). Admin-locked rows with an existing manual grant are preserved.
+  const grantCbs = Array.from(detail.querySelectorAll('.au-grant-cb'));
+  const desiredGrants = new Set(grantCbs.filter(cb => !cb.disabled && cb.checked).map(cb => cb.dataset.panel));
+  u.grants.forEach(p => { const cb = grantCbs.find(c => c.dataset.panel === p); if (cb && cb.disabled) desiredGrants.add(p); });
   await sb.from('panel_grants').delete().eq('user_id', userId);
-  if (checkedGrants.length) {
-    await sb.from('panel_grants').insert(checkedGrants.map(p => ({ user_id: userId, panel: p })));
+  if (desiredGrants.size) {
+    await sb.from('panel_grants').insert([...desiredGrants].map(p => ({ user_id: userId, panel: p })));
   }
 
-  // Team memberships — only if user has a linked personnel_id
+  // Team memberships (manual) — only if user has a linked personnel_id. Admin-locked
+  // (disabled) rows are left untouched so admin grant/removal never adds or drops a
+  // physical membership; editable rows reconcile to their checkbox.
   const personnelId = u?.profile?.personnel_id;
   if (personnelId) {
-    const checkedTeams = Array.from(detail.querySelectorAll('.au-team-cb:checked')).map(cb => cb.dataset.teamId);
-    const uncheckedTeams = Array.from(detail.querySelectorAll('.au-team-cb:not(:checked):not(:disabled)')).map(cb => cb.dataset.teamId);
-    for (const teamId of checkedTeams) {
-      await sb.from('team_members').upsert({ team_id: teamId, personnel_id: personnelId }, { onConflict: 'team_id,personnel_id' });
-    }
-    for (const teamId of uncheckedTeams) {
-      await sb.from('team_members').delete().eq('team_id', teamId).eq('personnel_id', personnelId);
+    for (const cb of detail.querySelectorAll('.au-team-cb')) {
+      if (cb.disabled) continue;
+      const teamId = cb.dataset.teamId;
+      if (cb.checked) {
+        await sb.from('team_members').upsert({ team_id: teamId, personnel_id: personnelId }, { onConflict: 'team_id,personnel_id' });
+      } else {
+        await sb.from('team_members').delete().eq('team_id', teamId).eq('personnel_id', personnelId);
+      }
     }
   }
 

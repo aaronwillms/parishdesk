@@ -163,6 +163,37 @@ export function canAccessPanel(panel) {
   return r.panelGrants.includes(panel);
 }
 
+// ── Permission basis model (Admin > Users) ──────────────────────────────────
+// A team / institution(panel) / sacrament permission can be held on more than
+// one BASIS at once. Tracking WHY a permission is held keeps locks and removals
+// correct and non-destructive. Bases:
+//   manual — an admin set the toggle directly (a row in panel_grants /
+//            team_members / sacramental_roles).
+//   admin  — derived from the user being Admin (covers ALL team + panel perms).
+//   role   — derived from a sacramental coordinator assignment (one sacrament).
+// A permission is effectively granted if ANY basis is present. Derived bases
+// (admin, role) are NEVER written into the manual tables — so removing Admin or
+// a coordinator role drops only that basis and any manual grant survives.
+//
+// This is the single source of truth: the Admin UI reads the computed state and
+// does not hand-derive locks. `kind` is 'team' | 'panel' | 'sacrament'.
+export function computePermissionBasis({ kind, isAdmin = false, hasManual = false, hasRole = false, roleLabel = '' }) {
+  const bases = new Set();
+  if (hasManual) bases.add('manual');
+  // Admin grants ALL team + institution(panel) perms — but NOT sacraments.
+  if (isAdmin && (kind === 'team' || kind === 'panel')) bases.add('admin');
+  // Coordinator role grants its one sacrament.
+  if (hasRole && kind === 'sacrament') bases.add('role');
+
+  // Locks are additive but only ONE label is shown; admin takes precedence over
+  // role (they apply to different kinds, so they never actually collide).
+  let locked = false, lockedBy = null, lockLabel = null;
+  if (bases.has('admin')) { locked = true; lockedBy = 'admin'; lockLabel = 'Granted by Admin role'; }
+  else if (bases.has('role')) { locked = true; lockedBy = 'role'; lockLabel = `Granted by ${roleLabel} coordinator role`; }
+
+  return { granted: bases.size > 0, bases, locked, lockedBy, lockLabel };
+}
+
 export function isTeamAdmin(teamId) {
   if (isAdmin()) return true;  // admin and super_admin can manage all teams
   return store.currentUserRoles?.teamIds.includes(teamId) || false;

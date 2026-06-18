@@ -250,10 +250,13 @@ function render() {
 
   const tabs = _insts.map((inst, i) => {
     const active = inst.id === _activeInstId;
-    const mgmt = canManageTabs() ? `
+    // Reordering the global parish-wide order is admin+; renaming stays super-admin.
+    const arrows = canEditTree() ? `
       <span data-action="move-inst" data-inst-id="${inst.id}" data-dir="left"  title="Move left"  style="cursor:pointer;color:#9CA3AF;padding:0 2px;${i === 0 ? 'visibility:hidden;' : ''}">‹</span>
-      <span data-action="move-inst" data-inst-id="${inst.id}" data-dir="right" title="Move right" style="cursor:pointer;color:#9CA3AF;padding:0 2px;${i === _insts.length - 1 ? 'visibility:hidden;' : ''}">›</span>
+      <span data-action="move-inst" data-inst-id="${inst.id}" data-dir="right" title="Move right" style="cursor:pointer;color:#9CA3AF;padding:0 2px;${i === _insts.length - 1 ? 'visibility:hidden;' : ''}">›</span>` : '';
+    const gear = canManageTabs() ? `
       <span data-action="rename-inst" data-inst-id="${inst.id}" title="Rename institution" style="cursor:pointer;color:#9CA3AF;padding:0 2px;">⚙</span>` : '';
+    const mgmt = arrows + gear;
     return `<div class="hr-tab" data-action="select-tab" data-inst-id="${inst.id}" style="
         display:inline-flex;align-items:center;gap:2px;padding:.5rem .85rem;cursor:pointer;white-space:nowrap;
         font-size:13px;font-family:'Inter',sans-serif;font-weight:${active ? '600' : '400'};
@@ -436,7 +439,7 @@ async function hrSaveInstitution(id) {
 
 // Reorder by renumbering sort_order across all institutions in the new order.
 async function reorderInstitution(id, dir) {
-  if (!canManageTabs()) return;
+  if (!canEditTree()) return;
   const ordered = [..._insts];
   const idx = ordered.findIndex(i => i.id === id);
   const swap = dir === 'left' ? idx - 1 : idx + 1;

@@ -282,7 +282,6 @@ function openInstitutionModal() {
     <div class="modal-title">Add institution</div>
     <label>Name</label><input id="if-name" placeholder="e.g. Outreach Center" />
     ${_instIconPickerHtml('fa-building')}
-    <label>Sort order</label><input type="number" id="if-sort" placeholder="0" style="width:80px;" />
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn-primary" onclick="saveInstitution()">Save</button>
@@ -293,10 +292,13 @@ function openInstitutionModal() {
 async function saveInstitution() {
   const name = document.getElementById('if-name').value.trim();
   if (!name) { alert('Name is required.'); return; }
+  // New institutions append to the end of the global parish-wide order
+  // (the order is arranged via the HR panel's arrows).
+  const nextOrder = (store.institutions || []).reduce((m, i) => Math.max(m, i.sort_order ?? 0), -1) + 1;
   const { data, error } = await sb.from('institutions').insert({
     name,
     icon: document.getElementById('if-icon')?.value || 'fa-building',
-    sort_order: parseInt(document.getElementById('if-sort').value) || 0,
+    sort_order: nextOrder,
   }).select('id').single();
   if (error) { alert('Save failed: ' + error.message); return; }
   // Every institution gets exactly one permanent root position automatically.
@@ -309,7 +311,6 @@ async function saveInstitution() {
 
 function openInstitutionSettingsModal(id, currentName) {
   const inst = (store.institutions || []).find(i => i.id === id);
-  const currentSort = inst?.sort_order ?? '';
   const currentIcon = inst?.icon || 'fa-building';
   const safeName = currentName.replace(/'/g, "\\'");
   document.getElementById('modal-content').innerHTML = `
@@ -317,8 +318,6 @@ function openInstitutionSettingsModal(id, currentName) {
     <label>Name</label>
     <input id="if-rename" value="${currentName}" />
     ${_instIconPickerHtml(currentIcon)}
-    <label>Sort order</label>
-    <input type="number" id="if-sort" value="${currentSort}" placeholder="0" style="width:80px;" />
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn-primary" onclick="saveInstitutionSettings('${id}','${safeName}')">Save</button>
@@ -331,11 +330,11 @@ function openInstitutionSettingsModal(id, currentName) {
 }
 
 async function saveInstitutionSettings(id, oldName) {
-  const newName   = document.getElementById('if-rename').value.trim();
-  const sortOrder = parseInt(document.getElementById('if-sort').value) || 0;
-  const icon      = document.getElementById('if-icon')?.value || 'fa-building';
+  const newName = document.getElementById('if-rename').value.trim();
+  const icon    = document.getElementById('if-icon')?.value || 'fa-building';
   if (!newName) { alert('Name is required.'); return; }
-  const { error: instErr } = await sb.from('institutions').update({ name: newName, sort_order: sortOrder, icon }).eq('id', id);
+  // Order is managed by the HR arrows, not here — leave sort_order untouched.
+  const { error: instErr } = await sb.from('institutions').update({ name: newName, icon }).eq('id', id);
   if (instErr) { alert('Save failed: ' + instErr.message); return; }
   if (newName !== oldName) {
     const { error: persErr } = await sb.from('personnel')
