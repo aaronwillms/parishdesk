@@ -3,6 +3,7 @@ import { store } from '../store.js';
 import { createAvatar } from '../ui/avatar.js';
 import { applyParishName } from '../ui/navigation.js';
 import { createContactPicker } from '../ui/contactPicker.js';
+import { fetchAllGrants, revokeGrant, setGrantNote, labelForGrant, userName, ensureIdentities, recordTypeLabel, PRIORITY_TYPES } from '../ui/grants.js';
 
 const SACRAMENTS = ['baptism', 'first_communion', 'confirmation', 'ocia', 'marriage', 'annulments'];
 const SACRAMENT_LABELS = { baptism: 'Baptism', first_communion: 'First Communion', confirmation: 'Confirmation', ocia: 'OCIA', marriage: 'Marriage', annulments: 'Annulments' };
@@ -126,6 +127,7 @@ function _render() {
     { key: 'users',     label: 'Users' },
     { key: 'calendars', label: 'Calendars' },
     { key: 'settings',  label: 'Parish Settings' },
+    { key: 'audit',     label: 'Access Audit' },
     { key: 'invite',    label: 'Invite User' },
   ];
 
@@ -156,12 +158,14 @@ function _render() {
       if (_activeTab === 'users')     { _renderUsersTab(); await _loadUsers(); }
       if (_activeTab === 'calendars') await _renderCalendarsTab();
       if (_activeTab === 'settings')  await _renderSettingsTab();
+      if (_activeTab === 'audit')     await _renderAuditTab();
       if (_activeTab === 'invite')    _renderInviteTab();
     });
   });
 
   if (_activeTab === 'calendars')     _renderCalendarsTab();
   else if (_activeTab === 'settings') _renderSettingsTab();
+  else if (_activeTab === 'audit')    _renderAuditTab();
   else if (_activeTab === 'invite')   _renderInviteTab();
   else _renderUsersTab();
 }
@@ -1090,3 +1094,147 @@ async function _resetPassword(email, detailEl) {
 }
 
 window.saveCalendar = _saveCalendar;
+
+// ── Access Audit tab (super-admin) — universal record_grants ledger ─────────
+// On-demand only; NO nag prompts. Reads live, so auto-clear deletions simply
+// vanish (the activity log retains history). Two pivots over ALL grantable
+// record types.
+
+let _auditGrants = [];
+let _auditPivot = 'record';   // 'record' | 'person'
+
+function _esc(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function _fmtDT(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+async function _renderAuditTab() {
+  const el = document.getElementById('admin-tab-content');
+  if (!el) return;
+  el.innerHTML = '<div style="font-size:13px;color:#9CA3AF;font-style:italic;padding:1rem 0;">Loading access ledger…</div>';
+  await ensureIdentities(true);
+  const grants = await fetchAllGrants();
+  // Resolve each record to a human label (best-effort, parallel).
+  const labels = await Promise.all(grants.map(g => labelForGrant(g)));
+  grants.forEach((g, i) => { g._label = labels[i]; });
+  _auditGrants = grants;
+  _renderAuditPivot();
+}
+
+function _auditPivotToggle() {
+  return `
+    <div style="display:flex;gap:8px;margin-bottom:1rem;">
+      ${['record', 'person'].map(p => `
+        <button onclick="window.adminAuditPivot('${p}')" style="
+          background:${_auditPivot === p ? '#1C2B3A' : '#fff'};color:${_auditPivot === p ? '#fff' : '#6B7280'};
+          border:.5px solid ${_auditPivot === p ? '#1C2B3A' : '#E2DDD6'};border-radius:6px;
+          padding:.4rem .9rem;font-size:12.5px;font-family:'Inter',sans-serif;cursor:pointer;">
+          ${p === 'record' ? 'By file' : 'By person'}
+        </button>`).join('')}
+    </div>`;
+}
+
+function _priorityBadge(type) {
+  return PRIORITY_TYPES.has(type)
+    ? `<span title="High-priority access to review" style="font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:1px 6px;border-radius:3px;background:#FCE8D5;color:#B45309;margin-left:6px;">PRIORITY</span>` : '';
+}
+function _noteCell(g) {
+  return g.note
+    ? `<span style="color:#374151;">${_esc(g.note)}</span> <span onclick="window.adminEditGrantNote('${g.id}')" style="cursor:pointer;color:#8FA8BF;font-size:11px;">edit</span>`
+    : `<span onclick="window.adminEditGrantNote('${g.id}')" style="cursor:pointer;color:#8FA8BF;font-size:11px;">+ reason</span>`;
+}
+function _revokeX(g) {
+  return `<span title="Revoke access" onclick="window.adminRevokeGrant('${g.id}')" style="cursor:pointer;color:#A32D2D;font-weight:600;flex-shrink:0;">✕</span>`;
+}
+
+function _renderAuditPivot() {
+  const el = document.getElementById('admin-tab-content');
+  if (!el) return;
+  if (!_auditGrants.length) {
+    el.innerHTML = `${_auditPivotToggle()}<div style="font-size:13px;color:#9CA3AF;font-style:italic;padding:1rem 0;">No active grants. Access granted via the chat “%” controller appears here.</div>`;
+    _bindAuditWindow();
+    return;
+  }
+
+  let body = '';
+  if (_auditPivot === 'record') {
+    // Group by record_type + record_id ("who can see this file?")
+    const groups = new Map();
+    _auditGrants.forEach(g => {
+      const k = `${g.record_type}|${g.record_id}`;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(g);
+    });
+    // Priority record types first, then by label.
+    const entries = [...groups.entries()].sort((a, b) => {
+      const ap = PRIORITY_TYPES.has(a[1][0].record_type) ? 0 : 1;
+      const bp = PRIORITY_TYPES.has(b[1][0].record_type) ? 0 : 1;
+      return ap - bp || (a[1][0]._label || '').localeCompare(b[1][0]._label || '');
+    });
+    body = entries.map(([, rows]) => {
+      const g0 = rows[0];
+      return `<div class="card" style="margin-bottom:.75rem;padding:.9rem 1rem;">
+        <div style="font-size:13.5px;font-weight:600;color:#1C2B3A;margin-bottom:.5rem;">
+          ${_esc(g0._label)} <span style="font-size:11px;color:#9CA3AF;font-weight:400;">${_esc(recordTypeLabel(g0.record_type))}</span>${_priorityBadge(g0.record_type)}
+        </div>
+        ${rows.map(g => `
+          <div style="display:flex;align-items:center;gap:10px;padding:.4rem 0;border-bottom:.5px solid #F0EDE8;font-size:12px;">
+            <div style="flex:1;min-width:0;">
+              <span style="color:#1C2B3A;font-weight:500;">${_esc(userName(g.granted_to))}</span>
+              <span style="color:#9CA3AF;"> · granted by ${_esc(userName(g.granted_by))} · ${_fmtDT(g.granted_at)}</span>
+              <div style="font-size:11.5px;margin-top:1px;">${_noteCell(g)}</div>
+            </div>
+            ${_revokeX(g)}
+          </div>`).join('')}
+      </div>`;
+    }).join('');
+  } else {
+    // Group by granted_to ("what has this user been granted?")
+    const groups = new Map();
+    _auditGrants.forEach(g => {
+      if (!groups.has(g.granted_to)) groups.set(g.granted_to, []);
+      groups.get(g.granted_to).push(g);
+    });
+    const entries = [...groups.entries()].sort((a, b) => userName(a[0]).localeCompare(userName(b[0])));
+    body = entries.map(([uid, rows]) => `
+      <div class="card" style="margin-bottom:.75rem;padding:.9rem 1rem;">
+        <div style="font-size:13.5px;font-weight:600;color:#1C2B3A;margin-bottom:.5rem;">${_esc(userName(uid))}</div>
+        ${rows.sort((a, b) => (PRIORITY_TYPES.has(a.record_type) ? 0 : 1) - (PRIORITY_TYPES.has(b.record_type) ? 0 : 1)).map(g => `
+          <div style="display:flex;align-items:center;gap:10px;padding:.4rem 0;border-bottom:.5px solid #F0EDE8;font-size:12px;">
+            <div style="flex:1;min-width:0;">
+              <span style="color:#1C2B3A;font-weight:500;">${_esc(g._label)}</span>${_priorityBadge(g.record_type)}
+              <span style="color:#9CA3AF;"> · by ${_esc(userName(g.granted_by))} · ${_fmtDT(g.granted_at)}</span>
+              <div style="font-size:11.5px;margin-top:1px;">${_noteCell(g)}</div>
+            </div>
+            ${_revokeX(g)}
+          </div>`).join('')}
+      </div>`).join('');
+  }
+
+  el.innerHTML = `${_auditPivotToggle()}${body}`;
+  _bindAuditWindow();
+}
+
+function _bindAuditWindow() {
+  window.adminAuditPivot = (p) => { _auditPivot = p; _renderAuditPivot(); };
+  window.adminRevokeGrant = async (grantId) => {
+    if (!confirm('Revoke this access? The recipient will immediately lose access to the file.')) return;
+    const { error } = await revokeGrant(grantId);
+    if (error) { alert('Revoke failed: ' + error.message); return; }
+    _auditGrants = _auditGrants.filter(g => g.id !== grantId);
+    _renderAuditPivot();
+  };
+  window.adminEditGrantNote = async (grantId) => {
+    const g = _auditGrants.find(x => x.id === grantId);
+    const note = prompt('Reason for this grant (leave blank to clear):', g?.note || '');
+    if (note === null) return;
+    const { error } = await setGrantNote(grantId, note.trim());
+    if (error) { alert('Could not save note: ' + error.message); return; }
+    if (g) g.note = note.trim() || null;
+    _renderAuditPivot();
+  };
+}

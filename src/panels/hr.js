@@ -15,6 +15,7 @@ import { store } from '../store.js';
 import { isAdmin, isSuperAdmin } from '../roles.js';
 import { closeModal } from '../ui/modal.js';
 import { logActivity, todayCST } from '../utils.js';
+import { ensureIdentities, userName, fetchGrantRow } from '../ui/grants.js';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -812,6 +813,101 @@ function metaLine(rec) {
 }
 function reopenCard() { if (_card) openOccupancyCard(_card.occId); }
 
+// PHASE 3 — grantee header. Shown only when the CURRENT viewer sees the file
+// via a grant (not author, not super_admin). Reads the grant row live, so it
+// shows even before a reason note is added. Distinct from the Stage 3 banner.
+async function granteeHeaderHtml(type, rec) {
+  if (isSuperAdmin() || rec.author_id === _authUserId) return '';
+  await ensureIdentities();
+  const grant = await fetchGrantRow(type, rec.id, _authUserId);
+  if (!grant) return '';   // access not via grant — no header
+  const granter = grant.granted_by ? userName(grant.granted_by) : 'an administrator';
+  return `<div style="background:#EEEAF6;border:.5px solid #D6CDEC;border-radius:6px;padding:.5rem .7rem;margin-bottom:.85rem;font-size:12px;color:#4A3D74;">
+    <i class="fa-solid fa-key" style="margin-right:5px;"></i><strong>Access granted by ${esc(granter)}</strong>${grant.note ? ` — ${esc(grant.note)}` : ''}
+    <div style="font-size:10.5px;color:#7A6BA6;margin-top:2px;">This file is not yours — you are viewing it under a specific grant.</div>
+  </div>`;
+}
+function exportBtn(type, id) {
+  return `<button class="btn-secondary" onclick="window.hrExportPdf('${type}','${id}')">Export PDF</button>`;
+}
+
+// ── PHASE 5 — single-record PDF export (re-render, banner-swap, provenance) ──
+// Inherits view access (the button only exists on a record the user can already
+// see). Re-renders the record's fields into the document (no DOM scraping); for
+// reviews, from frozen_definition + answers. Carries a provenance stamp instead
+// of the on-screen "don't replace the physical file" banner.
+function recordToSections(type, rec) {
+  if (type === 'memo') {
+    return { title: 'Memo', sections: [['Subject', rec.subject || ''], ['Body', rec.body || '']] };
+  }
+  if (type === 'incident') {
+    return { title: 'Incident Report', sections: [['Description', rec.description || '']] };
+  }
+  if (type === 'disciplinary') {
+    return { title: 'Disciplinary Record', sections: [
+      ['Severity', rec.severity || '—'],
+      ['Narrative', rec.narrative || ''],
+      ['Corrective action', rec.corrective_action || '—'],
+      ['Signed physical copy on file', rec.signed_on_file ? `Yes${rec.signed_date ? ' (' + fmtDay(rec.signed_date) + ')' : ''}` : 'No'],
+    ] };
+  }
+  // review — render from the snapshot (frozen_definition + answers)
+  const def = Array.isArray(rec.frozen_definition) ? rec.frozen_definition : [];
+  const ans = rec.answers || {};
+  const sections = [];
+  if (rec.review_period_start || rec.review_period_end) {
+    sections.push(['Review period', `${rec.review_period_start ? fmtDay(rec.review_period_start) : '…'} – ${rec.review_period_end ? fmtDay(rec.review_period_end) : '…'}`]);
+  }
+  def.forEach(f => {
+    const a = ans[f.id];
+    sections.push([f.prompt || '(field)', (a === null || a === undefined || a === '') ? '—' : String(a)]);
+  });
+  sections.push(['Signed physical copy on file', rec.signed_on_file ? `Yes${rec.signed_date ? ' (' + fmtDay(rec.signed_date) + ')' : ''}` : 'No']);
+  return { title: 'Performance Review', sections };
+}
+
+async function hrExportPdf(type, id) {
+  const rec = await fetchRecord(type, id);
+  if (!rec) return;
+  const { jsPDF } = await import('jspdf');
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const M = 56;                       // margin
+  const W = doc.internal.pageSize.getWidth() - M * 2;
+  let y = M;
+  const { title, sections } = recordToSections(type, rec);
+
+  const who = labelForPP(rec.person_position_id);   // person — position (best effort)
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(28, 43, 58);
+  doc.text(title, M, y); y += 20;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(107, 114, 128);
+  doc.text(who.replace(/<[^>]+>/g, ''), M, y); y += 14;
+  const dateStr = rec.record_date ? fmtDay(rec.record_date) : fmtDay(rec.created_at);
+  doc.text(`${dateStr} · ${authorName(rec.author_id)}`, M, y); y += 22;
+
+  sections.forEach(([label, value]) => {
+    if (y > doc.internal.pageSize.getHeight() - 80) { doc.addPage(); y = M; }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(120, 120, 120);
+    doc.text(String(label).toUpperCase(), M, y); y += 13;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(11); doc.setTextColor(40, 40, 40);
+    const lines = doc.splitTextToSize(String(value || '—'), W);
+    lines.forEach(ln => {
+      if (y > doc.internal.pageSize.getHeight() - 80) { doc.addPage(); y = M; }
+      doc.text(ln, M, y); y += 15;
+    });
+    y += 8;
+  });
+
+  // BANNER-SWAP: provenance stamp (NOT the on-screen physical-file banner).
+  const me = store.currentUserProfile?.personnel?.name || 'Unknown user';
+  const stamp = `Exported from ParishDesk by ${me} on ${new Date().toLocaleString('en-US')}`;
+  doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(150, 150, 150);
+  doc.text(stamp, M, doc.internal.pageSize.getHeight() - 36);
+
+  const safe = (s) => String(s).replace(/[^a-z0-9]+/gi, '_').slice(0, 40);
+  doc.save(`${safe(title)}_${safe(who.replace(/<[^>]+>/g, ''))}.pdf`);
+  logActivity({ action: 'exported record to PDF', entityType: 'hr_record', entityName: `${type}:${id}`, contextType: 'hr' });
+}
+
 // ── Dispatch (called from card / record-row buttons) ────────────────────────
 
 function hrNewRecord(type) {
@@ -876,13 +972,16 @@ async function hrSaveMemo(id) {
   if (error) { alert('Save failed: ' + error.message); return; }
   reopenCard();
 }
-function viewMemo(rec) {
+async function viewMemo(rec) {
+  const gh = await granteeHeaderHtml('memo', rec);
   openModalHtml(`
     <div class="modal-title">${esc(rec.subject || 'Memo')}</div>
+    ${gh}
     ${metaLine(rec)}
     <div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;">${esc(rec.body || '')}</div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="window.hrReopenCard()">Back</button>
+      ${exportBtn('memo', rec.id)}
       ${canModifyRecord(rec) ? `<button class="btn-primary" onclick="window.hrEditRecord('memo','${rec.id}')">Edit</button>` : ''}
     </div>`);
 }
@@ -910,15 +1009,17 @@ async function hrSaveIncident(id) {
   reopenCard();
 }
 async function viewIncident(rec) {
-  const linked = await fetchLinks('incident', rec.id);
+  const [linked, gh] = await Promise.all([fetchLinks('incident', rec.id), granteeHeaderHtml('incident', rec)]);
   showRecordModal(`
     <div class="modal-title">Incident Report</div>
+    ${gh}
     ${metaLine(rec)}
     <div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;margin-bottom:1rem;">${esc(rec.description || '')}</div>
     ${crossLinkSection('incident', rec.id, linked)}
     ${bannerBlock()}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="window.hrReopenCard()">Back</button>
+      ${exportBtn('incident', rec.id)}
       ${canModifyRecord(rec) ? `<button class="btn-primary" onclick="window.hrEditRecord('incident','${rec.id}')">Edit</button>` : ''}
     </div>`);
 }
@@ -970,7 +1071,7 @@ async function hrSaveDisciplinary(id) {
   reopenCard();
 }
 async function viewDisciplinary(rec) {
-  const linked = await fetchLinks('disciplinary', rec.id);
+  const [linked, gh] = await Promise.all([fetchLinks('disciplinary', rec.id), granteeHeaderHtml('disciplinary', rec)]);
   const field = (label, value) => value
     ? `<div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.2rem;">${label}</div><div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;margin-bottom:.85rem;">${esc(value)}</div>` : '';
   const signed = rec.signed_on_file
@@ -978,6 +1079,7 @@ async function viewDisciplinary(rec) {
     : `<div style="font-size:12px;color:#9CA3AF;margin-bottom:.85rem;">Signed copy not yet on file</div>`;
   showRecordModal(`
     <div class="modal-title">Disciplinary Record</div>
+    ${gh}
     ${metaLine(rec)}
     ${rec.severity ? `<div style="margin-bottom:.85rem;"><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:3px;background:#FDEAED;color:#8B1A2F;">${esc(rec.severity.toUpperCase())}</span></div>` : ''}
     ${field('Narrative', rec.narrative)}
@@ -987,6 +1089,7 @@ async function viewDisciplinary(rec) {
     ${bannerBlock()}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="window.hrReopenCard()">Back</button>
+      ${exportBtn('disciplinary', rec.id)}
       ${canModifyRecord(rec) ? `<button class="btn-primary" onclick="window.hrEditRecord('disciplinary','${rec.id}')">Edit</button>` : ''}
     </div>`);
 }
@@ -1205,7 +1308,8 @@ function renderAnswer(f, a) {
   if (a === null || a === undefined || a === '') return '<span style="color:#9CA3AF;">—</span>';
   return esc(String(a));
 }
-function viewReview(rec) {
+async function viewReview(rec) {
+  const gh = await granteeHeaderHtml('review', rec);
   const def = Array.isArray(rec.frozen_definition) ? rec.frozen_definition : [];
   const ans = rec.answers || {};
   const rows = def.map(f => `
@@ -1219,6 +1323,7 @@ function viewReview(rec) {
     ? `<div style="font-size:12px;color:#2E6B43;margin-top:.6rem;">✓ Signed physical copy on file${rec.signed_date ? ` (${fmtDay(rec.signed_date)})` : ''}</div>` : '';
   showRecordModal(`
     <div class="modal-title">Performance Review</div>
+    ${gh}
     ${metaLine(rec)}
     ${period}
     ${rows || '<div style="font-size:12.5px;color:#9CA3AF;">No fields.</div>'}
@@ -1226,6 +1331,7 @@ function viewReview(rec) {
     ${bannerBlock()}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="window.hrReopenCard()">Back</button>
+      ${exportBtn('review', rec.id)}
       ${canModifyRecord(rec) ? `<button class="btn-primary" onclick="window.hrEditRecord('review','${rec.id}')">Edit</button>` : ''}
     </div>`);
 }
@@ -1460,7 +1566,7 @@ async function hrSaveTemplate() {
 Object.assign(window, {
   hrSaveInstitution, hrSavePosition, hrSaveMove, hrSaveLink, hrSaveFastAdd, hrFaToggle,
   // records
-  hrReopenCard: reopenCard, hrNewRecord, hrViewRecord, hrEditRecord, hrDeleteRecord,
+  hrReopenCard: reopenCard, hrNewRecord, hrViewRecord, hrEditRecord, hrDeleteRecord, hrExportPdf,
   hrSaveMemo, hrSaveIncident, hrSaveDisciplinary, hrDisSignedToggle,
   // cross-linking
   hrOpenLinkPicker, hrAddLink, hrRemoveLink,
