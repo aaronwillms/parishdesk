@@ -88,7 +88,10 @@ function genId() { return 'f_' + Math.random().toString(36).slice(2, 10); }
 // ── Module state ────────────────────────────────────────────────────────────
 
 let _activeInstId = null;
-const _expanded = new Set();   // expanded position ids; persists across reloads
+// Collapsed position ids. The tree renders FULLY EXPANDED by default (Rev 1):
+// an id is open unless it is in this set. Manual collapses live only for the
+// session — a refresh resets the module, so the tree re-opens fully.
+const _collapsed = new Set();
 let _ctx = null;               // built context (see buildContext)
 let _insts = [];
 let _people = [];              // all personnel (incl. inactive, for name lookup)
@@ -260,9 +263,8 @@ function render() {
     </div>`;
   }).join('');
 
-  const addInst = canManageTabs()
-    ? `<button class="btn-secondary" data-action="add-inst" style="margin-left:auto;">+ Institution</button>` : '';
-
+  // Institutions (and their permanent root position) are created in the
+  // directory's add-institution flow — HR consumes the list, never creates it.
   root.innerHTML = `
     <div style="padding:1.1rem 1.1rem 0;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 1rem;">
@@ -271,7 +273,6 @@ function render() {
       </div>
       <div style="display:flex;align-items:flex-end;gap:0;border-bottom:.5px solid var(--stone);margin-bottom:1.1rem;overflow-x:auto;">
         ${tabs || '<span style="font-size:13px;color:#6B7280;padding:.5rem 0;">No institutions yet.</span>'}
-        ${addInst}
       </div>
       <div id="hr-tree"></div>
     </div>`;
@@ -304,7 +305,7 @@ function renderTree() {
 function renderNode(pos, depth) {
   const children = _ctx.childrenByParent.get(pos.id) || [];
   const hasChildren = children.length > 0;
-  const isOpen = _expanded.has(pos.id);
+  const isOpen = !_collapsed.has(pos.id);
   const current = _ctx.currentByPos.get(pos.id) || [];
   const vacant = current.length === 0;
 
@@ -380,9 +381,8 @@ function onHrClick(e) {
     case 'select-tab':  _activeInstId = instId; render(); break;
     case 'move-inst':   reorderInstitution(instId, t.dataset.dir); break;
     case 'rename-inst': openInstitutionModal(instId); break;
-    case 'add-inst':    openInstitutionModal(null); break;
     case 'open-templates': openTemplateManager(); break;
-    case 'toggle':      _expanded.has(posId) ? _expanded.delete(posId) : _expanded.add(posId); renderTree(); break;
+    case 'toggle':      _collapsed.has(posId) ? _collapsed.delete(posId) : _collapsed.add(posId); renderTree(); break;
     case 'add-child':   openPositionModal(null, posId); break;
     case 'edit-pos':    openPositionModal(posId, null); break;
     case 'move-pos':    openMoveModal(posId); break;
@@ -401,41 +401,35 @@ function openModalHtml(html) {
   document.getElementById('modal-overlay').classList.add('open');
 }
 
+// Rename an existing institution. HR does not create institutions — that lives
+// in the directory's add-institution flow (which also creates the root).
 function openInstitutionModal(id) {
   if (!canManageTabs()) return;
-  const inst = id ? _insts.find(i => i.id === id) : null;
+  const inst = _insts.find(i => i.id === id);
+  if (!inst) return;
   openModalHtml(`
-    <div class="modal-title">${inst ? 'Rename institution' : 'Add institution'}</div>
-    <label>Name</label><input id="hr-inst-name" value="${esc(inst?.name || '')}" placeholder="e.g. Cathedral School" />
+    <div class="modal-title">Rename institution</div>
+    <label>Name</label><input id="hr-inst-name" value="${esc(inst.name || '')}" placeholder="e.g. Cathedral School" />
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn-primary" onclick="window.hrSaveInstitution(${inst ? `'${inst.id}'` : 'null'})">Save</button>
+      <button class="btn-primary" onclick="window.hrSaveInstitution('${inst.id}')">Save</button>
     </div>`);
 }
 
+// HR renames existing institutions only — it never CREATES institutions or
+// roots (the directory's institution-creation flow does, Revision 2).
 async function hrSaveInstitution(id) {
   const name = document.getElementById('hr-inst-name').value.trim();
   if (!name) { alert('Name is required.'); return; }
-  if (id) {
-    const old = _insts.find(i => i.id === id);
-    const { error } = await sb.from('institutions').update({ name }).eq('id', id);
-    if (error) { alert('Save failed: ' + error.message); return; }
-    // Cascade the rename to personnel.institution (name-based link, per existing convention).
-    if (old && old.name !== name) {
-      await sb.from('personnel').update({ institution: name, updated_at: new Date().toISOString() }).eq('institution', old.name);
-    }
-    logActivity({ action: 'renamed institution', entityType: 'institution', entityName: name });
-  } else {
-    const nextOrder = _insts.length ? Math.max(..._insts.map(i => i.sort_order ?? 0)) + 1 : 0;
-    const { data, error } = await sb.from('institutions').insert({ name, sort_order: nextOrder }).select('id').single();
-    if (error) { alert('Save failed: ' + error.message); return; }
-    _activeInstId = data?.id || _activeInstId;
-    // Every institution gets exactly one permanent root position automatically.
-    if (data?.id) {
-      await sb.from('positions').insert({ institution_id: data.id, title: 'Root Administrator', parent_position_id: null, is_administrator: true });
-    }
-    logActivity({ action: 'added institution', entityType: 'institution', entityName: name });
+  if (!id) { closeModal(); return; }
+  const old = _insts.find(i => i.id === id);
+  const { error } = await sb.from('institutions').update({ name }).eq('id', id);
+  if (error) { alert('Save failed: ' + error.message); return; }
+  // Cascade the rename to personnel.institution (name-based link).
+  if (old && old.name !== name) {
+    await sb.from('personnel').update({ institution: name, updated_at: new Date().toISOString() }).eq('institution', old.name);
   }
+  logActivity({ action: 'renamed institution', entityType: 'institution', entityName: name });
   closeModal();
   await loadHr();
 }
@@ -491,7 +485,7 @@ async function hrSavePosition(posId, parentId) {
       title, duties, is_administrator,
     });
     if (error) { alert('Save failed: ' + error.message); return; }
-    if (parentId) _expanded.add(parentId);
+    if (parentId) _collapsed.delete(parentId);   // reveal the new child
   }
   logActivity({ action: posId ? 'updated position' : 'created position', entityType: 'position', entityName: title });
   closeModal();
@@ -525,7 +519,7 @@ async function hrSaveMove(posId) {
   const newParent = document.getElementById('hr-move-parent').value || null;
   const { error } = await sb.from('positions').update({ parent_position_id: newParent, updated_at: new Date().toISOString() }).eq('id', posId);
   if (error) { alert('Move failed: ' + error.message); return; }
-  if (newParent) _expanded.add(newParent);
+  if (newParent) _collapsed.delete(newParent);   // reveal the moved node
   closeModal();
   await loadHr();
 }
@@ -566,7 +560,7 @@ async function hrSaveLink(posId) {
     person_id: personId, position_id: posId, employment_type: empType,
   });
   if (error) { alert('Link failed: ' + error.message); return; }
-  _expanded.add(posId);
+  _collapsed.delete(posId);   // reveal the position the person was linked to
   logActivity({ action: 'linked person to position', entityType: 'person_position', entityName: _ctx.posById.get(posId)?.title || '' });
   closeModal();
   await loadHr();

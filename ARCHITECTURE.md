@@ -82,15 +82,23 @@ config file only — no shell changes.
 
 ## HR position tree
 
+- **Where institutions + roots come from:** institutions, AND their permanent
+  root position, are created **only** in the directory's add-institution flow
+  (`saveInstitution()` in `src/panels/personnel.js`). HR **consumes** the
+  institution list — it can rename/reorder tabs but has no "+ Institution"
+  button and never inserts a root. This is the single root-creation path.
 - **Permanent root:** each institution has exactly ONE root position
   (`parent_position_id IS NULL`), auto-created as "Root Administrator" when the
-  institution is created (in both the HR panel and the directory's add-institution
-  flow). It is editable and linkable but **never deleted, moved, or archived**
-  (those would break the one-root invariant); the delete affordance is disabled
-  with an explanatory tooltip. A partial unique index
+  institution is created. It is editable and linkable but **never deleted,
+  moved, or archived** (those would break the one-root invariant); the delete
+  affordance is disabled with an explanatory tooltip. A partial unique index
   (`uniq_positions_root_per_institution`) enforces this in the DB. There is no
   manual root-creation button — children are added under any position via
   "+ Child".
+- **Tree default state:** the position tree renders FULLY EXPANDED on load and
+  on refresh. A module-level `_collapsed` set tracks nodes the user manually
+  collapsed during the session (open unless present); it intentionally does not
+  persist — a refresh resets the module and the tree re-opens fully.
 - **Reparent on delete:** deleting a non-root position **reparents its children
   to that position's parent** (never orphans a node); the confirmation names the
   children and their destination. Positions with occupancy history are
