@@ -290,14 +290,15 @@ function renderTree() {
   if (!_activeInstId) { el.innerHTML = ''; return; }
 
   const roots = _ctx.childrenByParent.get('__root__')?.filter(p => p.institution_id === _activeInstId) || [];
-  const addRoot = canEditTree()
-    ? `<button class="btn-secondary" data-action="add-root" style="margin-bottom:.85rem;">+ Add position</button>` : '';
 
+  // Each institution has exactly one permanent root ("Root Administrator"),
+  // auto-created with the institution. No manual root-creation button; children
+  // are added under any position via "+ Child".
   const body = roots.length
     ? roots.map(p => renderNode(p, 0)).join('')
-    : `<div style="font-size:13px;color:#6B7280;font-style:italic;padding:.5rem 0;">No positions in this institution yet.${canEditTree() ? ' Add a root position to begin.' : ''}</div>`;
+    : `<div style="font-size:13px;color:#6B7280;font-style:italic;padding:.5rem 0;">This institution has no root position yet — it will be created automatically (or via the backfill migration).</div>`;
 
-  el.innerHTML = `<div class="card" style="padding:1rem 1.1rem;">${addRoot}${body}</div>`;
+  el.innerHTML = `<div class="card" style="padding:1rem 1.1rem;">${body}</div>`;
 }
 
 function renderNode(pos, depth) {
@@ -328,15 +329,19 @@ function renderNode(pos, depth) {
     resolverLine = `<div style="font-size:11px;color:#6B7280;font-style:italic;margin-top:2px;">Supervision currently resolves to: <strong style="font-style:normal;color:#374151;">${esc(r.name)}</strong>${r.kind === 'pastor' ? ' (Pastor)' : ` (${esc(r.title)})`}</div>`;
   }
 
+  // The institution's permanent root: editable + linkable, but never deleted /
+  // moved / archived (that would break the one-root-per-institution invariant).
+  const isRoot = !pos.parent_position_id;
   const actions = canEditTree() ? `
     <div class="hr-node-actions" style="display:flex;gap:8px;flex-shrink:0;align-items:center;">
       <button class="card-action" data-action="link"      data-pos-id="${pos.id}">Link</button>
       <button class="card-action" data-action="add-child" data-pos-id="${pos.id}">+ Child</button>
-      <button class="card-action" data-action="fastadd"   data-pos-id="${pos.id}" title="Fast-add a contractor under this position">+ Contractor</button>
       <button class="card-action" data-action="edit-pos"  data-pos-id="${pos.id}">Edit</button>
-      <button class="card-action" data-action="move-pos"  data-pos-id="${pos.id}">Move</button>
-      <button class="card-action" data-action="archive"   data-pos-id="${pos.id}" style="color:#9A6A1E;">Archive</button>
-      <button class="card-action" data-action="delete"    data-pos-id="${pos.id}" style="color:#A32D2D;">Delete</button>
+      ${isRoot ? '' : `<button class="card-action" data-action="move-pos"  data-pos-id="${pos.id}">Move</button>`}
+      ${isRoot ? '' : `<button class="card-action" data-action="archive"   data-pos-id="${pos.id}" style="color:#9A6A1E;">Archive</button>`}
+      ${isRoot
+        ? `<span class="card-action" title="The institution's permanent root position cannot be deleted." style="color:#C9C2B6;cursor:not-allowed;">Delete</span>`
+        : `<button class="card-action" data-action="delete" data-pos-id="${pos.id}" style="color:#A32D2D;">Delete</button>`}
     </div>` : '';
 
   const row = `
@@ -378,12 +383,10 @@ function onHrClick(e) {
     case 'add-inst':    openInstitutionModal(null); break;
     case 'open-templates': openTemplateManager(); break;
     case 'toggle':      _expanded.has(posId) ? _expanded.delete(posId) : _expanded.add(posId); renderTree(); break;
-    case 'add-root':    openPositionModal(null, null); break;
     case 'add-child':   openPositionModal(null, posId); break;
     case 'edit-pos':    openPositionModal(posId, null); break;
     case 'move-pos':    openMoveModal(posId); break;
     case 'link':        openLinkModal(posId); break;
-    case 'fastadd':     openFastAddModal(posId); break;
     case 'archive':     archivePosition(posId); break;
     case 'delete':      deletePosition(posId); break;
     case 'unlink':      unlinkOccupancy(occId); break;
@@ -427,6 +430,10 @@ async function hrSaveInstitution(id) {
     const { data, error } = await sb.from('institutions').insert({ name, sort_order: nextOrder }).select('id').single();
     if (error) { alert('Save failed: ' + error.message); return; }
     _activeInstId = data?.id || _activeInstId;
+    // Every institution gets exactly one permanent root position automatically.
+    if (data?.id) {
+      await sb.from('positions').insert({ institution_id: data.id, title: 'Root Administrator', parent_position_id: null, is_administrator: true });
+    }
     logActivity({ action: 'added institution', entityType: 'institution', entityName: name });
   }
   closeModal();
@@ -577,84 +584,8 @@ async function unlinkOccupancy(occId) {
   await loadHr();
 }
 
-// Contractor fast-add: one modal → parent (preselected) + position title +
-// existing-or-new person + employment_type (defaults to contract) → writes the
-// position AND the person_positions link in one action.
-function openFastAddModal(parentId) {
-  if (!canEditTree()) return;
-  const parent = parentId ? _ctx.posById.get(parentId) : null;
-  openModalHtml(`
-    <div class="modal-title">Fast-add contractor${parent ? ` under “${esc(parent.title)}”` : ''}</div>
-    <label>Position title</label><input id="hr-fa-title" placeholder="e.g. HVAC Contractor" />
-    <label>Duties</label><textarea id="hr-fa-duties" rows="2" placeholder="Optional"></textarea>
-    <label>Person</label>
-    <select id="hr-fa-person" onchange="window.hrFaToggle()">
-      <option value="">— Select existing —</option>
-      ${personPickerOptions()}
-      <option value="__new">+ New person…</option>
-    </select>
-    <div id="hr-fa-newwrap" style="display:none;border-left:2px solid var(--stone);padding-left:.7rem;margin-top:.5rem;">
-      <label>Full name</label><input id="hr-fa-name" placeholder="e.g. Acme Mechanical / John Smith" />
-      <label>Phone</label><input id="hr-fa-phone" placeholder="Optional" />
-      <label>Email</label><input id="hr-fa-email" placeholder="Optional" />
-    </div>
-    <label>Employment type</label>
-    <select id="hr-fa-emp">${empTypeOptions('contract')}</select>
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn-primary" onclick="window.hrSaveFastAdd(${parentId ? `'${parentId}'` : 'null'})">Add</button>
-    </div>`);
-}
-
-function hrFaToggle() {
-  const isNew = document.getElementById('hr-fa-person').value === '__new';
-  document.getElementById('hr-fa-newwrap').style.display = isNew ? '' : 'none';
-}
-
-async function hrSaveFastAdd(parentId) {
-  const title = document.getElementById('hr-fa-title').value.trim();
-  if (!title) { alert('Position title is required.'); return; }
-  const duties = document.getElementById('hr-fa-duties').value.trim() || null;
-  const empType = document.getElementById('hr-fa-emp').value;
-  let personId = document.getElementById('hr-fa-person').value;
-
-  if (!personId) { alert('Select or create a person.'); return; }
-
-  // 1. Create the new personnel row if requested.
-  if (personId === '__new') {
-    const name = document.getElementById('hr-fa-name').value.trim();
-    if (!name) { alert('Enter the new person’s name.'); return; }
-    const instName = _insts.find(i => i.id === _activeInstId)?.name || null;
-    const { data, error } = await sb.from('personnel').insert({
-      name,
-      phone: document.getElementById('hr-fa-phone').value.trim() || null,
-      email: document.getElementById('hr-fa-email').value.trim() || null,
-      institution: instName,
-      type: 'staff',
-      employment: 'under-contract',
-      active: true,
-    }).select('id').single();
-    if (error) { alert('Could not create person: ' + error.message); return; }
-    personId = data.id;
-  }
-
-  // 2. Create the position.
-  const { data: posRow, error: posErr } = await sb.from('positions').insert({
-    institution_id: _activeInstId, parent_position_id: parentId || null, title, duties,
-  }).select('id').single();
-  if (posErr) { alert('Could not create position: ' + posErr.message); return; }
-
-  // 3. Link the occupancy.
-  const { error: linkErr } = await sb.from('person_positions').insert({
-    person_id: personId, position_id: posRow.id, employment_type: empType,
-  });
-  if (linkErr) { alert('Position created, but linking failed: ' + linkErr.message); }
-
-  if (parentId) _expanded.add(parentId);
-  logActivity({ action: 'fast-added contractor position', entityType: 'position', entityName: title });
-  closeModal();
-  await loadHr();
-}
+// (Contractor fast-add removed — Revision 1. Contractors are added like any
+// position: + Child, then link a person with employment-type "Contract".)
 
 // ── PHASE 4 — removal rules (archive vs hard-delete) ────────────────────────
 
@@ -677,16 +608,32 @@ async function deletePosition(posId) {
   if (!canEditTree()) return;
   const pos = _ctx.posById.get(posId);
   if (!pos) return;
-  if ((_ctx.childrenByParent.get(posId) || []).length) {
-    alert('This position still has child positions. Move or remove them first.');
+  // The permanent root is never deletable.
+  if (!pos.parent_position_id) {
+    alert('The institution’s permanent root position cannot be deleted.');
     return;
   }
-  // Any occupancy ever (current OR historical) → archive-only, never hard-delete.
+  // Any occupancy ever (current OR historical) → archive-only, never hard-delete
+  // (preserves record provenance — records FK to person_position_id).
   if ((_ctx.allByPos.get(posId) || []).length) {
     alert('This position has occupancy history and cannot be deleted — archive it instead to preserve record provenance.');
     return;
   }
-  if (!confirm(`Delete “${pos.title}”? It has never had an occupant, so it can be permanently removed.`)) return;
+  // Reparent children to the deleted node's PARENT — never orphan a node.
+  const children = _ctx.childrenByParent.get(posId) || [];
+  const parent = _ctx.posById.get(pos.parent_position_id);
+  const parentTitle = parent ? parent.title : 'the parent position';
+  let msg = `Delete “${pos.title}”?`;
+  if (children.length) {
+    msg += `\n\n${children.length} position${children.length > 1 ? 's' : ''} will move under “${parentTitle}”:\n• ${children.map(c => c.title).join('\n• ')}`;
+  }
+  if (!confirm(msg)) return;
+  if (children.length) {
+    const { error: rErr } = await sb.from('positions')
+      .update({ parent_position_id: pos.parent_position_id, updated_at: new Date().toISOString() })
+      .in('id', children.map(c => c.id));
+    if (rErr) { alert('Reparent failed: ' + rErr.message); return; }
+  }
   const { error } = await sb.from('positions').delete().eq('id', posId);
   if (error) { alert('Delete failed: ' + error.message); return; }
   logActivity({ action: 'deleted position', entityType: 'position', entityName: pos.title });
@@ -1564,7 +1511,7 @@ async function hrSaveTemplate() {
 // ── Expose modal-button + record handlers (tree actions use delegation) ─────
 
 Object.assign(window, {
-  hrSaveInstitution, hrSavePosition, hrSaveMove, hrSaveLink, hrSaveFastAdd, hrFaToggle,
+  hrSaveInstitution, hrSavePosition, hrSaveMove, hrSaveLink,
   // records
   hrReopenCard: reopenCard, hrNewRecord, hrViewRecord, hrEditRecord, hrDeleteRecord, hrExportPdf,
   hrSaveMemo, hrSaveIncident, hrSaveDisciplinary, hrDisSignedToggle,

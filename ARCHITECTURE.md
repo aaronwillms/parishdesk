@@ -80,6 +80,25 @@ config file only — no shell changes.
 | `saveRecord(id)` / `deleteRecord(id)` | async fn→`{ok,record?}` | persist + log via existing logic |
 | `bulkStatusOptions[]`, `bulkUpdateStatus(ids,key)` | array / async fn | bulk status change |
 
+## HR position tree
+
+- **Permanent root:** each institution has exactly ONE root position
+  (`parent_position_id IS NULL`), auto-created as "Root Administrator" when the
+  institution is created (in both the HR panel and the directory's add-institution
+  flow). It is editable and linkable but **never deleted, moved, or archived**
+  (those would break the one-root invariant); the delete affordance is disabled
+  with an explanatory tooltip. A partial unique index
+  (`uniq_positions_root_per_institution`) enforces this in the DB. There is no
+  manual root-creation button — children are added under any position via
+  "+ Child".
+- **Reparent on delete:** deleting a non-root position **reparents its children
+  to that position's parent** (never orphans a node); the confirmation names the
+  children and their destination. Positions with occupancy history are
+  archive-only (records FK to `person_position_id`).
+- **Unlink** is a soft clear (`person_positions.unlinked_at`), preserving record
+  + succession history; it removes only the current occupancy, not the position
+  or the person.
+
 ## Directory clergy field
 
 `personnel.clergy` (boolean, set in the Add/Edit Person dialog) is the **single

@@ -292,12 +292,16 @@ function openInstitutionModal() {
 async function saveInstitution() {
   const name = document.getElementById('if-name').value.trim();
   if (!name) { alert('Name is required.'); return; }
-  const { error } = await sb.from('institutions').insert({
+  const { data, error } = await sb.from('institutions').insert({
     name,
     icon: document.getElementById('if-icon')?.value || 'fa-building',
     sort_order: parseInt(document.getElementById('if-sort').value) || 0,
-  });
+  }).select('id').single();
   if (error) { alert('Save failed: ' + error.message); return; }
+  // Every institution gets exactly one permanent root position automatically.
+  if (data?.id) {
+    await sb.from('positions').insert({ institution_id: data.id, title: 'Root Administrator', parent_position_id: null, is_administrator: true });
+  }
   closeModal();
   await loadPersonnel();
 }
