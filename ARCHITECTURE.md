@@ -80,6 +80,17 @@ config file only — no shell changes.
 | `saveRecord(id)` / `deleteRecord(id)` | async fn→`{ok,record?}` | persist + log via existing logic |
 | `bulkStatusOptions[]`, `bulkUpdateStatus(ids,key)` | array / async fn | bulk status change |
 
+## Directory clergy field
+
+`personnel.clergy` (boolean, set in the Add/Edit Person dialog) is the **single
+source of truth** for whether a directory contact is clergy. The directory lists
+clergy at the top of each institution with a "Clergy" chip; `getInstitutionClergy(institutionId)`
+([src/ui/directory.js](src/ui/directory.js)) is the one shared helper that
+clergy-aware dropdowns (e.g. the sacramental "Officiant" picker) consume — wired
+in a later task. (An earlier experiment deriving clergy/placement from HR
+positions was reverted; HR positions no longer drive the directory's clergy
+determination.)
+
 ## NOT Used
 
 - **Netlify** — no Netlify config, functions, or redirects. Any `netlify/` or `.netlify/` directories are ignored via `.gitignore`.

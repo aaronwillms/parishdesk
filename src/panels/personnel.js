@@ -20,9 +20,12 @@ const EMPLOYMENT_LABELS = {
   'under-contract': 'Under Contract',
 };
 
-function isLayStaff(p) { return p.type === 'staff'; }
-function isVolunteer(p) { return p.type === 'volunteer' || p.employment === 'volunteer'; }
-function isClergy(p)    { return CLERGY_TYPES.includes(p.type); }
+// Clergy is a manual directory-person boolean (personnel.clergy), set in the
+// Add/Edit Person dialog. It is the single source of truth for clergy-aware
+// dropdowns (consumed later by the sacramental panels via getInstitutionClergy).
+function isClergy(p)    { return !!p.clergy; }
+function isVolunteer(p) { return !p.clergy && (p.type === 'volunteer' || p.employment === 'volunteer'); }
+function isLayStaff(p)  { return !p.clergy && !isVolunteer(p); }   // catch-all for non-clergy, non-volunteer
 function showsEmployment(type) { return type === 'staff'; }
 
 const alpha = (a, b) => a.name.localeCompare(b.name);
@@ -92,9 +95,10 @@ function personCard(p, instName = null) {
     ? `<div style="font-size:11.5px;color:#9CA3AF;margin-top:2px;">🎂 ${fmtDob(p.date_of_birth)}</div>`
     : '';
   const title = personTitle(p.id, instName);
+  const clergyChip = p.clergy ? ` <span class="badge badge-pending" style="vertical-align:middle;">Clergy</span>` : '';
   return `<div class="evt-item" style="cursor:default;">
     <div style="flex:1;min-width:0;">
-      <div style="font-weight:500;font-size:14px;color:var(--navy);">${p.name}</div>
+      <div style="font-weight:500;font-size:14px;color:var(--navy);">${p.name}${clergyChip}</div>
       ${title ? `<div style="font-size:12px;color:#6B7280;margin-top:1px;">${title}</div>` : ''}
       ${dobLine}
       ${contactChips(p)}
@@ -165,14 +169,13 @@ function renderPersonnel() {
     if (hasStaff) {
       html += sectionDivider('Staff', '0');
 
-      CLERGY_TYPES.forEach((type, i) => {
-        const clergyGroup = clergy.filter(p => p.type === type).sort(alpha);
-        if (!clergyGroup.length) return;
-        html += `<div style="${i > 0 ? 'margin-top:.75rem;' : ''}">`;
-        html += groupPill(CLERGY_LABELS[type]);
-        clergyGroup.forEach(p => { html += personCard(p, inst.name); });
+      // Clergy (manual boolean) sort to the TOP, flat, each with a Clergy chip.
+      if (clergy.length) {
+        html += `<div>`;
+        html += groupPill('Clergy');
+        clergy.slice().sort(alpha).forEach(p => { html += personCard(p, inst.name); });
         html += `</div>`;
-      });
+      }
 
       EMPLOYMENT_ORDER.forEach((emp, i) => {
         const empGroup = layStaff.filter(p => p.employment === emp).sort(alpha);
@@ -365,6 +368,10 @@ function personnelForm(data) {
   <label>Date of Birth</label><input type="date" id="pf-dob" value="${data?.date_of_birth || ''}" />
   <label>Phone</label><input id="pf-phone" value="${data?.phone || ''}" placeholder="e.g. (601) 555-0100" />
   <label>Email</label><input id="pf-email" value="${data?.email || ''}" />
+  <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:.75rem;">
+    <input type="checkbox" id="pf-clergy" ${data?.clergy ? 'checked' : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />
+    Clergy <span style="font-size:11px;color:#9CA3AF;font-weight:400;">— marks this person as clergy for clergy-aware lists</span>
+  </label>
   <label>Institution</label>
   <select id="pf-inst" onchange="personnelInstToggle()">
     <option value=""${isNa ? ' selected' : ''}>N/A</option>
@@ -423,6 +430,7 @@ async function savePersonnel(id) {
     email:       document.getElementById('pf-email').value.trim() || null,
     institution: document.getElementById('pf-inst').value || null,
     type,
+    clergy:      !!document.getElementById('pf-clergy')?.checked,
     employment:  showsEmployment(type) ? document.getElementById('pf-emp').value : null,
     date_of_birth: document.getElementById('pf-dob').value || null,
     sort_order:  parseInt(document.getElementById('pf-sort').value) || 0,
