@@ -120,6 +120,7 @@ export const firstCommunionConfig = {
   canManage: () => fcCanManage(),
   canManageTemplate: () => isSacramentCoordinator('first_communion') || isSacramentCoordinator('firstcomm'),
   openTemplate: () => window.openFcTemplate?.(),
+  openManageCohorts: () => window.openCohortManager?.(),   // cohort CREATION lives here, not in Add Student
   openCreate: () => window.openFcCreate?.(),
 
   fetchRecords: async () => getFcRecords(),

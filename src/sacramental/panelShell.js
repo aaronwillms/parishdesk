@@ -117,6 +117,7 @@ function listPaneHtml() {
       <div style="display:flex;gap:5px;margin-top:.5rem;flex-wrap:wrap;align-items:center;">
         ${pills}
         ${canManage ? `<button class="cf-btn" data-act="bulk-toggle" title="Select multiple" style="margin-left:auto;${s.bulk ? 'background:var(--navy);color:var(--gold);' : ''}"><i class="fa-solid fa-list-check"></i></button>` : ''}
+        ${cfg.openManageCohorts && cfg.canManageTemplate && cfg.canManageTemplate() ? `<button class="cf-btn" data-act="cohorts" title="Manage cohorts"><i class="fa-solid fa-calendar-days"></i></button>` : ''}
         ${cfg.canManageTemplate && cfg.canManageTemplate() ? `<button class="cf-btn" data-act="template" title="Settings"><i class="fa-solid fa-gear"></i></button>` : ''}
       </div>
     </div>
@@ -245,6 +246,7 @@ async function onShellClick(e) {
     case 'toggle-group': { const k = t.dataset.key; s.groupsCollapsed.has(k) ? s.groupsCollapsed.delete(k) : s.groupsCollapsed.add(k); render(); break; }
     case 'new':        cfg.openCreate?.(); break;
     case 'template':   cfg.openTemplate?.(); break;
+    case 'cohorts':    cfg.openManageCohorts?.(); break;
     case 'bulk-toggle': s.bulk = !s.bulk; if (!s.bulk) s.selected.clear(); render(); break;
     case 'check': {     // checkbox click inside a card — toggle selection, don't open
       e.stopPropagation();

@@ -186,9 +186,15 @@ function buildModalHtml(p, opts = {}) {
   h += _sectionHead('Preparer');
   h += buildPreparerField('ff-preparer', p?.preparer || '', { coordinatorNames: _fcCoordinatorNames });
 
-  // 2 — Cohort
+  // 2 — Cohort (SELECT an existing cohort only; cohorts are created in the panel
+  // via Manage Cohorts, never from here).
   h += _sectionHead('Cohort');
-  h += `<label>Cohort</label><select id="ff-cohort" onchange="fcCohortPick(this.value)"><option value="">— None —</option>${cohortOpts}<option value="__new">+ Create new cohort…</option></select>`;
+  if (_cohorts.length) {
+    h += `<label>Cohort</label><select id="ff-cohort" onchange="fcCohortPick(this.value)"><option value="">— None —</option>${cohortOpts}</select>`;
+  } else {
+    h += `<label>Cohort</label><select id="ff-cohort" disabled style="color:#9CA3AF;"><option value="">No cohorts yet</option></select>
+      <div style="font-size:11.5px;color:#9CA3AF;margin-top:4px;">Create a cohort first via <strong>Manage Cohorts</strong> in the First Communion panel.</div>`;
+  }
 
   // 3 — Child info
   h += _sectionHead('Child Information');
@@ -252,7 +258,7 @@ function renderModalDocs() {
 function renderFamilyChip() { const el = document.getElementById('ff-family-chip'); if (!el) return; el.innerHTML = _M.family ? `<span style="display:inline-flex;align-items:center;gap:8px;background:#1C2B3A;color:#fff;border-radius:14px;padding:3px 8px 3px 12px;font-size:12px;"><span>${_esc(_M.family.label)}</span><button onclick="fcRemoveFamily()" style="background:none;border:none;color:#cdd6df;cursor:pointer;font-size:12px;padding:0;">×</button></span>` : ''; }
 
 function fcRespChange(v) { _M.respOther = v === '__other'; document.getElementById('ff-resp-other-wrap').style.display = _M.respOther ? 'block' : 'none'; }
-function fcCohortPick(v) { if (v === '__new') { document.getElementById('ff-cohort').value = ''; openCohortManager(); return; } const coh = _cohorts.find(c => c.id === v); if (coh?.cohort_date) { const dt = document.getElementById('ff-cdate'); if (dt && !dt.value) dt.value = coh.cohort_date; } }
+function fcCohortPick(v) { const coh = _cohorts.find(c => c.id === v); if (coh?.cohort_date) { const dt = document.getElementById('ff-cdate'); if (dt && !dt.value) dt.value = coh.cohort_date; } }
 function fcDobChange() { const age = ageOf(document.getElementById('ff-dob').value); document.getElementById('ff-age-note').style.display = (age !== null && age > 13) ? 'block' : 'none'; }
 function fcChurchChange(v) { document.getElementById('ff-church-other-wrap').style.display = v === '__other' ? 'block' : 'none'; }
 function fcDocReceived(i, v) { _M.docs[i].received = v; }
@@ -290,7 +296,7 @@ function _fcReadPayload() {
   const payload = {
     name, first_name: first || null, middle_name: _v('ff-middle') || null, last_name: last || null,
     dob: _v('ff-dob') || null,
-    cohort_id: cohortSel && cohortSel !== '__new' ? cohortSel : null, cohort_date: coh?.cohort_date || null,
+    cohort_id: cohortSel || null, cohort_date: coh?.cohort_date || null,
     preparation_responsible_id: respSel && respSel !== '__other' ? respSel : null,
     preparation_responsible_override: respSel === '__other' ? (_v('ff-resp-other') || null) : null,
     preparer: readPreparerValue('ff-preparer'),

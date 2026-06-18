@@ -72,6 +72,19 @@ last** (never dropped), and an **active search auto-expands** so matches show
 across every group. Bulk-select works across groups and selection survives
 collapse toggles. The flat-list path (Baptism) is unchanged.
 
+### First Communion cohorts — created in the panel, selected in Add Student
+
+Cohort **creation** lives in the First Communion panel via a **Manage Cohorts**
+button (calendar icon) in the shell list header, gated to `canManageTemplate()`
+(the same role that manages templates). It opens the existing cohort manager
+(`openCohortManager` → `fcSaveCohort`, writing `sacramental_cohorts` with
+`panel='firstcomm'`) — unchanged; only the launch point moved here. The header
+button is driven by an optional `config.openManageCohorts` hook, so panels that
+don't set it (Baptism, etc.) are unaffected. The **Add Student** modal only
+**selects** an existing cohort from a plain dropdown (no create option); with no
+cohorts it shows a disabled empty state pointing to Manage Cohorts — Add Student
+is never a back-door to cohort creation.
+
 ### Sacramental preparer vs. officiant
 
 `officiant` is a per-record field for **Baptism and Marriage only** (the minister
