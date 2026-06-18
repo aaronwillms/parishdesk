@@ -46,6 +46,7 @@ function fileDetails(p) {
     row('Parent / Guardian 1', parLine(1, par1, p.parent1_phone, p.parent1_catholic)),
     par2 ? row('Parent / Guardian 2', parLine(2, par2, p.parent2_phone, p.parent2_catholic)) : '',
     row('Officiant', officiantName(p) ? esc(officiantName(p)) : ''),
+    row('Person Responsible for Formation', p.preparer ? esc(p.preparer) : ''),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
 }
 function godparents(p) {

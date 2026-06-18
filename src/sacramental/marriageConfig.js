@@ -45,10 +45,6 @@ function hasVisitingOfficiant(c) {
   const o = officiantOf(c);
   return (!!o && !clergyNames().includes(o)) || !!c.officiant_override;
 }
-function personResponsible(c) {
-  if (c.preparation_responsible_id) return (store.personnel || []).find(p => p.id === c.preparation_responsible_id)?.name || '';
-  return c.preparation_responsible_override || '';
-}
 function priorList(prior) {
   return (prior || []).map(pm => {
     const ended = pm.how_ended || '';
@@ -98,8 +94,7 @@ function fileDetails(c) {
     row('Address', loc.lines.length ? esc(loc.lines.join(', ')) : ''),
     row('Officiant', officiantOf(c) ? esc(officiantOf(c)) : ''),
     hasVisitingOfficiant(c) ? row('Delegation', c.delegation_given ? 'Given' : '⚠️ Not given — send letter of delegation') : '',
-    row('Preparer', preparerOf(c) ? esc(preparerOf(c)) : ''),
-    row('Person responsible', personResponsible(c) ? esc(personResponsible(c)) : ''),
+    row('Person Responsible for Formation', preparerOf(c) ? esc(preparerOf(c)) : ''),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
 }
 // Documents + Steps — omitted entirely for external files (per the rule).

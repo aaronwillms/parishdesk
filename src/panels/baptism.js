@@ -4,6 +4,7 @@ import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } f
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
+import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { normalizePhone } from '../utils/phone.js';
 
 export const BAP_STATUS = {
@@ -16,7 +17,16 @@ const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deaco
 const CLERGY_TITLE_RE = /^(fr\.|rev\.|deacon|msgr\.|bishop|archbishop|cardinal)/i;
 
 let allBap = [], bapFilter = 'all', bapExpanded = null;
-let _tplRow = null, _M = null;
+let _tplRow = null, _M = null, _bapCoordinatorNames = [];
+
+// Formation coordinator display names for the "Person Responsible for Formation"
+// dropdown (Clergy + coordinator(s) + Other), mirroring the other sacrament panels.
+async function loadBapCoordinator() {
+  try {
+    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'baptism').maybeSingle();
+    _bapCoordinatorNames = (data?.coordinator_ids || []).map(pid => (store.personnel || []).find(p => p.id === pid)?.name).filter(Boolean);
+  } catch (_) { _bapCoordinatorNames = []; }
+}
 
 function fullAccess() { return isAdmin() || canAccessSacrament('baptism'); }
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -54,7 +64,7 @@ async function loadTemplate() {
 }
 // Fetch-only (no render) — used by the shell's config.fetchRecords.
 export async function loadBaptismData() {
-  await loadTemplate();
+  await Promise.all([loadTemplate(), loadBapCoordinator()]);
   const { data, error } = await sb.from('sacramental_baptism').select('*').order('created_at', { ascending: false });
   if (error) { console.error('[baptism]', error); return; }
   allBap = data || [];
@@ -121,16 +131,13 @@ function _toggle(id, label, on, onchange = '') { return `<label style="display:f
 function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cardinal);margin:1.4rem 0 .5rem;border-bottom:.5px solid var(--stone);padding-bottom:4px;">${t}</div>`; }
 
 async function openBapCreate() {
-  let coordId = null;
-  try { const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'baptism').maybeSingle(); coordId = data?.coordinator_ids?.[0] || null; } catch (_) {}
-  _M = newModalState(null, coordId);
+  _M = newModalState(null);
   _bapOpen(buildModalHtml(null)); bapValidate();
 }
-function openBapEdit(id) { const p = allBap.find(x => x.id === id); if (!p) return; _M = newModalState(p, p.preparation_responsible_id || null); _bapOpen(buildModalHtml(p)); bapValidate(); }
-function newModalState(p, coordId) {
+function openBapEdit(id) { const p = allBap.find(x => x.id === id); if (!p) return; _M = newModalState(p); _bapOpen(buildModalHtml(p)); bapValidate(); }
+function newModalState(p) {
   return {
     id: p?.id || null, isEdit: !!p,
-    respId: p?.preparation_responsible_id || coordId || '', respOther: !p?.preparation_responsible_id && !!p?.preparation_responsible_override,
     showParent2: !!(p?.parent2_first || p?.parent2_last),
     isAdopted: !!p?.is_adopted,
     gp1: { name: p?.godparent1_name || p?.godfather || '', gender: p?.godparent1_gender || '', catholic: p?.godparent1_catholic !== false },
@@ -143,7 +150,7 @@ function newModalState(p, coordId) {
 // Inline edit form for the shell detail pane: reuse the exact form markup, but
 // skip the modal-title + modal-actions (the shell renders Save/Cancel/Delete).
 export function buildBapEditForm(p) {
-  _M = newModalState(p, p?.preparation_responsible_id || null);
+  _M = newModalState(p);
   const html = buildModalHtml(p, { inline: true });
   setTimeout(() => bapValidate(), 0);   // run age-gate/godparent validation on mount
   return html;
@@ -152,17 +159,15 @@ export function buildBapEditForm(p) {
 function buildModalHtml(p, opts = {}) {
   const inline = !!opts.inline;
   const isEdit = _M.isEdit;
-  const respOpts = clergyPersonnel().map(c => `<option value="${c.id}"${_M.respId === c.id ? ' selected' : ''}>${_esc(c.name)}</option>`).join('');
   const offOpts = clergyPersonnel().map(c => `<option value="${c.id}"${p?.officiant_id === c.id ? ' selected' : ''}>${_esc(c.name)}</option>`).join('');
   const instOpts = (store.institutions || []).map(i => `<option value="${i.id}"${p?.baptism_institution_id === i.id ? ' selected' : ''}>${_esc(i.name)}</option>`).join('');
   const np = { first: p?.first_name || (p?.name || '').split(/\s+/)[0] || '', middle: p?.middle_name || '', last: p?.last_name || (p?.name || '').split(/\s+/).slice(1).join(' ') || '' };
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Baptism File' : 'New Baptism'}</div>`;
 
-  // 1 — Person responsible
-  h += _sectionHead('Person Responsible');
-  h += `<label>Person Responsible</label><select id="bf-resp" onchange="bapRespChange(this.value)"><option value="">— Select —</option>${respOpts}<option value="__other"${_M.respOther ? ' selected' : ''}>Other…</option></select>
-    <div id="bf-resp-other-wrap" style="display:${_M.respOther ? 'block' : 'none'};">${_input('bf-resp-other', 'Name', p?.preparation_responsible_override || '')}</div>`;
+  // 1 — Person responsible for formation (clergy + Baptism coordinator + Other)
+  h += _sectionHead('Person Responsible for Formation');
+  h += buildPreparerField('bf-preparer', p?.preparer || '', { coordinatorNames: _bapCoordinatorNames, label: 'Person Responsible for Formation' });
 
   // 2 — Child information
   h += _sectionHead('Child Information');
@@ -253,7 +258,6 @@ function godparentRow(n) {
 }
 
 // ── Modal handlers ───────────────────────────────────────────────────────────
-function bapRespChange(v) { _M.respOther = v === '__other'; document.getElementById('bf-resp-other-wrap').style.display = _M.respOther ? 'block' : 'none'; }
 function bapInstChange(v) {
   _M.instMode = v === '__other' ? 'other' : (v ? 'inst' : '');
   document.getElementById('bf-inst-other-wrap').style.display = _M.instMode === 'other' ? 'block' : 'none';
@@ -306,15 +310,13 @@ function _chk(id) { return !!document.getElementById(id)?.checked; }
 function _bapPayloadFromDom() {
   const first = _v('bf-first'), last = _v('bf-last');
   const name = [first, _v('bf-middle'), last].filter(Boolean).join(' ');
-  const respSel = document.getElementById('bf-resp')?.value || '';
   const instSel = document.getElementById('bf-inst')?.value || '';
   const offSel = document.getElementById('bf-officiant')?.value || '';
   const p2 = _M.showParent2;
   const payload = {
     name, first_name: first || null, middle_name: _v('bf-middle') || null, last_name: last || null,
     dob: _v('bf-dob') || null,
-    preparation_responsible_id: respSel && respSel !== '__other' ? respSel : null,
-    preparation_responsible_override: respSel === '__other' ? (_v('bf-resp-other') || null) : null,
+    preparer: readPreparerValue('bf-preparer'),
     child_street: _v('bf-street') || null, child_city: _v('bf-city') || null, child_state: _v('bf-state') || null, child_zip: _v('bf-zip') || null,
     baptism_date: _v('bf-bdate') || null,
     baptism_institution_id: instSel && instSel !== '__other' ? instSel : null,
@@ -462,7 +464,7 @@ Object.assign(window, {
   loadBaptism, expandBaptism,
   openBapCreate, openBapEdit, openBapTemplate, bapCloseModal,
   toggleBapPrep, addBapNote,
-  bapRespChange, bapInstChange, bapParentCathChange, bapToggleParent2, bapAdoptChange, bapOfficiantChange,
+  bapInstChange, bapParentCathChange, bapToggleParent2, bapAdoptChange, bapOfficiantChange,
   bapToggleGp2, bapGpChange, bapValidate,
   bapSave, bapDeletePerson,
   bapTplAddDoc, bapTplRemoveDoc, bapTplAddStep, bapTplRemoveStep, bapTplStepDragStart, bapTplStepDrop, bapTplSave,

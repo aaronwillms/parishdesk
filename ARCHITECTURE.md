@@ -248,6 +248,29 @@ when the columns are dropped. (Note: `src/ui/contactPicker.js` still writes thes
 columns when creating a contact; harmless dead writes, to be cleaned up with the
 columns.)
 
+## Person Responsible for Formation (single formation-person field)
+
+Every sacrament panel (Baptism, First Communion, Confirmation, Marriage, OCIA)
+exposes **exactly one** formation-person field, labeled **"Person Responsible for
+Formation"**, built from the shared `buildPreparerField()` helper
+(`src/sacramental/preparerField.js`): options are parish **Clergy**
+(`personnel.clergy`) + the panel's **Coordinator(s)** (from `program_coordinators`
+for that program) + **"Other…"** free-entry. The stored value is a plain
+display-name string in the **`preparer`** text column, which renders directly in
+each panel's File-details / detail read view. Annulments has no formation process
+and intentionally carries no such field.
+
+This replaced two overlapping fields. The earlier "Person Responsible" dropdown
+(clergy-only, stored in `preparation_responsible_id` + `preparation_responsible_override`)
+was removed in favour of the correctly-wired field; the surviving column was kept
+and only **relabeled** (no rename) to avoid data loss. The legacy
+`preparation_responsible_id` / `preparation_responsible_override` columns are now
+**dead on all five tables** (`couples`, `sacramental_baptism`,
+`sacramental_firstcomm`, `sacramental_confirmation`, `sacramental_ocia`) — no
+longer read or written. A confirmed-empty audit (0 non-null values anywhere) backs
+the **paused** drop migration `20260618_drop_preparation_responsible.sql`; the app
+is correct before or after it is applied.
+
 ## Institution address
 
 An institution's mailing address is resolved by source: the **principal

@@ -3,7 +3,6 @@
 // data/cohort/family-link/status/edit-form/save logic from panels/firstcomm.js —
 // nothing is reimplemented here. See ARCHITECTURE.md for the config schema.
 
-import { store } from '../store.js';
 import { formatDateDisplay, fmtDate } from '../utils.js';
 import { formatPhone } from '../utils/phone.js';
 import { isSacramentCoordinator } from '../roles.js';
@@ -37,10 +36,6 @@ function flagsOf(p) {
 function row(label, val) {
   return val ? `<div style="display:flex;gap:10px;font-size:13px;padding:3px 0;"><span style="color:#6B7280;min-width:120px;">${esc(label)}</span><span style="flex:1;color:var(--navy);">${val}</span></div>` : '';
 }
-function personResponsible(p) {
-  if (p.preparation_responsible_id) { const n = (store.personnel || []).find(x => x.id === p.preparation_responsible_id)?.name; return n ? esc(n) : ''; }
-  return p.preparation_responsible_override ? esc(p.preparation_responsible_override) : '';
-}
 function fileDetails(p) {
   const age = ageOf(p.dob);
   const par1 = `${p.parent1_first || ''} ${p.parent1_last || ''}`.trim() || p.parent1 || '';
@@ -56,8 +51,7 @@ function fileDetails(p) {
     row('Linked family', p.family_group_id ? esc(`${lastNameOf(p)} Family`) : ''),
     row('First Communion', commDate(p) ? `${esc(formatDateDisplay(commDate(p)))}${communionChurch(p) ? ' · ' + esc(communionChurch(p)) : ''}` : ''),
     row('Baptism', [p.baptism_church, p.baptism_city, p.baptism_state].filter(Boolean).map(esc).join(', ')),
-    row('Preparer', preparerOf(p) ? esc(preparerOf(p)) : ''),
-    row('Person responsible', personResponsible(p)),
+    row('Person Responsible for Formation', preparerOf(p) ? esc(preparerOf(p)) : ''),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
 }
 function documents(p) {

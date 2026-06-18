@@ -46,7 +46,7 @@ function fileDetails(p) {
     row('Type', isYouth(p) ? 'Youth' : 'Adult'),
     row('Cohort', ck ? esc(cohortName(ck)) : ''),
     row('Date of birth', p.dob ? `${esc(formatDateDisplay(p.dob))}${ageOf(p.dob) !== null ? ` (age ${ageOf(p.dob)})` : ''}` : ''),
-    row('Preparer', preparerOf(p) ? esc(preparerOf(p)) : ''),
+    row('Person Responsible for Formation', preparerOf(p) ? esc(preparerOf(p)) : ''),
     row('Sponsor', (p.sponsor_name || p.sponsor) ? esc(p.sponsor_name || p.sponsor) : ''),
     row('Confirmation name', p.confirmation_name ? esc(p.confirmation_name) : ''),
     row('Candidate contact', !isYouth(p) && (candPhone || p.candidate_email) ? `${candPhone ? esc(formatPhone(candPhone)) : ''}${p.candidate_email ? (candPhone ? ' · ' : '') + esc(p.candidate_email) : ''}` : ''),

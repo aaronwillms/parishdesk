@@ -17,8 +17,6 @@ const FC_STATUS = {
 const GRADES = ['K', '1', '2', '3', '4', '5', '6', '7', '8', 'Other'];
 const COUNTRIES = ['United States of America', 'Mexico', 'Philippines', 'Vietnam', 'Nigeria', 'India', 'Other'];
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
-const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
-const CLERGY_TITLE_RE = /^(fr\.|rev\.|deacon|msgr\.|bishop|archbishop|cardinal)/i;
 const FALLBACK_DOCS = [{ name: 'Baptismal Certificate', deletable: false }];
 
 let allFc = [], fcFilter = 'all', fcExpanded = null, _cohortFilter = 'all';
@@ -29,7 +27,6 @@ function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').repl
 function _curUserName() { return store.currentUserProfile?.personnel?.name || 'Staff'; }
 function _curUserId() { return store.currentUserProfile?.user_id || null; }
 function nowIso() { return new Date().toISOString(); }
-function clergyPersonnel() { return (store.personnel || []).filter(p => CLERGY_TYPES.includes(p.type) || (p.title && CLERGY_TITLE_RE.test(p.title))).sort((a, b) => (a.name || '').localeCompare(b.name || '')); }
 function ageOf(dob) { if (!dob) return null; const d = new Date(dob); if (isNaN(d)) return null; const now = new Date(new Date().toLocaleString('en-US', { timeZone: store.parishSettings?.timezone || 'America/Chicago' })); let a = now.getFullYear() - d.getFullYear(); const m = now.getMonth() - d.getMonth(); if (m < 0 || (m === 0 && now.getDate() < d.getDate())) a--; return a; }
 function cohortLabel(dateStr) { if (!dateStr) return 'No date'; const d = new Date(dateStr + 'T00:00:00'); return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); }
 
@@ -145,16 +142,13 @@ function _toggle(id, label, on, onchange = '') { return `<label style="display:f
 function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cardinal);margin:1.4rem 0 .5rem;border-bottom:.5px solid var(--stone);padding-bottom:4px;">${t}</div>`; }
 
 async function openFcCreate() {
-  let coordId = null;
-  try { const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'firstcomm').maybeSingle(); coordId = data?.coordinator_ids?.[0] || null; } catch (_) {}
-  _M = newModalState(null, coordId);
+  _M = newModalState(null);
   _fcOpen(buildModalHtml(null)); _hydrate();
 }
-function openFcEdit(id) { const p = allFc.find(x => x.id === id); if (!p) return; _M = newModalState(p, p.preparation_responsible_id || null); _fcOpen(buildModalHtml(p)); _hydrate(); }
-function newModalState(p, coordId) {
+function openFcEdit(id) { const p = allFc.find(x => x.id === id); if (!p) return; _M = newModalState(p); _fcOpen(buildModalHtml(p)); _hydrate(); }
+function newModalState(p) {
   return {
     id: p?.id || null, isEdit: !!p,
-    respId: p?.preparation_responsible_id || coordId || '', respOther: !p?.preparation_responsible_id && !!p?.preparation_responsible_override,
     docs: p ? normDocs(p) : computeTemplateDocs(),
     family: p?.family_group_id ? { group_id: p.family_group_id, label: `${lastNameOf(p)} Family` } : null,
   };
@@ -171,20 +165,14 @@ function buildModalHtml(p, opts = {}) {
   const isEdit = _M.isEdit;
   const np = _nameParts(p);
   const age = ageOf(p?.dob);
-  const respOpts = clergyPersonnel().map(c => `<option value="${c.id}"${_M.respId === c.id ? ' selected' : ''}>${_esc(c.name)}</option>`).join('');
   const instOpts = (store.institutions || []).map(i => `<option value="${i.id}"${p?.communion_institution_id === i.id ? ' selected' : ''}>${_esc(i.name)}</option>`).join('');
   const cohortOpts = _cohorts.map(c => `<option value="${c.id}"${p?.cohort_id === c.id ? ' selected' : ''}>${cohortLabel(c.cohort_date)}</option>`).join('');
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit First Communion File' : 'New First Communion Student'}</div>`;
 
-  // 1 — Person responsible
-  h += _sectionHead('Person Responsible');
-  h += `<label>Person Responsible</label><select id="ff-resp" onchange="fcRespChange(this.value)"><option value="">— Select —</option>${respOpts}<option value="__other"${_M.respOther ? ' selected' : ''}>Other…</option></select>
-    <div id="ff-resp-other-wrap" style="display:${_M.respOther ? 'block' : 'none'};">${_input('ff-resp-other', 'Name', p?.preparation_responsible_override || '')}</div>`;
-
-  // 1b — Preparer (clergy-aware: institution clergy + FC coordinator + Other)
-  h += _sectionHead('Preparer');
-  h += buildPreparerField('ff-preparer', p?.preparer || '', { coordinatorNames: _fcCoordinatorNames });
+  // 1 — Person responsible for formation (clergy + FC coordinator + Other)
+  h += _sectionHead('Person Responsible for Formation');
+  h += buildPreparerField('ff-preparer', p?.preparer || '', { coordinatorNames: _fcCoordinatorNames, label: 'Person Responsible for Formation' });
 
   // 2 — Cohort (SELECT an existing cohort only; cohorts are created in the panel
   // via Manage Cohorts, never from here).
@@ -257,7 +245,6 @@ function renderModalDocs() {
 }
 function renderFamilyChip() { const el = document.getElementById('ff-family-chip'); if (!el) return; el.innerHTML = _M.family ? `<span style="display:inline-flex;align-items:center;gap:8px;background:#1C2B3A;color:#fff;border-radius:14px;padding:3px 8px 3px 12px;font-size:12px;"><span>${_esc(_M.family.label)}</span><button onclick="fcRemoveFamily()" style="background:none;border:none;color:#cdd6df;cursor:pointer;font-size:12px;padding:0;">×</button></span>` : ''; }
 
-function fcRespChange(v) { _M.respOther = v === '__other'; document.getElementById('ff-resp-other-wrap').style.display = _M.respOther ? 'block' : 'none'; }
 function fcCohortPick(v) { const coh = _cohorts.find(c => c.id === v); if (coh?.cohort_date) { const dt = document.getElementById('ff-cdate'); if (dt && !dt.value) dt.value = coh.cohort_date; } }
 function fcDobChange() { const age = ageOf(document.getElementById('ff-dob').value); document.getElementById('ff-age-note').style.display = (age !== null && age > 13) ? 'block' : 'none'; }
 function fcChurchChange(v) { document.getElementById('ff-church-other-wrap').style.display = v === '__other' ? 'block' : 'none'; }
@@ -285,7 +272,6 @@ function _fcReadPayload() {
   const first = _v('ff-first'), last = _v('ff-last');
   const name = [first, _v('ff-middle'), last].filter(Boolean).join(' ');
   if (!name) return { ok: false };
-  const respSel = document.getElementById('ff-resp')?.value || '';
   const cohortSel = document.getElementById('ff-cohort')?.value || '';
   const coh = _cohorts.find(c => c.id === cohortSel);
   const churchSel = document.getElementById('ff-church')?.value || '';
@@ -297,8 +283,6 @@ function _fcReadPayload() {
     name, first_name: first || null, middle_name: _v('ff-middle') || null, last_name: last || null,
     dob: _v('ff-dob') || null,
     cohort_id: cohortSel || null, cohort_date: coh?.cohort_date || null,
-    preparation_responsible_id: respSel && respSel !== '__other' ? respSel : null,
-    preparation_responsible_override: respSel === '__other' ? (_v('ff-resp-other') || null) : null,
     preparer: readPreparerValue('ff-preparer'),
     school_name: _v('ff-school') || null, grade_level: document.getElementById('ff-grade')?.value || null,
     child_street: _v('ff-street') || null, child_city: _v('ff-city') || null, child_state: _v('ff-state') || null, child_zip: _v('ff-zip') || null,
@@ -356,7 +340,7 @@ async function _fcWriteEdit(id, r) {
 // Inline edit form for the shell detail pane: reuse the exact form markup, but
 // skip the modal-title + modal-actions (the shell renders Save/Cancel/Delete).
 export function buildFcEditForm(p) {
-  _M = newModalState(p, p?.preparation_responsible_id || null);
+  _M = newModalState(p);
   const html = buildModalHtml(p, { inline: true });
   setTimeout(() => _hydrate(), 0);   // render docs + family chip after mount
   return html;
@@ -462,7 +446,7 @@ Object.assign(window, {
   loadFirstComm, expandFirstComm,
   openFcCreate, openFcEdit, openFcTemplate, fcCloseModal,
   toggleFcDoc, toggleFcPrep, addFcNote,
-  fcRespChange, fcCohortPick, fcDobChange, fcChurchChange,
+  fcCohortPick, fcDobChange, fcChurchChange,
   fcDocReceived, fcRemoveDoc, fcAddDoc, fcFamilySearch, fcRemoveFamily,
   fcSave, fcDeletePerson,
   openCohortManager, fcCohortChurchChange, fcSaveCohort, fcDeleteCohort,

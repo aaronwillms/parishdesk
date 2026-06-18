@@ -17,8 +17,6 @@ const CONF_STATUS = {
 const GRADES = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'Other'];
 const COUNTRIES = ['United States of America', 'Mexico', 'Philippines', 'Vietnam', 'Nigeria', 'India', 'Other'];
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
-const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
-const CLERGY_TITLE_RE = /^(fr\.|rev\.|deacon|msgr\.|bishop|archbishop|cardinal)/i;
 const FALLBACK_TEMPLATES = {
   youth: { documents: [{ name: 'Baptismal Certificate', deletable: false }, { name: 'Petition to Bishop', deletable: true }], service_hours_enabled: false, service_hours_required: 20 },
   adult: { documents: [{ name: 'Baptismal Certificate', deletable: false }, { name: 'Petition to Bishop', deletable: true }], service_hours_enabled: false, service_hours_required: 20 },
@@ -31,7 +29,6 @@ function fullAccess() { return isAdmin() || canAccessSacrament('confirmation'); 
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function _curUserName() { return store.currentUserProfile?.personnel?.name || 'Staff'; }
 function nowIso() { return new Date().toISOString(); }
-function clergyPersonnel() { return (store.personnel || []).filter(p => CLERGY_TYPES.includes(p.type) || (p.title && CLERGY_TITLE_RE.test(p.title))).sort((a, b) => (a.name || '').localeCompare(b.name || '')); }
 function ageOf(dob) { if (!dob) return null; const d = new Date(dob); if (isNaN(d)) return null; const now = new Date(new Date().toLocaleString('en-US', { timeZone: store.parishSettings?.timezone || 'America/Chicago' })); let a = now.getFullYear() - d.getFullYear(); const m = now.getMonth() - d.getMonth(); if (m < 0 || (m === 0 && now.getDate() < d.getDate())) a--; return a; }
 function cohortLabel(dateStr) { if (!dateStr) return 'No date'; const d = new Date(dateStr + 'T00:00:00'); return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); }
 
@@ -155,16 +152,13 @@ function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;le
 
 // ── Create / Edit ────────────────────────────────────────────────────────────
 async function openConfCreate() {
-  let coordId = null;
-  try { const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'confirmation').maybeSingle(); coordId = data?.coordinator_ids?.[0] || null; } catch (_) {}
-  _M = newModalState(null, 'youth', coordId);
+  _M = newModalState(null, 'youth');
   _confOpen(buildModalHtml(null)); _hydrate();
 }
-function openConfEdit(id) { const p = allConf.find(x => x.id === id); if (!p) return; _M = newModalState(p, tmplType(p), p.preparation_responsible_id || null); _confOpen(buildModalHtml(p)); _hydrate(); }
-function newModalState(p, type, coordId) {
+function openConfEdit(id) { const p = allConf.find(x => x.id === id); if (!p) return; _M = newModalState(p, tmplType(p)); _confOpen(buildModalHtml(p)); _hydrate(); }
+function newModalState(p, type) {
   return {
     id: p?.id || null, isEdit: !!p, type,
-    respId: p?.preparation_responsible_id || coordId || '', respOther: !p?.preparation_responsible_id && !!p?.preparation_responsible_override,
     docs: p ? normDocs(p) : computeTemplateDocs(type),
     family: p?.family_group_id ? { group_id: p.family_group_id, label: `${lastNameOf(p)} Family` } : null,
   };
@@ -178,7 +172,6 @@ function buildModalHtml(p, opts = {}) {
   const isEdit = _M.isEdit;
   const np = _nameParts(p);
   const age = ageOf(p?.dob);
-  const respOpts = clergyPersonnel().map(c => `<option value="${c.id}"${_M.respId === c.id ? ' selected' : ''}>${_esc(c.name)}</option>`).join('');
   const instOpts = (store.institutions || []).map(i => `<option value="${i.id}"${p?.confirmation_institution_id === i.id ? ' selected' : ''}>${_esc(i.name)}</option>`).join('');
   const cohortOpts = _cohorts.map(c => `<option value="${c.id}"${p?.cohort_id === c.id ? ' selected' : ''}>${cohortLabel(c.cohort_date)}</option>`).join('');
   const isMinor = age !== null && age <= 17;
@@ -200,14 +193,9 @@ function buildModalHtml(p, opts = {}) {
       <div style="font-size:11.5px;color:#9CA3AF;margin-top:4px;">Create a cohort first via <strong>Manage Cohorts</strong> in the Confirmation panel.</div>`;
   }
 
-  // 3 — Person responsible
-  h += _sectionHead('Person Responsible');
-  h += `<label>Person Responsible</label><select id="cf-resp" onchange="confRespChange(this.value)"><option value="">— Select —</option>${respOpts}<option value="__other"${_M.respOther ? ' selected' : ''}>Other…</option></select>
-    <div id="cf-resp-other-wrap" style="display:${_M.respOther ? 'block' : 'none'};">${_input('cf-resp-other', 'Name', p?.preparation_responsible_override || '')}</div>`;
-
-  // 3b — Preparer (clergy-aware: institution clergy + Confirmation coordinator + Other)
-  h += _sectionHead('Preparer');
-  h += buildPreparerField('cf-preparer', p?.preparer || '', { coordinatorNames: _confCoordinatorNames });
+  // 3 — Person responsible for formation (clergy + Confirmation coordinator + Other)
+  h += _sectionHead('Person Responsible for Formation');
+  h += buildPreparerField('cf-preparer', p?.preparer || '', { coordinatorNames: _confCoordinatorNames, label: 'Person Responsible for Formation' });
 
   // 4 — Candidate info
   h += _sectionHead('Candidate Information');
@@ -298,7 +286,6 @@ function confSetType(t) {
   if (svc) svc.style.display = t === 'youth' ? 'block' : 'none';
   if (!_M.isEdit) { _M.docs = computeTemplateDocs(t); renderModalDocs(); }
 }
-function confRespChange(v) { _M.respOther = v === '__other'; document.getElementById('cf-resp-other-wrap').style.display = _M.respOther ? 'block' : 'none'; }
 function confCohortPick(v) {
   const coh = _cohorts.find(c => c.id === v);
   if (coh && coh.cohort_date) { const dt = document.getElementById('cf-confdate'); if (dt && !dt.value) dt.value = coh.cohort_date; }
@@ -340,7 +327,6 @@ function _confReadPayload() {
   const type = _M.type;
   const age = ageOf(_v('cf-dob'));
   const minor = age !== null && age <= 17;
-  const respSel = document.getElementById('cf-resp')?.value || '';
   const cohortSel = document.getElementById('cf-cohort')?.value || '';
   const coh = _cohorts.find(c => c.id === cohortSel);
   const churchSel = document.getElementById('cf-church')?.value || '';
@@ -353,8 +339,6 @@ function _confReadPayload() {
     name, first_name: first || null, middle_name: _v('cf-middle') || null, last_name: last || null,
     template_type: type, dob: _v('cf-dob') || null,
     cohort_id: cohortSel || null, cohort_date: coh?.cohort_date || null,
-    preparation_responsible_id: respSel && respSel !== '__other' ? respSel : null,
-    preparation_responsible_override: respSel === '__other' ? (_v('cf-resp-other') || null) : null,
     preparer: readPreparerValue('cf-preparer'),
     candidate_phone: minor ? null : (normalizePhone(_v('cf-cell')) || null),
     candidate_email: minor ? (_v('cf-email-minor') || null) : (_v('cf-email') || null),
@@ -427,7 +411,7 @@ async function confSave() {
 
 // ── Shell config hooks (inline edit form + save/delete/bulk) ─────────────────
 export function buildConfEditForm(p) {
-  _M = newModalState(p, tmplType(p), p?.preparation_responsible_id || null);
+  _M = newModalState(p, tmplType(p));
   const html = buildModalHtml(p, { inline: true });
   setTimeout(() => _hydrate(), 0);
   return html;
@@ -544,7 +528,7 @@ Object.assign(window, {
   loadConfirmation, expandConfirmation,
   openConfCreate, openConfEdit, openConfTemplates, confCloseModal,
   toggleConfDoc, addConfNote,
-  confSetType, confRespChange, confCohortPick, confDobChange, confChurchChange,
+  confSetType, confCohortPick, confDobChange, confChurchChange,
   confDocReceived, confRemoveDoc, confAddDoc, confFamilySearch, confRemoveFamily,
   confSave, confDeletePerson,
   openCohortManager, confCohortChurchChange, confSaveCohort, confDeleteCohort,

@@ -5,6 +5,7 @@ import { expandCase } from './annulments.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
+import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 
 const OCIA_STATUS = {
   inquirer:    { label:'Inquirer',             color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -21,7 +22,16 @@ const CLERGY_TITLE_RE = /^(fr\.|rev\.|deacon|msgr\.|bishop|archbishop|cardinal)/
 const FALLBACK_TEMPLATES = { catechumen: [], candidate: [{ name: 'Baptismal Certificate', deletable: false }] };
 
 let allOcia = [], ociaFilter = 'all', ociaExpanded = null;
-let _templates = {}, _M = null;
+let _templates = {}, _M = null, _ociaCoordinatorNames = [];
+
+// Formation coordinator display names for the "Person Responsible for Formation"
+// dropdown (Clergy + coordinator(s) + Other), mirroring the other sacrament panels.
+async function loadOciaCoordinator() {
+  try {
+    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'ocia').maybeSingle();
+    _ociaCoordinatorNames = (data?.coordinator_ids || []).map(pid => (store.personnel || []).find(p => p.id === pid)?.name).filter(Boolean);
+  } catch (_) { _ociaCoordinatorNames = []; }
+}
 
 function fullAccess() { return isAdmin() || canAccessSacrament('ocia'); }
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -85,7 +95,7 @@ async function loadTemplates() {
   ['catechumen', 'candidate'].forEach(k => { if (!_templates[k]) _templates[k] = JSON.parse(JSON.stringify(FALLBACK_TEMPLATES[k])); });
 }
 export async function loadOcia() {
-  await loadTemplates();
+  await Promise.all([loadTemplates(), loadOciaCoordinator()]);
   const { data, error } = await sb.from('sacramental_ocia').select('*').order('created_at', { ascending: false });
   if (error) { console.error('[ocia]', error); return; }
   allOcia = data || [];
@@ -201,6 +211,7 @@ function renderOciaBody(p, docs, progress, done) {
   }
   const sponsor = p.sponsor_name || p.sponsor1;
   if (sponsor) h += `<div style="font-size:13px;margin-top:6px;">Sponsor: <strong>${_esc(sponsor)}</strong></div>`;
+  if (p.preparer) h += `<div style="font-size:13px;margin-top:6px;">Person Responsible for Formation: <strong>${_esc(p.preparer)}</strong></div>`;
   // minor consent status
   if (isMinor(p)) {
     h += hasConsent(p)
@@ -284,20 +295,17 @@ function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;le
 
 // ── Create / Edit ────────────────────────────────────────────────────────────
 async function openOciaCreate() {
-  let coordId = null;
-  try { const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'ocia').maybeSingle(); coordId = data?.coordinator_ids?.[0] || null; } catch (_) {}
-  _M = newModalState(null, 'catechumen', coordId);
+  _M = newModalState(null, 'catechumen');
   _ociaOpen(buildModalHtml(null)); _hydrate();
 }
 function openOciaEdit(id) {
   const p = allOcia.find(x => x.id === id); if (!p) return;
-  _M = newModalState(p, candType(p), p.preparation_responsible_id || null);
+  _M = newModalState(p, candType(p));
   _ociaOpen(buildModalHtml(p)); _hydrate();
 }
-function newModalState(p, type, coordId) {
+function newModalState(p, type) {
   return {
     id: p?.id || null, isEdit: !!p, type,
-    respId: p?.preparation_responsible_id || coordId || '', respOther: !p?.preparation_responsible_id && !!p?.preparation_responsible_override,
     docs: p ? normDocs(p) : computeTemplateDocs(type),
     prior: p?.prior_marriages?.length ? JSON.parse(JSON.stringify(p.prior_marriages)) : [],
     family: p?.family_group_id ? { group_id: p.family_group_id, label: `${lastNameOf(p)} Family` } : null,
@@ -323,7 +331,6 @@ function buildModalHtml(p) {
   const isEdit = _M.isEdit;
   const np = _nameParts(p);
   const age = ociaAge(p?.dob);
-  const respOpts = clergyPersonnel().map(c => `<option value="${c.id}"${_M.respId === c.id ? ' selected' : ''}>${_esc(c.name)}</option>`).join('');
   const instOpts = (store.institutions || []).map(i => `<option value="${i.name}"${p?.reception_church === i.name ? ' selected' : ''}>${_esc(i.name)}</option>`).join('');
 
   let h = `<div class="modal-title">${isEdit ? 'Edit OCIA File' : 'New OCIA Candidate'}</div>`;
@@ -335,10 +342,9 @@ function buildModalHtml(p) {
     <button type="button" id="ot-candidate" class="ocia-type-btn${_M.type === 'candidate' ? ' active' : ''}" onclick="ociaSetType('candidate')" style="flex:1;">Candidate<br><span style="font-size:11px;font-weight:400;opacity:.8;">already baptized</span></button>
   </div>`;
 
-  // Section 2 — Person responsible
-  h += _sectionHead('Person Responsible');
-  h += `<label>Person Responsible</label><select id="of-resp" onchange="ociaRespChange(this.value)"><option value="">— Select —</option>${respOpts}<option value="__other"${_M.respOther ? ' selected' : ''}>Other…</option></select>
-    <div id="of-resp-other-wrap" style="display:${_M.respOther ? 'block' : 'none'};">${_input('of-resp-other', 'Name', p?.preparation_responsible_override || '')}</div>`;
+  // Section 2 — Person responsible for formation (clergy + OCIA coordinator + Other)
+  h += _sectionHead('Person Responsible for Formation');
+  h += buildPreparerField('of-preparer', p?.preparer || '', { coordinatorNames: _ociaCoordinatorNames, label: 'Person Responsible for Formation' });
 
   // Section 3 — Candidate info
   h += _sectionHead('Candidate Information');
@@ -450,7 +456,6 @@ function ociaSetType(t) {
     if (t === 'candidate' && !_M.docs.some(d => /baptismal certificate/i.test(d.name))) { _M.docs.unshift({ name: 'Baptismal Certificate', received: false, deletable: false, auto: true }); renderModalDocs(); }
   }
 }
-function ociaRespChange(v) { _M.respOther = v === '__other'; document.getElementById('of-resp-other-wrap').style.display = _M.respOther ? 'block' : 'none'; }
 function ociaDobChange() { const age = ociaAge(document.getElementById('of-dob').value); document.getElementById('of-minor-wrap').style.display = (age !== null && age <= 17) ? 'block' : 'none'; }
 function ociaStatusChange(v) { const w = document.getElementById('of-rec-wrap'); if (w) w.style.display = (v === 'received' || v === 'complete') ? 'block' : 'none'; }
 function ociaRecOtherChange() { _M.recOther = document.getElementById('of-rec-other').checked; document.getElementById('of-rec-date-wrap').style.display = _M.recOther ? 'block' : 'none'; document.getElementById('of-rec-easter-note').style.display = _M.recOther ? 'none' : 'block'; }
@@ -495,7 +500,6 @@ async function ociaSave() {
   const name = [_v('of-first'), _v('of-middle'), _v('of-last')].filter(Boolean).join(' ');
   if (!name) { alert('Candidate name is required.'); return; }
   const type = _M.type;
-  const respSel = document.getElementById('of-resp')?.value || '';
   const age = ociaAge(_v('of-dob'));
   const minor = age !== null && age <= 17;
 
@@ -508,8 +512,7 @@ async function ociaSave() {
 
   const payload = {
     name, candidate_type: type, baptismal_status: type === 'candidate' ? 'baptized' : 'unbaptized',
-    preparation_responsible_id: respSel && respSel !== '__other' ? respSel : null,
-    preparation_responsible_override: respSel === '__other' ? (_v('of-resp-other') || null) : null,
+    preparer: readPreparerValue('of-preparer'),
     phone: normalizePhone(_v('of-phone')) || null, email: _v('of-email') || null, dob: _v('of-dob') || null,
     parental_consent: minor ? _chk('of-consent') : false,
     minor_guardian_name: minor ? (_v('of-guardian') || null) : null,
@@ -604,7 +607,7 @@ Object.assign(window, {
   renderOcia, setOciaFilter, toggleOcia, expandOcia, expandCase,
   openOciaCreate, openOciaEdit, openOciaTemplates, ociaCloseModal,
   toggleOciaDoc, addOciaNoteLog,
-  ociaSetType, ociaRespChange, ociaDobChange, ociaStatusChange, ociaRecOtherChange,
+  ociaSetType, ociaDobChange, ociaStatusChange, ociaRecOtherChange,
   ociaPriorToggle, ociaAddPrior, ociaRemovePrior, ociaPriorEnded,
   ociaDocReceived, ociaRemoveDoc, ociaAddDoc,
   ociaFamilySearch, ociaRemoveFamily, ociaAnnulSearch, ociaRemoveAnnul,

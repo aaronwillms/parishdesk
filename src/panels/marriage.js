@@ -153,11 +153,7 @@ export function officiantOf(c) {
   if (c?.officiant_id) return (store.personnel || []).find(p => p.id === c.officiant_id)?.name || '';  // legacy FK
   return c?.officiant_override || '';                                    // legacy free-text
 }
-export function preparerOf(c) {
-  if (c?.preparer) return c.preparer;
-  if (c?.preparation_responsible_id) return (store.personnel || []).find(p => p.id === c.preparation_responsible_id)?.name || '';
-  return c?.preparation_responsible_override || '';
-}
+export function preparerOf(c) { return c?.preparer || ''; }
 export function weddingChurch(c) {
   if (c?.wedding_institution_id) return (store.institutions || []).find(i => i.id === c.wedding_institution_id)?.name || '';
   return c?.wedding_church_override || '';
@@ -286,28 +282,21 @@ function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;le
 // ── Create / Edit modal ──────────────────────────────────────────────────────
 export async function openCoupleAdd() {
   const type = 'nuptial_mass';
-  // default person responsible from program_coordinators
-  let coordId = null;
-  try {
-    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'marriage').maybeSingle();
-    coordId = data?.coordinator_ids?.[0] || null;
-  } catch (_) {}
-  _M = newModalState(null, type, coordId);
+  _M = newModalState(null, type);
   _marOpen(buildCoupleModalHtml(null));
   _hydrateModal();
 }
 
 function openCoupleEdit(id) {
   const c = allCouples.find(x => x.id === id); if (!c) return;
-  _M = newModalState(c, marType(c), c.preparation_responsible_id || null);
+  _M = newModalState(c, marType(c));
   _marOpen(buildCoupleModalHtml(c));
   _hydrateModal();
 }
 
-function newModalState(c, type, coordId) {
+function newModalState(c, type) {
   return {
     id: c?.id || null, isEdit: !!c, type, external: !!c?.is_external,
-    respId: c?.preparation_responsible_id || coordId || '', respOther: !c?.preparation_responsible_id && !!c?.preparation_responsible_override,
     docs: c ? normDocs(c).filter(d => !d.auto) : (_templates[type]?.documents || []).map(d => ({ name: d.name, received: false, deletable: d.deletable ?? true, auto: false })),
     steps: c ? JSON.parse(JSON.stringify(normSteps(c))) : (_templates[type]?.steps || []).map(s => ({ step: s.step, completed: false })),
     fees: c ? JSON.parse(JSON.stringify(normFees(c))) : (_templates[type]?.fees || []).map(f => ({ name: f.name, amount: f.amount, paid: false })),
@@ -333,22 +322,13 @@ function _caseLabel(id) { const r = (store.allCases || []).find(x => x.id === id
 function buildCoupleModalHtml(c, opts = {}) {
   const inline = !!opts.inline;
   const isEdit = _M.isEdit;
-  const respOpts = clergyPersonnel().map(p => `<option value="${p.id}"${_M.respId === p.id ? ' selected' : ''}>${_esc(p.name)}</option>`).join('');
   const instOpts = (store.institutions || []).map(inst => `<option value="${inst.id}"${c?.wedding_institution_id === inst.id ? ' selected' : ''}>${_esc(inst.name)}</option>`).join('');
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Marriage File' : 'New Marriage File'}</div>`;
 
-  // Section 1 — Person responsible + External
-  h += _sectionHead('Person Responsible');
-  h += `<label>Person Responsible</label>
-    <select id="mf-resp" onchange="marOnRespChange(this.value)">
-      <option value="">— Select —</option>${respOpts}<option value="__other"${_M.respOther ? ' selected' : ''}>Other…</option>
-    </select>
-    <div id="mf-resp-other-wrap" style="display:${_M.respOther ? 'block' : 'none'};">${_input('mf-resp-other', 'Name', c?.preparation_responsible_override || '')}</div>`;
-
-  // Section 1b — Preparer (clergy-aware: institution clergy + marriage coordinator + Other)
-  h += _sectionHead('Preparer');
-  h += buildPreparerField('mf-preparer', c?.preparer || '', { coordinatorNames: _marCoordinatorNames });
+  // Section 1 — Person responsible for formation (clergy + marriage coordinator + Other) + External
+  h += _sectionHead('Person Responsible for Formation');
+  h += buildPreparerField('mf-preparer', c?.preparer || '', { coordinatorNames: _marCoordinatorNames, label: 'Person Responsible for Formation' });
 
   h += _toggle('mf-external', 'External (preparation handled elsewhere)', _M.external, 'marOnExternalToggle()');
 
@@ -542,7 +522,6 @@ function renderOciaChip(n) {
 }
 
 // ── Modal handlers ───────────────────────────────────────────────────────────
-function marOnRespChange(v) { _M.respOther = v === '__other'; document.getElementById('mf-resp-other-wrap').style.display = _M.respOther ? 'block' : 'none'; }
 function marOnExternalToggle() {
   _M.external = document.getElementById('mf-external').checked;
   // External only removes Documents + Steps of Preparation; Type, Wedding Details, Fees stay.
@@ -676,7 +655,6 @@ function _chk(id) { return !!document.getElementById(id)?.checked; }
 function _marReadPayload() {
   _syncPriorFromDom(1); _syncPriorFromDom(2);
   const external = _M.external;
-  const respSel = _v('mf-resp') || document.getElementById('mf-resp')?.value || '';
   const instSel = document.getElementById('mf-inst')?.value || '';
   const s1first = _v('mf-s1-first'), s1last = _v('mf-s1-last'), s2first = _v('mf-s2-first'), s2last = _v('mf-s2-last');
 
@@ -690,8 +668,6 @@ function _marReadPayload() {
 
   const payload = {
     is_external: external,
-    preparation_responsible_id: respSel && respSel !== '__other' ? respSel : null,
-    preparation_responsible_override: respSel === '__other' ? (_v('mf-resp-other') || null) : null,
     marriage_type: _M.type,
     civil_marriage_date: (_M.type === 'convalidation' || _M.type === 'sanatio') ? (_v('mf-civil-date') || null) : null,
     sanatio_faculty: _M.type === 'sanatio' ? (_v('mf-faculty') || null) : null,
@@ -762,7 +738,7 @@ async function marSaveCouple() {
 
 // ── Shell config hooks (inline edit form + save/delete/bulk) ─────────────────
 export function buildMarEditForm(c) {
-  _M = newModalState(c, marType(c), c?.preparation_responsible_id || null);
+  _M = newModalState(c, marType(c));
   const html = buildCoupleModalHtml(c, { inline: true });
   setTimeout(() => _hydrateModal(), 0);
   return html;
@@ -853,7 +829,7 @@ Object.assign(window, {
   openCoupleAdd, openCoupleEdit,
   toggleCoupleDoc, toggleCoupleStep, toggleCoupleFee, addCoupleNoteLog,
   marCloseModal, marSaveCouple, marDeleteCouple,
-  marOnRespChange, marOnExternalToggle, marOnTypeChange, marOnNonChurchToggle, marOnInstitutionChange, marOnOfficiantOtherToggle,
+  marOnExternalToggle, marOnTypeChange, marOnNonChurchToggle, marOnInstitutionChange, marOnOfficiantOtherToggle,
   marSpouseToggle, marPriorToggle, marAddPrior, marRemovePrior, marPriorEndedChange,
   marOciaSearch, marRemoveOcia, marAnnulSearch, marRemoveAnnul,
   marDocReceived, marRemoveDoc, marAddDoc, marAddStep, marRemoveStep, marStepDragStart, marStepDrop, marAddFee, marRemoveFee, marFeePaid,
