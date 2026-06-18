@@ -6,10 +6,12 @@
 
 import { fmtDate, formatDateDisplay } from '../utils.js';
 import { formatPhone } from '../utils/phone.js';
+import { store } from '../store.js';
+import { clergyNames } from './preparerField.js';
 import {
   getCouples, getCouple, marCanManage, COUPLE_STATUS, MTYPE_BADGE,
   marType, coupleLabel, s1Name, s2Name, normDocs, normSteps, normFees, notesOf,
-  progressOf, feeTotals, weddingDateOf, officiantOf, preparerOf, weddingLocation,
+  feeTotals, weddingDateOf, officiantOf, preparerOf, weddingLocation,
   buildMarEditForm, marSaveEdit, marDeleteRec, marBulkStatus,
 } from '../panels/marriage.js';
 
@@ -27,31 +29,73 @@ function coupleInitials(c) { const a = ini(s1Name(c)) || '?', b = ini(s2Name(c))
 function row(label, val) {
   return val ? `<div style="display:flex;gap:10px;font-size:13px;padding:3px 0;"><span style="color:#6B7280;min-width:120px;">${esc(label)}</span><span style="flex:1;color:var(--navy);">${val}</span></div>` : '';
 }
-function spouseLine(c, n) {
-  const name = n === 1 ? s1Name(c) : s2Name(c);
-  if (!name) return '';
+// A visiting/external officiant = the saved officiant isn't one of the parish
+// clergy (free-text "Other"). Mirrors the edit form's gating of the Delegation
+// field; legacy officiant_override (also a free-text name) counts as visiting.
+function hasVisitingOfficiant(c) {
+  const o = officiantOf(c);
+  return (!!o && !clergyNames().includes(o)) || !!c.officiant_override;
+}
+function personResponsible(c) {
+  if (c.preparation_responsible_id) return (store.personnel || []).find(p => p.id === c.preparation_responsible_id)?.name || '';
+  return c.preparation_responsible_override || '';
+}
+function priorList(prior) {
+  return (prior || []).map(pm => {
+    const ended = pm.how_ended || '';
+    const annul = pm.annulment_case_id ? ' · annulment linked' : (ended === 'Annulment' ? ' · annulment needed' : '');
+    return `<div>${esc(pm.spouse_name || 'Prior spouse')}${ended ? ` — ${esc(ended)}` : ''}${annul}</div>`;
+  }).join('');
+}
+function spouseDetail(c, n) {
+  const fullName = [c[`spouse${n}_first`], c[`spouse${n}_middle`], c[`spouse${n}_last`]].filter(Boolean).join(' ') || (n === 1 ? s1Name(c) : s2Name(c));
   const phone = n === 1 ? c.groom_phone : c.bride_phone;
-  return `${esc(name)}${phone ? ' · ' + esc(formatPhone(phone)) : ''}`;
+  const email = n === 1 ? c.groom_email : c.bride_email;
+  const dob = c[`spouse${n}_dob`];
+  const unbap = c[`spouse${n}_unbaptized`], noncath = c[`spouse${n}_non_catholic`], inOcia = c[`spouse${n}_in_ocia`];
+  const ociaId = c[`spouse${n}_ocia_id`];
+  const ociaName = ociaId ? ((store.allOcia || []).find(x => x.id === ociaId)?.name || '') : '';
+  const baptism = unbap ? '' : [c[`spouse${n}_baptism_church`], c[`spouse${n}_baptism_city`], c[`spouse${n}_baptism_state`]].filter(Boolean).map(esc).join(', ');
+  const statusBits = [
+    unbap ? 'Unbaptized' : null,
+    (!unbap && noncath) ? 'Non-Catholic' : null,
+    inOcia ? `In OCIA${ociaName ? ` (${esc(ociaName)})` : ''}` : null,
+  ].filter(Boolean);
+  const prior = c[`spouse${n}_prior_marriages`] || [];
+  const out = [
+    row('Name', fullName ? esc(fullName) : ''),
+    row('Date of birth', dob ? esc(formatDateDisplay(dob)) : ''),
+    row('Phone', phone ? esc(formatPhone(phone)) : ''),
+    row('Email', email ? esc(email) : ''),
+    statusBits.length ? row('Status', statusBits.join(' · ')) : '',
+    baptism ? row('Baptism', baptism) : '',
+    prior.length ? row('Prior marriages', priorList(prior)) : '',
+  ].filter(Boolean).join('');
+  return out || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details.</div>';
 }
 function fileDetails(c) {
   const wd = weddingDateOf(c);
   const loc = weddingLocation(c);
   const dateLine = wd ? `${esc(formatDateDisplay(wd))}${c.wedding_time ? ' · ' + esc(c.wedding_time) : ''}` : '<span style="color:#9CA3AF;">Not set</span>';
+  // Use the RAW marriage_type for type-conditional fields — marType() collapses
+  // to 'external' for external files, which would hide the real type's fields.
+  const type = c.marriage_type || marType(c);
   return [
-    row('Spouse 1', spouseLine(c, 1)),
-    row('Spouse 2', spouseLine(c, 2)),
-    row('Type', esc(MTYPE_BADGE[marType(c)] || '') + (c.is_external ? ' · External' : '')),
+    row('Type', esc(MTYPE_BADGE[type] || '') + (c.is_external ? ' · External' : '')),
+    row('Civil marriage', c.civil_marriage_date ? esc(formatDateDisplay(c.civil_marriage_date)) : ''),
+    type === 'sanatio' ? row('Faculty granted by', c.sanatio_faculty ? esc(c.sanatio_faculty) : '') : '',
     row('Wedding', dateLine),
     row('Location', loc.name ? esc(loc.name) : (c.non_church_wedding ? 'Non-church wedding' : '')),
     row('Address', loc.lines.length ? esc(loc.lines.join(', ')) : ''),
-    row('Officiant', officiantOf(c) ? esc(officiantOf(c)) + (c.delegation_given ? ' · delegation given' : '') : ''),
+    row('Officiant', officiantOf(c) ? esc(officiantOf(c)) : ''),
+    hasVisitingOfficiant(c) ? row('Delegation', c.delegation_given ? 'Given' : '⚠️ Not given — send letter of delegation') : '',
     row('Preparer', preparerOf(c) ? esc(preparerOf(c)) : ''),
-    row('Civil marriage', c.civil_marriage_date ? esc(formatDateDisplay(c.civil_marriage_date)) : ''),
+    row('Person responsible', personResponsible(c) ? esc(personResponsible(c)) : ''),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
 }
-function documents(c) {
-  if (c.is_external) return '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">External — preparation handled elsewhere.</div>';
-  const docs = normDocs(c), steps = normSteps(c), fees = normFees(c);
+// Documents + Steps — omitted entirely for external files (per the rule).
+function documentsSteps(c) {
+  const docs = normDocs(c), steps = normSteps(c);
   let h = '';
   if (docs.length) {
     h += `<div style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin:2px 0 4px;">Documents</div>`;
@@ -68,16 +112,20 @@ function documents(c) {
       <span style="flex:1;cursor:pointer;color:${s.completed ? '#2D6A4F' : 'var(--navy)'};" onclick="toggleCoupleStep('${c.id}',${i})">${esc(s.step)}</span>
     </div>`).join('');
   }
-  if (fees.length) {
-    const ft = feeTotals(c);
-    h += `<div style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px;">Fees <span style="text-transform:none;">($${ft.paid} / $${ft.total})</span></div>`;
-    h += fees.map((f, i) => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+  return h || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">None.</div>';
+}
+// Fees — shown for ALL files INCLUDING external (external collects fees too;
+// the old viewer hid them behind the "External — handled elsewhere" note).
+function fees(c) {
+  const list = normFees(c);
+  if (!list.length) return '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No fees.</div>';
+  const ft = feeTotals(c);
+  return `<div style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin:2px 0 4px;">$${ft.paid} paid / $${ft.total} total</div>`
+    + list.map((f, i) => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
       <span style="font-size:15px;cursor:pointer;" onclick="toggleCoupleFee('${c.id}',${i})">${f.paid ? '✅' : '⬜'}</span>
       <span style="flex:1;cursor:pointer;color:var(--navy);" onclick="toggleCoupleFee('${c.id}',${i})">${esc(f.name)}</span>
       <span style="font-size:12px;color:#5B4636;">$${Number(f.amount) || 0}</span>
     </div>`).join('');
-  }
-  return h || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No documents.</div>';
 }
 function activity(c) {
   const notes = notesOf(c);
@@ -148,9 +196,12 @@ export const marriageConfig = {
   actions: [{ label: 'Email couple', icon: 'fa-envelope', handler: emailCouple }],
 
   detailSections: [
-    { title: 'File details', render: fileDetails },
-    { title: 'Documents',    render: documents },
-    { title: 'Activity',     render: activity },
+    { title: 'File details',         render: fileDetails },
+    { title: 'Groom',                render: (c) => spouseDetail(c, 1) },
+    { title: 'Bride',                render: (c) => spouseDetail(c, 2) },
+    { title: 'Fees',                 render: fees },                                  // shown for external too
+    { title: 'Documents & Steps',    render: documentsSteps, when: (c) => !c.is_external },  // omitted for external
+    { title: 'Activity',             render: activity },
   ],
 
   editForm: (c) => buildMarEditForm(c),
