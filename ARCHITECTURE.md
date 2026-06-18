@@ -61,6 +61,27 @@ config file only — no shell changes.
 - **Theming:** uses the existing CSS variables/tokens and `.sac-*` classes with
   explicit light + dark rules in `main.css`. No hardcoded hex in the shell.
 
+### Cohort grouping (groupBy / groupLabel — live as of First Communion)
+
+When a config sets `groupBy`, the shell renders **collapsible groups** instead of a
+flat list (First Communion groups by cohort; Baptism stays flat). The grouping
+path: groups are ordered by the config's `groupCompare` (most-recent first), the
+**newest group is expanded and older groups collapsed by default** (UI-only,
+not persisted), records with no group fall into an **"Unassigned" group pinned
+last** (never dropped), and an **active search auto-expands** so matches show
+across every group. Bulk-select works across groups and selection survives
+collapse toggles. The flat-list path (Baptism) is unchanged.
+
+### Sacramental preparer vs. officiant
+
+`officiant` is a per-record field for **Baptism and Marriage only** (the minister
+who performs the rite). The **initiation panels (First Communion, and
+Confirmation later) are preparer-only** — no officiant field. The **preparer**
+dropdown is a shared, reusable helper (`src/sacramental/preparerField.js`):
+options are institution clergy (`getInstitutionClergy`) + the panel's sacramental
+coordinator(s) + an "Other…" free entry; the chosen display name is stored on the
+record and shown in the read view. Each panel supplies its own coordinator source.
+
 ### Config schema (the contract a panel implements)
 
 | Key | Type | Purpose |

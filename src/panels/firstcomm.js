@@ -4,6 +4,8 @@ import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
+import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
+import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 
 const FC_STATUS = {
   enrolled:    { label:'Enrolled',                  color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -20,7 +22,7 @@ const CLERGY_TITLE_RE = /^(fr\.|rev\.|deacon|msgr\.|bishop|archbishop|cardinal)/
 const FALLBACK_DOCS = [{ name: 'Baptismal Certificate', deletable: false }];
 
 let allFc = [], fcFilter = 'all', fcExpanded = null, _cohortFilter = 'all';
-let _cohorts = [], _tplDocs = [], _M = null;
+let _cohorts = [], _tplDocs = [], _M = null, _fcCoordinatorNames = [];
 
 function fullAccess() { return isAdmin() || canAccessSacrament('first_communion') || canAccessSacrament('firstcomm'); }
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -46,14 +48,51 @@ function notesOf(p) {
 // ── Data ─────────────────────────────────────────────────────────────────────
 async function loadTemplate() { const { data } = await sb.from('firstcomm_templates').select('documents').limit(1); _tplDocs = (data && data[0]?.documents) || JSON.parse(JSON.stringify(FALLBACK_DOCS)); }
 async function loadCohorts() { const { data } = await sb.from('sacramental_cohorts').select('*').eq('panel', 'firstcomm').order('cohort_date', { ascending: false }); _cohorts = data || []; }
-export async function loadFirstComm() {
-  await Promise.all([loadTemplate(), loadCohorts()]);
+async function loadFcCoordinator() {
+  try {
+    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'firstcomm').maybeSingle();
+    _fcCoordinatorNames = (data?.coordinator_ids || []).map(pid => (store.personnel || []).find(p => p.id === pid)?.name).filter(Boolean);
+  } catch (_) { _fcCoordinatorNames = []; }
+}
+
+// Data-only refresh (used by the shell + autosave). Returns the record list.
+export async function loadFcData() {
+  await Promise.all([loadTemplate(), loadCohorts(), loadFcCoordinator()]);
   const { data, error } = await sb.from('sacramental_firstcomm').select('*').order('created_at', { ascending: false });
-  if (error) { console.error('[firstcomm]', error); return; }
+  if (error) { console.error('[firstcomm]', error); return []; }
   allFc = data || [];
   store.allFirstComm = allFc;
-  renderAll(); updateStats();
+  updateStats();
+  return allFc;
 }
+
+// Nav loader — fetch then mount the master-detail shell into #firstcomm-root.
+export async function loadFirstComm() {
+  await loadFcData();
+  const root = document.getElementById('firstcomm-root');
+  if (!root) return;
+  const { firstCommunionConfig } = await import('../sacramental/firstCommunionConfig.js');
+  renderSacramentalPanel(root, firstCommunionConfig);
+}
+
+// ── Shell accessors (consumed by firstCommunionConfig) ───────────────────────
+export function getFcRecords() { return allFc; }
+export function getFcRecord(id) { return allFc.find(x => x.id === id) || null; }
+export { fullAccess as fcCanManage };
+export { FC_STATUS };
+export function cohortKeyOf(p) { return p?.cohort_id || null; }
+export function cohortName(cohortId) {
+  if (!cohortId) return 'Unassigned';
+  const coh = _cohorts.find(c => c.id === cohortId);
+  return cohortLabel(coh?.cohort_date) + (cohortChurchName(coh) ? ` · ${cohortChurchName(coh)}` : '');
+}
+export function cohortDateOf(cohortId) { return _cohorts.find(c => c.id === cohortId)?.cohort_date || ''; }
+export function preparerOf(p) { return p?.preparer || ''; }
+export function communionChurch(p) {
+  if (p?.communion_institution_id) return (store.institutions || []).find(x => x.id === p.communion_institution_id)?.name || '';
+  return p?.communion_church_override || '';
+}
+export { nameOf, lastNameOf, statusOf, commDate, cohortLabel, cohortChurchName, normDocs, notesOf, ageOf };
 function updateStats() {
   const active = allFc.filter(p => !p.archived && statusOf(p) !== 'inactive');
   const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
@@ -62,156 +101,13 @@ function updateStats() {
   set('stat-fc-docs', active.filter(p => normDocs(p).some(d => !d.received) || !p.preparation_complete).length);
 }
 
-// ── Chrome ───────────────────────────────────────────────────────────────────
-function renderAll() {
-  const root = document.getElementById('firstcomm-root'); if (!root) return;
-  const manage = fullAccess();
-  const filters = [['all', 'All'], ['enrolled', 'Enrolled'], ['preparation', 'In Preparation'], ['complete', 'Preparation Complete'], ['received', 'Received First Communion'], ['inactive', 'Inactive']]
-    .map(([k, l]) => `<button class="cf-btn${fcFilter === k ? ' active' : ''}" onclick="setFcFilter('${k}',this)">${l}</button>`).join('');
-  const cohortOpts = `<option value="all"${_cohortFilter === 'all' ? ' selected' : ''}>All Cohorts</option>`
-    + _cohorts.map(c => `<option value="${c.id}"${_cohortFilter === c.id ? ' selected' : ''}>${cohortLabel(c.cohort_date)}</option>`).join('')
-    + `<option value="__manage">⚙ Manage Cohorts…</option>`;
-  root.innerHTML = `
-    <div class="card" style="padding:.875rem 1.25rem;">
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <input type="text" id="fc-search" placeholder="Search by name…" oninput="renderFcList()" style="flex:1;min-width:140px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
-        <select id="fc-cohort" onchange="fcCohortChange(this.value)" style="border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;">${cohortOpts}</select>
-        ${(isSacramentCoordinator('first_communion') || isSacramentCoordinator('firstcomm')) ? `<button class="anl-icon-btn" title="Document templates" onclick="openFcTemplate()"><i class="fa-solid fa-gear"></i></button>` : ''}
-        ${manage ? `<button class="btn-primary" style="white-space:nowrap;" onclick="openFcCreate()">+ Add Student</button>` : ''}
-      </div>
-      <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;">${filters}</div>
-    </div>
-    <div id="fc-list"></div>`;
-  renderFcList();
-}
-function setFcFilter(f, el) { fcFilter = f; document.querySelectorAll('#panel-firstcomm .cf-btn').forEach(b => b.classList.remove('active')); el?.classList.add('active'); renderFcList(); }
-function fcCohortChange(v) { if (v === '__manage') { document.getElementById('fc-cohort').value = _cohortFilter; openCohortManager(); return; } _cohortFilter = v; renderFcList(); }
-
-function renderFcList() {
-  const el = document.getElementById('fc-list'); if (!el) return;
-  const q = (document.getElementById('fc-search')?.value || '').toLowerCase();
-  const items = allFc.filter(p => {
-    if (fcFilter !== 'all' && statusOf(p) !== fcFilter) return false;
-    if (_cohortFilter !== 'all' && (p.cohort_id || '') !== _cohortFilter) return false;
-    return !q || nameOf(p).toLowerCase().includes(q);
-  });
-  if (!items.length) { el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No students match.</div>'; return; }
-  const active = items.filter(p => !p.archived), archived = items.filter(p => p.archived);
-  const renderCohortGroups = (list) => {
-    const byCohort = {}; list.forEach(p => { const k = p.cohort_id || '__none'; (byCohort[k] = byCohort[k] || []).push(p); });
-    const keys = Object.keys(byCohort).sort((a, b) => {
-      if (a === '__none') return 1; if (b === '__none') return -1;
-      const ca = _cohorts.find(c => c.id === a), cb = _cohorts.find(c => c.id === b);
-      return (cb?.cohort_date || '').localeCompare(ca?.cohort_date || '');
-    });
-    return keys.map(k => {
-      const coh = _cohorts.find(c => c.id === k);
-      const header = k === '__none' ? 'No Cohort' : cohortLabel(coh?.cohort_date) + (cohortChurchName(coh) ? ` · ${_esc(cohortChurchName(coh))}` : '');
-      return `<div style="display:flex;align-items:center;gap:10px;margin:16px 0 8px;"><span style="font-size:11.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#7D6608;">🍞 ${_esc(header)}</span><div style="flex:1;height:.5px;background:var(--stone);"></div></div>`
-        + familyOrder(byCohort[k]).map(renderFcCard).join('');
-    }).join('');
-  };
-  let html = renderCohortGroups(active);
-  if (archived.length) {
-    html += `<div style="display:flex;align-items:center;gap:10px;margin:18px 0 10px;"><div style="flex:1;height:.5px;background:var(--stone);"></div><span style="font-size:11px;color:#6B7280;letter-spacing:.07em;text-transform:uppercase;font-weight:500;">Archived</span><div style="flex:1;height:.5px;background:var(--stone);"></div></div>`;
-    html += familyOrder(archived).map(renderFcCard).join('');
-  }
-  el.innerHTML = html;
-}
 function cohortChurchName(coh) { if (!coh) return ''; if (coh.church_institution_id) { const i = (store.institutions || []).find(x => x.id === coh.church_institution_id); if (i) return i.name; } return coh.church_override || ''; }
-function familyOrder(list) {
-  // Alphabetical by last name; family members stay grouped (oldest→youngest)
-  // and the unit sorts by the family's last name.
-  const groups = {}; list.forEach(p => { if (p.family_group_id) (groups[p.family_group_id] = groups[p.family_group_id] || []).push(p); });
-  const seen = new Set(); const units = [];
-  list.forEach(p => {
-    if (p.family_group_id) {
-      if (seen.has(p.family_group_id)) return; seen.add(p.family_group_id);
-      const members = groups[p.family_group_id].slice().sort((a, b) => (ageOf(b.dob) ?? -1) - (ageOf(a.dob) ?? -1));
-      units.push({ members, key: lastNameOf(members[0]).toLowerCase() });
-    } else units.push({ members: [p], key: lastNameOf(p).toLowerCase() });
-  });
-  units.sort((a, b) => a.key.localeCompare(b.key));
-  return units.flatMap(u => u.members);
+
+// Cross-link entry — open a specific First Communion file in the shell (deep-link).
+export async function expandFirstComm(id) {
+  openSacramentalRecord('firstcommunion', id);   // set hash first so the shell opens it on mount
+  window.switchPanel('firstcomm');
 }
-
-// ── Card ─────────────────────────────────────────────────────────────────────
-function renderFcCard(p) {
-  const sm = FC_STATUS[statusOf(p)] || FC_STATUS.enrolled;
-  const age = ageOf(p.dob);
-  const exp = fcExpanded === p.id;
-  const fam = p.family_group_id ? `${lastNameOf(p)} Family` : null;
-  const cd = commDate(p);
-  const ageNotice = age !== null && age > 13;
-  const docs = normDocs(p); const done = docs.filter(d => d.received).length;
-  const progress = docs.length ? Math.round((done / docs.length) * 100) : null;
-
-  let h = `<div class="couple-card${ageNotice ? ' urgent' : ''}" id="fc-card-${p.id}" style="border-left:4px solid ${sm.dot};">
-    <div class="couple-header" onclick="toggleFc('${p.id}')">
-      <div style="flex:1;min-width:0;">
-        <span class="couple-name">${_esc(nameOf(p))}${age !== null ? ` <span style="font-size:12px;color:#6B7280;font-weight:400;">(${age})</span>` : ''}</span>
-        <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center;">
-          <span style="background:${sm.bg};color:${sm.color};border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;letter-spacing:.04em;display:inline-flex;align-items:center;gap:5px;border:1px solid ${sm.color}33;"><span style="width:7px;height:7px;border-radius:50%;background:${sm.dot};display:inline-block;"></span>${sm.label}</span>
-          ${cd ? `<span style="font-size:11px;background:#FEF9E7;color:#7D6608;border-radius:20px;padding:2px 8px;">🍞 ${cohortLabel(cd)}</span>` : ''}
-          ${fam ? `<span style="font-size:11px;color:#5B4636;background:#F3ECE0;border-radius:20px;padding:2px 8px;">👪 ${_esc(fam)}</span>` : ''}
-          ${progress !== null ? (progress === 100 ? `<span style="font-size:11px;color:#2D6A4F;">✅ docs complete</span>` : `<span style="font-size:11px;color:#922B21;">${done}/${docs.length} docs</span>`) : ''}
-        </div>
-        ${ageNotice ? `<div style="margin-top:5px;background:#FEF9E7;border-left:3px solid #D4AC0D;border-radius:3px;padding:4px 10px;font-size:12px;font-weight:600;color:#7D6608;">⚠ Consider the Confirmation or OCIA panel for older candidates</div>` : ''}
-      </div>
-      <span style="font-size:16px;color:#B0A090;">${exp ? '▲' : '▼'}</span>
-    </div>`;
-  if (exp) h += renderFcBody(p, docs, progress, done);
-  h += `</div>`;
-  return h;
-}
-
-function renderFcBody(p, docs, progress, done) {
-  let h = `<div class="couple-body">`;
-  h += `<div style="margin-top:10px;">`;
-  if (p.dob) h += `<span class="detail-chip">🎂 ${_esc(p.dob)}</span>`;
-  const grade = p.grade_level || p.grade;
-  if (grade) h += `<span class="detail-chip">Grade ${_esc(grade)}</span>`;
-  if (p.school_name) h += `<span class="detail-chip">🏫 ${_esc(p.school_name)}</span>`;
-  h += `</div>`;
-  const phone = p.parent1_phone || p.phone, email = p.parent1_email || p.email;
-  if (phone || email) { h += `<div style="margin-top:8px;">`; if (phone) h += `<a href="tel:${normalizePhone(phone)}" class="contact-chip">📞 ${_esc(formatPhone(phone))}</a>`; if (email) h += `<a href="mailto:${email}" class="contact-chip">✉️ ${_esc(email)}</a>`; h += `</div>`; }
-  const par1 = (p.parent1_first || p.parent1_last) ? `${p.parent1_first || ''} ${p.parent1_last || ''}`.trim() : (p.parent1 || p.parent2);
-  if (par1) {
-    h += `<div class="couple-section-label">Parent / Guardian</div>`;
-    h += `<div style="font-size:13px;">${_esc(par1)}${p.parent1_phone ? ' · ' + _esc(p.parent1_phone) : ''}</div>`;
-  }
-  if (commDate(p) || p.communion_church_override || p.communion_institution_id) {
-    const ch = p.communion_institution_id ? ((store.institutions || []).find(x => x.id === p.communion_institution_id)?.name) : p.communion_church_override;
-    h += `<div style="font-size:13px;margin-top:6px;">First Communion: <strong>${commDate(p) ? formatDateDisplay(commDate(p)) : ''}</strong>${ch ? ' · ' + _esc(ch) : ''}</div>`;
-  }
-  // documents
-  if (docs.length) {
-    h += `<div class="couple-section-label" style="margin-top:12px;">Document checklist</div>`;
-    if (progress !== null) h += `<div class="prog-bar-wrap"><div class="prog-bar-fill" style="width:${progress}%;background:${progress === 100 ? '#2D6A4F' : 'var(--gold)'};"></div></div><div style="font-size:11px;color:#888;margin-bottom:6px;">${done}/${docs.length} received</div>`;
-    h += docs.map((d, i) => `<div class="doc-item" style="padding:4px 6px;display:flex;align-items:center;gap:8px;">
-      <span style="font-size:15px;cursor:pointer;" onclick="toggleFcDoc('${p.id}',${i})">${d.received ? '✅' : '⬜'}</span>
-      <span style="flex:1;color:${d.received ? '#2D6A4F' : 'var(--navy)'};cursor:pointer;" onclick="toggleFcDoc('${p.id}',${i})">${_esc(d.name)}</span>
-      ${!d.deletable ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : ''}
-    </div>`).join('');
-  }
-  // single prep step
-  h += `<div class="couple-section-label" style="margin-top:12px;">Preparation</div>
-    <div class="doc-item" style="padding:4px 6px;display:flex;align-items:center;gap:8px;">
-      <span style="font-size:15px;cursor:pointer;" onclick="toggleFcPrep('${p.id}')">${p.preparation_complete ? '✅' : '⬜'}</span>
-      <span style="flex:1;color:${p.preparation_complete ? '#2D6A4F' : 'var(--navy)'};cursor:pointer;" onclick="toggleFcPrep('${p.id}')">Parent/Guardian Preparation Complete</span>
-      ${p.preparation_complete && p.preparation_complete_date ? `<span style="font-size:11px;color:#9CA3AF;">${fmtDate(String(p.preparation_complete_date).slice(0, 10))}</span>` : ''}
-    </div>`;
-  // notes
-  const notes = notesOf(p);
-  h += `<div class="couple-section-label" style="margin-top:12px;">Notes</div>
-    <div style="display:flex;gap:6px;margin-bottom:8px;"><input type="text" id="fcn-${p.id}" placeholder="Add a note…" style="flex:1;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" onkeydown="if(event.key==='Enter'){event.preventDefault();addFcNote('${p.id}');}" /><button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="addFcNote('${p.id}')">Add</button></div>`;
-  h += notes.length ? notes.map(n => `<div style="font-size:13px;color:#555;margin-bottom:6px;padding:8px 12px;background:#FFF8EE;border-left:3px solid var(--gold);border-radius:3px;"><div style="white-space:pre-wrap;">${_esc(n.note)}</div>${(n.by || n.created_at) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${n.created_at ? fmtDate(String(n.created_at).slice(0, 10)) : ''}${n.by ? ' · ' + _esc(n.by) : ''}</div>` : ''}</div>`).join('') : `<div style="font-size:13px;color:#9CA3AF;font-style:italic;padding:.25rem 0;">No notes yet.</div>`;
-  h += `<div style="margin-top:12px;text-align:right;"><button class="anl-icon-btn" title="Edit" onclick="openFcEdit('${p.id}')"><i class="fa-solid fa-pencil"></i></button></div></div>`;
-  return h;
-}
-
-function toggleFc(id) { fcExpanded = fcExpanded === id ? null : id; renderFcList(); }
-export async function expandFirstComm(id) { fcExpanded = id; window.switchPanel('firstcomm'); await loadFirstComm(); document.getElementById('fc-card-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 
 // ── Autosave ─────────────────────────────────────────────────────────────────
 async function _patch(id, patch) { const p = allFc.find(x => x.id === id); if (!p) return null; const { error } = await sb.from('sacramental_firstcomm').update({ ...patch, updated_at: nowIso() }).eq('id', id); if (error) { alert('Save failed: ' + error.message); return null; } Object.assign(p, patch); return p; }
@@ -222,19 +118,19 @@ async function toggleFcDoc(id, i) {
   const allDone = docs.length > 0 && docs.every(d => d.received);
   const patch = { documents: docs };
   if (allDone && !prevAll) { const tl = JSON.parse(JSON.stringify(p.timeline || [])); tl.push({ type: 'auto', text: 'All documents received', created_at: nowIso() }); patch.timeline = tl; }
-  if (await _patch(id, patch)) { renderFcList(); updateStats(); }
+  if (await _patch(id, patch)) { updateStats(); refreshActivePanel(); }
 }
 async function toggleFcPrep(id) {
   const p = allFc.find(x => x.id === id); if (!p) return;
   const done = !p.preparation_complete;
-  if (await _patch(id, { preparation_complete: done, preparation_complete_date: done ? todayCST() : null, preparation_complete_by: done ? _curUserId() : null })) { renderFcList(); updateStats(); }
+  if (await _patch(id, { preparation_complete: done, preparation_complete_date: done ? todayCST() : null, preparation_complete_by: done ? _curUserId() : null })) { updateStats(); refreshActivePanel(); }
 }
 async function addFcNote(id) {
   const inp = document.getElementById('fcn-' + id); const note = (inp?.value || '').trim(); if (!note) return;
   const p = allFc.find(x => x.id === id); if (!p) return;
   const log = Array.isArray(p.notes_log) ? JSON.parse(JSON.stringify(p.notes_log)) : [];
   log.push({ note, by: _curUserName(), created_at: nowIso() });
-  if (await _patch(id, { notes_log: log })) renderFcList();
+  if (await _patch(id, { notes_log: log })) refreshActivePanel();
 }
 
 // ── Big modal ────────────────────────────────────────────────────────────────
@@ -270,7 +166,8 @@ function computeTemplateDocs() {
 }
 function _nameParts(p) { return { first: p?.first_name || (p?.name || '').split(/\s+/)[0] || '', middle: p?.middle_name || '', last: p?.last_name || (p?.name || '').split(/\s+/).slice(1).join(' ') || '' }; }
 
-function buildModalHtml(p) {
+function buildModalHtml(p, opts = {}) {
+  const inline = !!opts.inline;
   const isEdit = _M.isEdit;
   const np = _nameParts(p);
   const age = ageOf(p?.dob);
@@ -278,12 +175,16 @@ function buildModalHtml(p) {
   const instOpts = (store.institutions || []).map(i => `<option value="${i.id}"${p?.communion_institution_id === i.id ? ' selected' : ''}>${_esc(i.name)}</option>`).join('');
   const cohortOpts = _cohorts.map(c => `<option value="${c.id}"${p?.cohort_id === c.id ? ' selected' : ''}>${cohortLabel(c.cohort_date)}</option>`).join('');
 
-  let h = `<div class="modal-title">${isEdit ? 'Edit First Communion File' : 'New First Communion Student'}</div>`;
+  let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit First Communion File' : 'New First Communion Student'}</div>`;
 
   // 1 — Person responsible
   h += _sectionHead('Person Responsible');
   h += `<label>Person Responsible</label><select id="ff-resp" onchange="fcRespChange(this.value)"><option value="">— Select —</option>${respOpts}<option value="__other"${_M.respOther ? ' selected' : ''}>Other…</option></select>
     <div id="ff-resp-other-wrap" style="display:${_M.respOther ? 'block' : 'none'};">${_input('ff-resp-other', 'Name', p?.preparation_responsible_override || '')}</div>`;
+
+  // 1b — Preparer (clergy-aware: institution clergy + FC coordinator + Other)
+  h += _sectionHead('Preparer');
+  h += buildPreparerField('ff-preparer', p?.preparer || '', { coordinatorNames: _fcCoordinatorNames });
 
   // 2 — Cohort
   h += _sectionHead('Cohort');
@@ -330,10 +231,12 @@ function buildModalHtml(p) {
     h += _toggle('ff-archive', 'Archive this file', !!p?.archived);
   }
 
-  h += `<div class="modal-actions" style="justify-content:space-between;">
-    ${isEdit ? `<button class="btn-delete" onclick="fcDeletePerson('${_M.id}')">Delete</button>` : '<span></span>'}
-    <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="fcCloseModal()">Cancel</button><button class="btn-primary" onclick="fcSave()">${isEdit ? 'Save' : 'Create File'}</button></div>
-  </div>`;
+  if (!inline) {
+    h += `<div class="modal-actions" style="justify-content:space-between;">
+      ${isEdit ? `<button class="btn-delete" onclick="fcDeletePerson('${_M.id}')">Delete</button>` : '<span></span>'}
+      <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="fcCloseModal()">Cancel</button><button class="btn-primary" onclick="fcSave()">${isEdit ? 'Save' : 'Create File'}</button></div>
+    </div>`;
+  }
   return h;
 }
 
@@ -370,10 +273,12 @@ function fcRemoveFamily() { _M.family = null; renderFamilyChip(); }
 // ── Save ─────────────────────────────────────────────────────────────────────
 function _v(id) { const e = document.getElementById(id); return e ? e.value.trim() : ''; }
 function _chk(id) { return !!document.getElementById(id)?.checked; }
-async function fcSave() {
+// Shared payload reader — used by the create modal AND the shell inline edit
+// (both render the same field ids + drive the same _M state).
+function _fcReadPayload() {
   const first = _v('ff-first'), last = _v('ff-last');
   const name = [first, _v('ff-middle'), last].filter(Boolean).join(' ');
-  if (!name) { alert('Student name is required.'); return; }
+  if (!name) return { ok: false };
   const respSel = document.getElementById('ff-resp')?.value || '';
   const cohortSel = document.getElementById('ff-cohort')?.value || '';
   const coh = _cohorts.find(c => c.id === cohortSel);
@@ -388,6 +293,7 @@ async function fcSave() {
     cohort_id: cohortSel && cohortSel !== '__new' ? cohortSel : null, cohort_date: coh?.cohort_date || null,
     preparation_responsible_id: respSel && respSel !== '__other' ? respSel : null,
     preparation_responsible_override: respSel === '__other' ? (_v('ff-resp-other') || null) : null,
+    preparer: readPreparerValue('ff-preparer'),
     school_name: _v('ff-school') || null, grade_level: document.getElementById('ff-grade')?.value || null,
     child_street: _v('ff-street') || null, child_city: _v('ff-city') || null, child_state: _v('ff-state') || null, child_zip: _v('ff-zip') || null,
     parent1_first: _v('ff-p1first') || null, parent1_last: _v('ff-p1last') || null, parent1_phone: normalizePhone(_v('ff-p1phone')) || null, parent1_email: _v('ff-p1email') || null,
@@ -400,39 +306,84 @@ async function fcSave() {
     family_group_id: familyGroupId,
     updated_at: nowIso(),
   };
+  return { ok: true, payload, name, familyGroupId, linkTarget };
+}
 
-  if (_M.isEdit) {
-    const prior = allFc.find(x => x.id === _M.id);
-    const newStatus = document.getElementById('ff-status')?.value || statusOf(prior);
-    payload.status_code = newStatus;
-    payload.archived = _chk('ff-archive');
-    const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
-    if (prior && statusOf(prior) !== 'received' && newStatus === 'received') tl.push({ type: 'auto', text: 'First Communion Received', created_at: nowIso() });
-    payload.timeline = tl;
-    const { error } = await sb.from('sacramental_firstcomm').update(payload).eq('id', _M.id);
-    if (error) { alert('Save failed: ' + error.message); return; }
-    if (linkTarget) await sb.from('sacramental_firstcomm').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
-    logActivity({ action: 'updated First Communion record', entityType: 'firstcomm', entityName: name, contextType: 'firstcomm', contextId: _M.id });
-    fcCloseModal(); await loadFirstComm();
-  } else {
-    payload.status_code = 'enrolled';
-    payload.archived = false;
-    payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-    const { error } = await sb.from('sacramental_firstcomm').insert(payload);
-    if (error) { alert('Create failed: ' + error.message); return; }
-    if (linkTarget) await sb.from('sacramental_firstcomm').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
-    logActivity({ action: 'added First Communion student', entityType: 'firstcomm', entityName: name, contextType: 'firstcomm' });
-    const { data: { user } } = await sb.auth.getUser();
-    const uids = await getUserIdsForSacrament('first_communion');
-    notifyUsers(uids, user?.id, `New First Communion student added: ${name}`, 'info', 'firstcomm');
-    fcCloseModal(); await loadFirstComm();
+// Create modal save.
+async function fcSave() {
+  const r = _fcReadPayload();
+  if (!r.ok) { alert('Student name is required.'); return; }
+  const { payload, name, familyGroupId, linkTarget } = r;
+  if (_M.isEdit) { const res = await _fcWriteEdit(_M.id, r); if (res.ok) { fcCloseModal(); refreshActivePanel(); } return; }
+  payload.status_code = 'enrolled';
+  payload.archived = false;
+  payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
+  const { error } = await sb.from('sacramental_firstcomm').insert(payload);
+  if (error) { alert('Create failed: ' + error.message); return; }
+  if (linkTarget) await sb.from('sacramental_firstcomm').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
+  logActivity({ action: 'added First Communion student', entityType: 'firstcomm', entityName: name, contextType: 'firstcomm' });
+  const { data: { user } } = await sb.auth.getUser();
+  const uids = await getUserIdsForSacrament('first_communion');
+  notifyUsers(uids, user?.id, `New First Communion student added: ${name}`, 'info', 'firstcomm');
+  fcCloseModal(); await loadFcData(); refreshActivePanel();
+}
+
+// Shared edit writer (status/archive/timeline) used by modal + shell.
+async function _fcWriteEdit(id, r) {
+  const { payload, name, familyGroupId, linkTarget } = r;
+  const prior = allFc.find(x => x.id === id);
+  const newStatus = document.getElementById('ff-status')?.value || statusOf(prior);
+  payload.status_code = newStatus;
+  payload.archived = _chk('ff-archive');
+  const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
+  if (prior && statusOf(prior) !== 'received' && newStatus === 'received') tl.push({ type: 'auto', text: 'First Communion Received', created_at: nowIso() });
+  payload.timeline = tl;
+  const { error } = await sb.from('sacramental_firstcomm').update(payload).eq('id', id);
+  if (error) { alert('Save failed: ' + error.message); return { ok: false }; }
+  if (linkTarget) await sb.from('sacramental_firstcomm').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
+  logActivity({ action: 'updated First Communion record', entityType: 'firstcomm', entityName: name, contextType: 'firstcomm', contextId: id });
+  await loadFcData();
+  return { ok: true };
+}
+
+// ── Shell config hooks (inline edit form + save/delete/bulk) ─────────────────
+// Inline edit form for the shell detail pane: reuse the exact form markup, but
+// skip the modal-title + modal-actions (the shell renders Save/Cancel/Delete).
+export function buildFcEditForm(p) {
+  _M = newModalState(p, p?.preparation_responsible_id || null);
+  const html = buildModalHtml(p, { inline: true });
+  setTimeout(() => _hydrate(), 0);   // render docs + family chip after mount
+  return html;
+}
+export async function fcSaveEdit(id) {
+  const r = _fcReadPayload();
+  if (!r.ok) { alert('Student name is required.'); return { ok: false }; }
+  return _fcWriteEdit(id, r);
+}
+export async function fcDeleteRec(id) {
+  if (!confirm('Permanently delete this record? This cannot be undone.')) return { ok: false };
+  const { error } = await sb.from('sacramental_firstcomm').delete().eq('id', id);
+  if (error) { alert('Delete failed: ' + error.message); return { ok: false }; }
+  allFc = allFc.filter(x => x.id !== id);
+  logActivity({ action: 'deleted First Communion record', entityType: 'firstcomm', entityName: id, contextType: 'firstcomm' });
+  updateStats();
+  return { ok: true };
+}
+export async function fcBulkStatus(ids, status) {
+  for (const id of ids) {
+    const { error } = await sb.from('sacramental_firstcomm').update({ status_code: status, updated_at: nowIso() }).eq('id', id);
+    if (error) { alert('Bulk update failed: ' + error.message); return { ok: false }; }
+    const p = allFc.find(x => x.id === id); if (p) p.status_code = status;
   }
+  logActivity({ action: 'bulk-updated First Communion status', entityType: 'firstcomm', entityName: `${ids.length} files`, contextType: 'firstcomm' });
+  updateStats();
+  return { ok: true };
 }
 async function fcDeletePerson(id) {
   if (!confirm('Permanently delete this record? This cannot be undone.')) return;
   const { error } = await sb.from('sacramental_firstcomm').delete().eq('id', id);
   if (error) { alert('Delete failed: ' + error.message); return; }
-  fcCloseModal(); await loadFirstComm();
+  fcCloseModal(); await loadFcData(); refreshActivePanel();
 }
 
 // ── Cohort manager (panel = 'firstcomm') ─────────────────────────────────────
@@ -467,7 +418,7 @@ async function fcDeleteCohort(id) {
   if (!confirm('Delete this cohort? Students keep their data but lose the cohort link.')) return;
   const { error } = await sb.from('sacramental_cohorts').delete().eq('id', id);
   if (error) { alert('Delete failed: ' + error.message); return; }
-  await loadCohorts(); _fcOpen(buildCohortHtml()); renderAll();
+  await loadCohorts(); _fcOpen(buildCohortHtml()); refreshActivePanel();
 }
 
 // ── Template ─────────────────────────────────────────────────────────────────
@@ -502,7 +453,7 @@ async function fcTplSave() {
 }
 
 Object.assign(window, {
-  loadFirstComm, expandFirstComm, renderFcList, setFcFilter, fcCohortChange, toggleFc,
+  loadFirstComm, expandFirstComm,
   openFcCreate, openFcEdit, openFcTemplate, fcCloseModal,
   toggleFcDoc, toggleFcPrep, addFcNote,
   fcRespChange, fcCohortPick, fcDobChange, fcChurchChange,

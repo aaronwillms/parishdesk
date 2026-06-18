@@ -28,7 +28,7 @@ export function renderSacramentalPanel(containerEl, config) {
     records: [], selectedId: null, editing: false,
     filter: 'all', search: '',
     bulk: false, selected: new Set(),
-    groupsCollapsed: new Set(),
+    groupsCollapsed: new Set(), groupInit: false,
   };
   containerEl.innerHTML = `<div class="sac-shell" id="sac-shell"></div>`;
   containerEl.querySelector('#sac-shell').addEventListener('click', onShellClick);
@@ -97,27 +97,7 @@ function listPaneHtml() {
   const canManage = cfg.canManage ? cfg.canManage() : true;
   const pills = (cfg.statusFilters || []).map(f =>
     `<button class="cf-btn${s.filter === f.key ? ' active' : ''}" data-act="filter" data-key="${f.key}">${esc(f.label)}</button>`).join('');
-  const recs = visibleRecords();
-
-  let listBody;
-  if (!recs.length) {
-    listBody = `<div style="font-size:13px;color:#6B7280;padding:.5rem;">No records match.</div>`;
-  } else if (cfg.groupBy) {
-    const groups = new Map();
-    recs.forEach(r => { const k = cfg.groupBy(r) ?? '__none'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
-    listBody = [...groups.entries()].map(([k, rows]) => {
-      const collapsed = s.groupsCollapsed.has(k);
-      return `<div class="sac-group">
-        <div class="sac-group-head" data-act="toggle-group" data-key="${esc(k)}">
-          <i class="fa-solid fa-chevron-${collapsed ? 'right' : 'down'}" style="font-size:10px;"></i>
-          ${esc(cfg.groupLabel ? cfg.groupLabel(k) : k)} <span style="color:#9CA3AF;font-weight:400;">(${rows.length})</span>
-        </div>
-        ${collapsed ? '' : rows.map(itemHtml).join('')}
-      </div>`;
-    }).join('');
-  } else {
-    listBody = recs.map(itemHtml).join('');
-  }
+  const listBody = listBodyHtml();
 
   const bulkBar = s.bulk
     ? `<div class="sac-bulkbar">
@@ -142,6 +122,43 @@ function listPaneHtml() {
     </div>
     ${bulkBar}
     <div class="sac-list-scroll">${listBody}</div>`;
+}
+
+// Builds the list body — flat (Baptism) or collapsible cohort groups (First
+// Communion). Used by listPaneHtml AND the live-search re-render so grouping is
+// consistent in both. Additive: the flat path is byte-for-byte the old output.
+function listBodyHtml() {
+  const s = _active, cfg = s.config;
+  const recs = visibleRecords();
+  if (!recs.length) return `<div style="font-size:13px;color:#6B7280;padding:.5rem;">No records match.</div>`;
+  if (!cfg.groupBy) return recs.map(itemHtml).join('');
+
+  // Group, then order keys: "__none" (Unassigned) always last; otherwise by the
+  // config's groupCompare (most-recent first) so the newest cohort leads.
+  const groups = new Map();
+  recs.forEach(r => { const k = cfg.groupBy(r) ?? '__none'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
+  const keys = [...groups.keys()].sort((a, b) => {
+    if (a === '__none') return 1; if (b === '__none') return -1;
+    return cfg.groupCompare ? cfg.groupCompare(a, b) : 0;
+  });
+
+  // Initial collapse (once per mount, UI-only): most-recent expanded, older
+  // collapsed. The user's manual toggles thereafter are respected.
+  if (!s.groupInit) { s.groupsCollapsed = new Set(keys.slice(1)); s.groupInit = true; }
+
+  const searching = !!s.search.trim();   // active search force-expands all groups
+  const label = (k) => k === '__none' ? 'Unassigned' : (cfg.groupLabel ? cfg.groupLabel(k) : k);
+  return keys.map(k => {
+    const rows = groups.get(k);
+    const collapsed = !searching && s.groupsCollapsed.has(k);
+    return `<div class="sac-group">
+      <div class="sac-group-head" data-act="toggle-group" data-key="${esc(k)}">
+        <i class="fa-solid fa-chevron-${collapsed ? 'right' : 'down'}" style="font-size:10px;"></i>
+        ${esc(label(k))} <span style="color:#9CA3AF;font-weight:400;">(${rows.length})</span>
+      </div>
+      ${collapsed ? '' : rows.map(itemHtml).join('')}
+    </div>`;
+  }).join('');
 }
 
 function itemHtml(r) {
@@ -281,11 +298,9 @@ document.addEventListener('input', (e) => {
     _searchT = setTimeout(() => {
       _active.search = v;
       // re-render only the list scroll to keep focus in the search box
+      // (group-aware: search filters across groups and auto-expands matches).
       const scroll = _active.container.querySelector('.sac-list-scroll');
-      if (scroll) {
-        const recs = visibleRecords();
-        scroll.innerHTML = recs.length ? recs.map(itemHtml).join('') : `<div style="font-size:13px;color:#6B7280;padding:.5rem;">No records match.</div>`;
-      }
+      if (scroll) scroll.innerHTML = listBodyHtml();
     }, 150);
   }
 });
