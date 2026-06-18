@@ -194,7 +194,7 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
   }
 
   function personSub(p) {
-    return '';   // placement is HR-derived; no manual institution subtitle
+    return [p.institution].filter(Boolean).join(' Â· ');
   }
 
   function _addChip(person, onRemove) {
@@ -287,6 +287,10 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     showingNewForm = true;
     dropdown.innerHTML = '';
 
+    const instOptions = _institutions.map(n =>
+      `<option value="${n.replace(/"/g, '&quot;')}">${n}</option>`
+    ).join('');
+
     const form = document.createElement('div');
     form.className = 'cp-new-form';
     form.innerHTML = `
@@ -294,7 +298,25 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
       <input id="cp-new-name"  placeholder="Full name *" value="${prefillName.replace(/"/g, '&quot;')}" />
       <div style="font-size:11px;color:#6B7280;margin-bottom:-2px;">Date of Birth (optional)</div>
       <input type="date" id="cp-new-dob" />
-      <div style="font-size:11px;color:#9CA3AF;margin-top:2px;">Organizational placement is set in Human Resources.</div>
+      <select id="cp-new-inst" style="
+        width:100%;box-sizing:border-box;padding:.35rem .55rem;
+        border:.5px solid #D1C9BE;border-radius:var(--radius-sm,5px);
+        font-size:12.5px;font-family:'Inter',sans-serif;
+        background:#fff;color:#1C2B3A;outline:none;
+      ">
+        <option value="volunteer" selected>N/A</option>
+        ${instOptions}
+      </select>
+      <select id="cp-new-employment" style="
+        width:100%;box-sizing:border-box;padding:.35rem .55rem;
+        border:.5px solid #D1C9BE;border-radius:var(--radius-sm,5px);
+        font-size:12.5px;font-family:'Inter',sans-serif;
+        background:#fff;color:#1C2B3A;outline:none;
+      ">
+        <option value="full-time">Full-time</option>
+        <option value="part-time">Part-time</option>
+        <option value="contract">Contract</option>
+      </select>
       <div id="cp-new-error" style="font-size:11px;color:#8B1A2F;min-height:14px;margin-top:2px;"></div>
       <div class="cp-new-form-actions">
         <button type="button" class="cp-btn-save"   id="cp-new-save">Add &amp; select</button>
@@ -308,14 +330,25 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     form.addEventListener('mousedown', e => e.stopPropagation());
     form.addEventListener('click',     e => e.stopPropagation());
 
+    const instSel  = form.querySelector('#cp-new-inst');
+    const empSel   = form.querySelector('#cp-new-employment');
     const saveBtn  = form.querySelector('#cp-new-save');
     const errEl    = form.querySelector('#cp-new-error');
+
+    // Show/hide employment based on institution selection
+    function updateInstVisibility() {
+      const isNa = instSel.value === 'volunteer';
+      empSel.style.display   = isNa ? 'none' : '';
+    }
+    instSel.addEventListener('change', updateInstVisibility);
+    updateInstVisibility();
 
     form.querySelector('#cp-new-name').focus();
 
     saveBtn.addEventListener('click', async e => {
       e.stopPropagation();
       const nameVal  = form.querySelector('#cp-new-name').value.trim();
+      const isVolunteer = instSel.value === 'volunteer';
       const dobVal = form.querySelector('#cp-new-dob').value || null;
 
       if (!nameVal) {
@@ -331,6 +364,9 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
       try {
         const { data, error } = await sb.from('personnel').insert({
           name:        nameVal,
+          type:          isVolunteer ? 'volunteer' : 'staff',
+          employment:    isVolunteer ? null : empSel.value,
+          institution:   isVolunteer ? null : instSel.value,
           date_of_birth: dobVal,
           active:        true,
         }).select().single();
@@ -377,7 +413,7 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     } else {
       // Fallback: query Supabase directly
       sb.from('personnel')
-        .select('id,name')
+        .select('id,name,institution')
         .ilike('name', `%${q}%`)
         .eq('active', true)
         .limit(8)
@@ -413,7 +449,7 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     if (existing) {
       select(existing);
     } else {
-      sb.from('personnel').select('id,name').eq('id', initialValue).single()
+      sb.from('personnel').select('id,name,institution').eq('id', initialValue).single()
         .then(({ data }) => { if (data) select(data); });
     }
   }

@@ -25,25 +25,10 @@ export async function logActivity({ action, entityType, entityName, contextType 
 // With an institution name, returns that institution's collapsed title; without
 // one, joins all current titles. Empty string when the person holds no position.
 export function personTitle(personId, institutionName = null) {
-  const entries = (store.personDirectory || {})[personId] || [];
-  if (!entries.length) return '';
-  if (institutionName) return entries.find(e => e.institution_name === institutionName)?.title || '';
-  return entries.map(e => e.title).filter(Boolean).join(' · ');
-}
-
-// ── HR-derived directory placement (single source of truth) ─────────────────
-// store.personPlacement[id] = { isClergy, hasPosition, derivedType } (person_placement view)
-// store.personDirectory[id] = [{ institution_id, institution_name, title, entry_is_clergy, employment_heading }] (person_directory view)
-// Both are loaded by loadPersonnel(). These replace the retired manual
-// personnel.institution / personnel.type / personnel.employment columns.
-export function isPersonClergy(personId) {
-  return !!(store.personPlacement || {})[personId]?.isClergy;
-}
-export function personDerivedType(personId) {
-  return (store.personPlacement || {})[personId]?.derivedType || 'volunteer';
-}
-export function personEntries(personId) {
-  return (store.personDirectory || {})[personId] || [];
+  const m = (store.personTitles || {})[personId];
+  if (!m) return '';
+  if (institutionName) return m.byInstitution[institutionName] || '';
+  return (m.all || []).join(' · ');
 }
 
 export function todayCST() {

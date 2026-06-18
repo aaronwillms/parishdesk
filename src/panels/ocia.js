@@ -1,6 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, formatDateDisplay, todayCST, logActivity, isPersonClergy } from '../utils.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity } from '../utils.js';
 import { expandCase } from './annulments.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
@@ -26,7 +26,7 @@ function fullAccess() { return isAdmin() || canAccessSacrament('ocia'); }
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function _curUserName() { return store.currentUserProfile?.personnel?.name || 'Staff'; }
 function nowIso() { return new Date().toISOString(); }
-function clergyPersonnel() { return (store.personnel || []).filter(p => isPersonClergy(p.id)).sort((a, b) => (a.name || '').localeCompare(b.name || '')); }
+function clergyPersonnel() { return (store.personnel || []).filter(p => CLERGY_TYPES.includes(p.type) || (p.title && CLERGY_TITLE_RE.test(p.title))).sort((a, b) => (a.name || '').localeCompare(b.name || '')); }
 
 // Easter (Anonymous Gregorian algorithm)
 function easterDate(year) {
