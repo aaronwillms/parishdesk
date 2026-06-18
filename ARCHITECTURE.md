@@ -89,11 +89,35 @@ is never a back-door to cohort creation.
 
 `officiant` is a per-record field for **Baptism and Marriage only** (the minister
 who performs the rite). The **initiation panels (First Communion, and
-Confirmation later) are preparer-only** — no officiant field. The **preparer**
-dropdown is a shared, reusable helper (`src/sacramental/preparerField.js`):
-options are institution clergy (`getInstitutionClergy`) + the panel's sacramental
-coordinator(s) + an "Other…" free entry; the chosen display name is stored on the
-record and shown in the read view. Each panel supplies its own coordinator source.
+Confirmation later) are preparer-only** — no officiant field. Two shared,
+reusable dropdown helpers back these:
+
+- **Officiant** (`src/sacramental/officiantField.js`): clergy + "Other…" free
+  entry. Built for Marriage; Baptism reuses it later.
+- **Preparer** (`src/sacramental/preparerField.js`): clergy + the panel's
+  sacramental coordinator(s) + "Other…". Each panel supplies its coordinator
+  source (Marriage passes the marriage coordinator).
+
+Both store the chosen **display-name string** and show it in the read view. Their
+clergy roster comes from the shared `clergyNames()` helper, which sources
+`personnel.clergy` **parish-wide** (a person-level boolean) — institution
+membership is HR-derived since Move 2 and no longer on `personnel`, so the
+previous per-institution `getInstitutionClergy()` scoping was retired from these
+helpers.
+
+### Marriage — couple-keyed subject + wedding-date sort
+
+Marriage is the **first couple-keyed panel** (the subject is a couple, not one
+person) and the first to use the officiant dropdown. `marriageConfig.js`:
+`listItem`/`detailHeader` title = "Groom & Bride" (full names); the detail avatar
+shows a two-person pair (e.g. "AW·JD"). It is a **flat list** (`groupBy: null`)
+**sorted by wedding date, upcoming-first**: files with **no date set** (active
+early-stage prep) sort at the very top, then **upcoming soonest→latest**, then
+**past most-recent→oldest**, then archived/inactive last. New `couples.officiant`
+and `couples.preparer` text columns back the two dropdowns (migration paused); the
+new officiant field replaced the legacy inline select and is seeded from the
+legacy `officiant_id`/`officiant_override`, which (with `officiant_override`)
+become dead columns for a later cleanup.
 
 ### Config schema (the contract a panel implements)
 

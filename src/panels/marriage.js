@@ -6,7 +6,7 @@ import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
-import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
+import { buildPreparerField, readPreparerValue, clergyNames } from '../sacramental/preparerField.js';
 import { buildOfficiantField, readOfficiantValue, officiantIsOther } from '../sacramental/officiantField.js';
 
 export const COUPLE_STATUS = {
@@ -111,22 +111,55 @@ async function loadTemplates() {
   Object.keys(FALLBACK_TEMPLATES).forEach(k => { if (!_templates[k]) _templates[k] = JSON.parse(JSON.stringify(FALLBACK_TEMPLATES[k])); });
 }
 
-export async function loadCouples() {
-  await loadTemplates();
+async function loadMarriageCoordinator() {
+  try {
+    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'marriage').maybeSingle();
+    _marCoordinatorNames = (data?.coordinator_ids || []).map(pid => (store.personnel || []).find(p => p.id === pid)?.name).filter(Boolean);
+  } catch (_) { _marCoordinatorNames = []; }
+}
+
+// Data-only refresh (used by the shell + autosave). Returns the record list.
+export async function loadCouplesData() {
+  await Promise.all([loadTemplates(), loadMarriageCoordinator()]);
   const { data, error } = await sb.from('couples').select('*');
-  if (error) { console.error('[marriage]', error); return; }
-  // Marriages sort alphabetically by the groom's (spouse 1) last name.
-  const groomLast = (c) => (c.spouse1_last || String(c.groom || '').trim().split(/\s+/).pop() || '').toLowerCase();
-  const byGroom = (a, b) => groomLast(a).localeCompare(groomLast(b));
-  const active = (data || []).filter(c => !c.archived).sort(byGroom);
-  const archived = (data || []).filter(c => c.archived).sort(byGroom);
-  allCouples = [...active, ...archived];
+  if (error) { console.error('[marriage]', error); return []; }
+  allCouples = data || [];
   store.allCouples = allCouples;
-  const gear = document.getElementById('marriage-gear');
-  if (gear) gear.style.display = isSacramentCoordinator('marriage') ? '' : 'none';
   updateCoupleStats();
   renderMarriageAlerts();
-  renderCouples();
+  return allCouples;
+}
+
+// Nav loader — fetch then mount the master-detail shell into #couples-list.
+export async function loadCouples() {
+  await loadCouplesData();
+  const gear = document.getElementById('marriage-gear');
+  if (gear) gear.style.display = isSacramentCoordinator('marriage') ? '' : 'none';
+  const root = document.getElementById('couples-list');
+  if (!root) return;
+  const { marriageConfig } = await import('../sacramental/marriageConfig.js');
+  renderSacramentalPanel(root, marriageConfig);
+}
+
+// ── Shell accessors (consumed by marriageConfig) ─────────────────────────────
+export function getCouples() { return allCouples; }
+export function getCouple(id) { return allCouples.find(x => x.id === id) || null; }
+export { fullAccess as marCanManage };
+export { MTYPE_BADGE, marType, coupleLabel, s1Name, s2Name, normDocs, normSteps, normFees, notesOf, progressOf, feeTotals };
+export function weddingDateOf(c) { return c?.wedding_date || null; }
+export function officiantOf(c) {
+  if (c?.officiant) return c.officiant;                                  // new shared-helper value
+  if (c?.officiant_id) return (store.personnel || []).find(p => p.id === c.officiant_id)?.name || '';  // legacy FK
+  return c?.officiant_override || '';                                    // legacy free-text
+}
+export function preparerOf(c) {
+  if (c?.preparer) return c.preparer;
+  if (c?.preparation_responsible_id) return (store.personnel || []).find(p => p.id === c.preparation_responsible_id)?.name || '';
+  return c?.preparation_responsible_override || '';
+}
+export function weddingChurch(c) {
+  if (c?.wedding_institution_id) return (store.institutions || []).find(i => i.id === c.wedding_institution_id)?.name || '';
+  return c?.wedding_church_override || '';
 }
 
 function updateCoupleStats() {
@@ -158,150 +191,10 @@ function renderMarriageAlerts() {
   </div>`;
 }
 
-function setCoupleFilter(f, el) {
-  coupleFilter = f;
-  document.querySelectorAll('#panel-marriage .cf-btn').forEach(b => b.classList.remove('active'));
-  el?.classList.add('active');
-  renderCouples();
-}
-
-function renderCouples() {
-  const q = (document.getElementById('couple-search')?.value || '').toLowerCase();
-  const items = allCouples.filter(c => {
-    const mf = coupleFilter === 'all' ? true
-      : coupleFilter === 'active' ? !c.archived
-      : coupleFilter === 'inprogress' ? c.status_code === 'inprogress' && !c.archived
-      : coupleFilter === 'complete' ? c.status_code === 'complete' && !c.archived
-      : coupleFilter === 'external' ? (c.is_external || c.status_code === 'external')
-      : coupleFilter === 'archived' ? c.archived : true;
-    return mf && (!q || coupleLabel(c).toLowerCase().includes(q) || (c.groom || '').toLowerCase().includes(q) || (c.bride || '').toLowerCase().includes(q));
-  });
-  const el = document.getElementById('couples-list'); if (!el) return;
-  if (!items.length) { el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No couples match.</div>'; return; }
-  const active = items.filter(c => !c.archived);
-  const archived = items.filter(c => c.archived);
-  let html = active.map(renderCoupleCard).join('');
-  if (archived.length) {
-    html += `<div style="display:flex;align-items:center;gap:10px;margin:18px 0 10px;"><div style="flex:1;height:.5px;background:var(--stone);"></div><span style="font-size:11px;color:#6B7280;letter-spacing:.07em;text-transform:uppercase;font-weight:500;">Archived</span><div style="flex:1;height:.5px;background:var(--stone);"></div></div>`;
-    html += archived.map(renderCoupleCard).join('');
-  }
-  el.innerHTML = html;
-}
-
-// ── Card ─────────────────────────────────────────────────────────────────────
-function renderCoupleCard(c) {
-  const sm = COUPLE_STATUS[c.status_code] || COUPLE_STATUS.inprogress;
-  const days = daysUntil(c.wedding_date);
-  const exp = expandedCoupleId === c.id;
-  const ft = feeTotals(c);
-  const deleg = hasDelegationFlag(c);
-  const dateUrgent = days !== null && days >= 0 && days <= 7;
-  const dayStr = days === null ? '' : (days === 0 ? ' · Today!' : days === 1 ? ' · Tomorrow!' : days >= 0 ? ` · ${days} days` : '');
-
-  let h = `<div class="couple-card${dateUrgent || deleg ? ' urgent' : ''}" id="couple-card-${c.id}" style="border-left:4px solid ${deleg ? '#922B21' : sm.dot};">
-    <div class="couple-header" onclick="toggleCouple('${c.id}')">
-      <div style="flex:1;min-width:0;">
-        <div class="couple-name">${_esc(coupleLabel(c))}</div>
-        <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center;">
-          <span style="background:${sm.bg};color:${sm.color};border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;letter-spacing:.04em;display:inline-flex;align-items:center;gap:5px;border:1px solid ${sm.color}33;"><span style="width:7px;height:7px;border-radius:50%;background:${sm.dot};display:inline-block;"></span>${sm.label}</span>
-          <span style="font-size:11px;color:#5B4636;background:#F3ECE0;border-radius:20px;padding:2px 8px;">⛪ ${MTYPE_BADGE[marType(c)]}</span>
-          ${c.wedding_date ? `<span style="font-size:11px;color:${dateUrgent ? '#C0392B' : '#777'};background:${dateUrgent ? '#FDEDEC' : '#EFEFEF'};border-radius:20px;padding:2px 8px;font-weight:${dateUrgent ? 700 : 400};">${dateUrgent ? '⚠️ ' : ''}${formatDateDisplay(c.wedding_date)}${c.wedding_time ? ' · ' + c.wedding_time : ''}${dayStr}</span>` : ''}
-          ${ft ? `<span style="font-size:11px;color:#5B4636;background:#FEF9E7;border-radius:20px;padding:2px 8px;">💰 $${ft.total} / $${ft.paid} paid</span>` : (c.fee ? `<span style="font-size:11px;color:#5B4636;background:#FEF9E7;border-radius:20px;padding:2px 8px;">💰 ${_esc(c.fee)}</span>` : '')}
-          ${deleg ? `<span style="font-size:11px;color:#922B21;background:#FCEBEB;border-radius:20px;padding:2px 8px;font-weight:600;">⚠️ Send Letter of Delegation</span>` : ''}
-        </div>
-      </div>
-      <span style="font-size:16px;color:#B0A090;margin-top:2px;">${exp ? '▲' : '▼'}</span>
-    </div>`;
-
-  if (exp) h += renderCoupleBody(c);
-  h += `</div>`;
-  return h;
-}
-
-function renderCoupleBody(c) {
-  const docs = normDocs(c), steps = normSteps(c), fees = normFees(c);
-  const pct = progressOf(c);
-  let h = `<div class="couple-body">`;
-
-  if (pct !== null) {
-    h += `<div style="margin-top:10px;"><div class="prog-bar-wrap" style="background:#1C2B3A;"><div class="prog-bar-fill" style="width:${pct}%;background:var(--gold);"></div></div>
-      <div style="font-size:11px;color:#888;margin-top:3px;">${pct}% complete</div></div>`;
-  }
-
-  // Contact — two labeled sections (spouse 1 = groom fields, spouse 2 = bride fields)
-  const groomLabel = (s1Name(c) || c.groom || 'Groom');
-  const brideLabel = (s2Name(c) || c.bride || 'Bride');
-  const contactBlock = (label, phone, email) => {
-    if (!phone && !email) return '';
-    return `<div style="font-size:11px;color:#AAA;text-transform:uppercase;letter-spacing:.05em;margin:6px 0 4px;">${_esc(label)}</div>`
-      + (phone ? `<a href="tel:${normalizePhone(phone)}" class="contact-chip">📞 ${_esc(formatPhone(phone))}</a>` : '')
-      + (email ? `<a href="mailto:${email}" class="contact-chip">✉️ ${_esc(email)}</a>` : '');
-  };
-  if (c.groom_phone || c.groom_email || c.bride_phone || c.bride_email) {
-    h += `<div class="couple-section-label">Contact</div>`;
-    h += contactBlock(groomLabel, c.groom_phone, c.groom_email);
-    h += contactBlock(brideLabel, c.bride_phone, c.bride_email);
-  }
-
-  // Documents (skip for external)
-  if (!c.is_external && docs.length) {
-    h += `<div class="couple-section-label" style="margin-top:12px;">Document checklist</div>`;
-    h += docs.map((d, i) => `<div class="doc-item" style="padding:4px 6px;display:flex;align-items:center;gap:8px;">
-      <span style="font-size:15px;cursor:pointer;" onclick="toggleCoupleDoc('${c.id}',${i})">${d.received ? '✅' : '⬜'}</span>
-      <span style="flex:1;color:${d.received ? '#2D6A4F' : 'var(--navy)'};cursor:pointer;" onclick="toggleCoupleDoc('${c.id}',${i})">${_esc(d.name)}</span>
-      ${!d.deletable ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : ''}
-    </div>`).join('');
-  }
-
-  // Steps (skip for external)
-  if (!c.is_external && steps.length) {
-    h += `<div class="couple-section-label" style="margin-top:12px;">Steps of Preparation</div>`;
-    h += steps.map((s, i) => `<div class="doc-item" style="padding:4px 6px;display:flex;align-items:center;gap:8px;">
-      <span style="font-size:15px;cursor:pointer;" onclick="toggleCoupleStep('${c.id}',${i})">${s.completed ? '✅' : '⬜'}</span>
-      <span style="flex:1;color:${s.completed ? '#2D6A4F' : 'var(--navy)'};cursor:pointer;" onclick="toggleCoupleStep('${c.id}',${i})">${_esc(s.step)}</span>
-      ${s.completed && s.completed_date ? `<span style="font-size:11px;color:#9CA3AF;">${fmtDate(String(s.completed_date).slice(0, 10))}${s.completed_by ? ' · ' + _esc(s.completed_by) : ''}</span>` : ''}
-    </div>`).join('');
-  }
-
-  // Fees
-  if (fees.length) {
-    const ft = feeTotals(c);
-    h += `<div class="couple-section-label" style="margin-top:12px;">Fees <span style="font-weight:400;color:#888;">($${ft.total} total / $${ft.paid} paid)</span></div>`;
-    h += fees.map((f, i) => `<div class="doc-item" style="padding:4px 6px;display:flex;align-items:center;gap:8px;">
-      <span style="font-size:15px;cursor:pointer;" onclick="toggleCoupleFee('${c.id}',${i})">${f.paid ? '✅' : '⬜'}</span>
-      <span style="flex:1;color:var(--navy);cursor:pointer;" onclick="toggleCoupleFee('${c.id}',${i})">${_esc(f.name)}</span>
-      <span style="font-size:12px;color:#5B4636;">$${Number(f.amount) || 0}</span>
-    </div>`).join('');
-  }
-
-  // Notes (notes_log + legacy fallback)
-  const notes = notesOf(c);
-  h += `<div class="couple-section-label" style="margin-top:12px;">Notes</div>
-    <div style="display:flex;gap:6px;margin-bottom:8px;">
-      <input type="text" id="cn-${c.id}" placeholder="Add a note…" style="flex:1;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" onkeydown="if(event.key==='Enter'){event.preventDefault();addCoupleNoteLog('${c.id}');}" />
-      <button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="addCoupleNoteLog('${c.id}')">Add</button>
-    </div>`;
-  if (notes.length) {
-    h += notes.map(n => `<div style="font-size:13px;color:#555;margin-bottom:6px;padding:8px 12px;background:#FFF8EE;border-left:3px solid var(--gold);border-radius:3px;">
-      <div style="white-space:pre-wrap;">${_esc(n.note)}</div>
-      ${(n.by || n.created_at) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${n.created_at ? fmtDate(String(n.created_at).slice(0, 10)) : ''}${n.by ? ' · ' + _esc(n.by) : ''}</div>` : ''}
-    </div>`).join('');
-  } else {
-    h += `<div style="font-size:13px;color:#9CA3AF;font-style:italic;padding:.25rem 0;">No notes yet.</div>`;
-  }
-
-  h += `<div style="margin-top:12px;text-align:right;"><button class="anl-icon-btn" title="Edit" onclick="openCoupleEdit('${c.id}')"><i class="fa-solid fa-pencil"></i></button></div>`;
-  h += `</div>`;
-  return h;
-}
-
-function toggleCouple(id) { expandedCoupleId = expandedCoupleId === id ? null : id; renderCouples(); }
-
+// Cross-link entry — open a specific marriage file in the shell (deep-link).
 export async function expandCouple(id) {
-  expandedCoupleId = id;
+  openSacramentalRecord('marriage', id);   // set hash first so the shell opens it on mount
   window.switchPanel('marriage');
-  await loadCouples();
-  document.getElementById('couple-card-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ── Autosave (live card) ─────────────────────────────────────────────────────
@@ -315,7 +208,7 @@ async function _patch(coupleId, patch) {
 async function toggleCoupleDoc(coupleId, i) {
   const c = allCouples.find(x => x.id === coupleId); if (!c) return;
   const docs = normDocs(c); docs[i].received = !docs[i].received;
-  if (await _patch(coupleId, { documents: docs })) renderCouples();
+  if (await _patch(coupleId, { documents: docs })) refreshActivePanel();
 }
 async function toggleCoupleStep(coupleId, i) {
   const c = allCouples.find(x => x.id === coupleId); if (!c) return;
@@ -324,14 +217,14 @@ async function toggleCoupleStep(coupleId, i) {
   steps[i].completed = done;
   steps[i].completed_date = done ? nowIso() : null;
   steps[i].completed_by = done ? _curUserName() : null;
-  if (await _patch(coupleId, { steps })) renderCouples();
+  if (await _patch(coupleId, { steps })) refreshActivePanel();
 }
 async function toggleCoupleFee(coupleId, i) {
   const c = allCouples.find(x => x.id === coupleId); if (!c) return;
   const fees = JSON.parse(JSON.stringify(normFees(c)));
   fees[i].paid = !fees[i].paid;
   fees[i].paid_date = fees[i].paid ? nowIso() : null;
-  if (await _patch(coupleId, { fees })) renderCouples();
+  if (await _patch(coupleId, { fees })) refreshActivePanel();
 }
 async function addCoupleNoteLog(coupleId) {
   const inp = document.getElementById('cn-' + coupleId); const note = (inp?.value || '').trim();
@@ -339,7 +232,7 @@ async function addCoupleNoteLog(coupleId) {
   const c = allCouples.find(x => x.id === coupleId); if (!c) return;
   const log = Array.isArray(c.notes_log) ? JSON.parse(JSON.stringify(c.notes_log)) : [];
   log.push({ note, by: _curUserName(), created_at: nowIso() });
-  if (await _patch(coupleId, { notes_log: log })) renderCouples();
+  if (await _patch(coupleId, { notes_log: log })) refreshActivePanel();
 }
 
 // ── Big modal scaffolding (own overlay) ──────────────────────────────────────
@@ -410,13 +303,13 @@ function spouseState(c, n) {
 function _ociaLabel(id) { const r = (store.allOcia || []).find(x => x.id === id); return r ? (r.name || 'OCIA record') : 'OCIA record'; }
 function _caseLabel(id) { const r = (store.allCases || []).find(x => x.id === id); return r ? `${r.petitioner || ''}${r.respondent ? ' v. ' + r.respondent : ''}` : 'Annulment case'; }
 
-function buildCoupleModalHtml(c) {
+function buildCoupleModalHtml(c, opts = {}) {
+  const inline = !!opts.inline;
   const isEdit = _M.isEdit;
   const respOpts = clergyPersonnel().map(p => `<option value="${p.id}"${_M.respId === p.id ? ' selected' : ''}>${_esc(p.name)}</option>`).join('');
-  const offOpts = clergyPersonnel().map(p => `<option value="${p.id}"${c?.officiant_id === p.id ? ' selected' : ''}>${_esc(p.name)}</option>`).join('');
   const instOpts = (store.institutions || []).map(inst => `<option value="${inst.id}"${c?.wedding_institution_id === inst.id ? ' selected' : ''}>${_esc(inst.name)}</option>`).join('');
 
-  let h = `<div class="modal-title">${isEdit ? 'Edit Marriage File' : 'New Marriage File'}</div>`;
+  let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Marriage File' : 'New Marriage File'}</div>`;
 
   // Section 1 — Person responsible + External
   h += _sectionHead('Person Responsible');
@@ -425,6 +318,11 @@ function buildCoupleModalHtml(c) {
       <option value="">— Select —</option>${respOpts}<option value="__other"${_M.respOther ? ' selected' : ''}>Other…</option>
     </select>
     <div id="mf-resp-other-wrap" style="display:${_M.respOther ? 'block' : 'none'};">${_input('mf-resp-other', 'Name', c?.preparation_responsible_override || '')}</div>`;
+
+  // Section 1b — Preparer (clergy-aware: institution clergy + marriage coordinator + Other)
+  h += _sectionHead('Preparer');
+  h += buildPreparerField('mf-preparer', c?.preparer || '', { coordinatorNames: _marCoordinatorNames });
+
   h += _toggle('mf-external', 'External (preparation handled elsewhere)', _M.external, 'marOnExternalToggle()');
 
   // Section 2 — Marriage type (kept for external — type still matters for record keeping)
@@ -452,14 +350,14 @@ function buildCoupleModalHtml(c) {
     </select>
     <div id="mf-inst-other-wrap" style="display:${_M.instMode === 'other' ? 'block' : 'none'};">${_input('mf-church-override', 'Church name', c?.wedding_church_override || '')}</div>
     ${_row(_input('mf-wcity', 'City', c?.wedding_city || ''), _stateSelect('mf-wstate', c?.wedding_state || ''))}`;
-  h += `<label style="margin-top:.75rem;">Officiant</label>
-    <select id="mf-officiant" onchange="marOnOfficiantChange(this.value)">
-      <option value="">— Select —</option>${offOpts}<option value="__other"${_M.officiantOther ? ' selected' : ''}>Other…</option>
-    </select>
-    <div id="mf-officiant-other-wrap" style="display:${_M.officiantOther ? 'block' : 'none'};">
-      ${_input('mf-officiant-override', 'Officiant name', c?.officiant_override || '')}
-      ${_toggle('mf-delegation', 'Delegation Given?', !!c?.delegation_given)}
-    </div>`;
+  // Officiant — shared clergy dropdown (institution clergy + Other). Seeded from
+  // the new column or the legacy officiant_id/_override so saved values persist.
+  const offValue = officiantOf(c);
+  const offIsOther = !!offValue && !clergyNames().includes(offValue);
+  h += `<div style="margin-top:.75rem;">`;
+  h += buildOfficiantField('mf-officiant', offValue, { onOtherChange: 'marOnOfficiantOtherToggle()' });
+  h += `<div id="mf-delegation-wrap" style="display:${offIsOther ? 'block' : 'none'};">${_toggle('mf-delegation', 'Delegation Given?', !!c?.delegation_given)}</div>`;
+  h += `</div>`;
   h += `</div>`;
 
   // Section 6 — Documents (hidden if external)
@@ -489,10 +387,12 @@ function buildCoupleModalHtml(c) {
     h += _toggle('mf-archive', 'Archive this file', !!c?.archived);
   }
 
-  h += `<div class="modal-actions" style="justify-content:space-between;">
-    ${isEdit ? `<button class="btn-delete" onclick="marDeleteCouple('${_M.id}')">Delete</button>` : '<span></span>'}
-    <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="marCloseModal()">Cancel</button><button class="btn-primary" onclick="marSaveCouple()">${isEdit ? 'Save' : 'Create File'}</button></div>
-  </div>`;
+  if (!inline) {
+    h += `<div class="modal-actions" style="justify-content:space-between;">
+      ${isEdit ? `<button class="btn-delete" onclick="marDeleteCouple('${_M.id}')">Delete</button>` : '<span></span>'}
+      <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="marCloseModal()">Cancel</button><button class="btn-primary" onclick="marSaveCouple()">${isEdit ? 'Save' : 'Create File'}</button></div>
+    </div>`;
+  }
   return h;
 }
 
@@ -655,7 +555,8 @@ function parseCityState(addr) {
   const state = US_STATES.includes(stateZip[0]) ? stateZip[0] : '';
   return { city, state };
 }
-function marOnOfficiantChange(v) { _M.officiantOther = v === '__other'; document.getElementById('mf-officiant-other-wrap').style.display = _M.officiantOther ? 'block' : 'none'; }
+// Show the Delegation toggle only when the officiant is a free-text "Other".
+function marOnOfficiantOtherToggle() { const w = document.getElementById('mf-delegation-wrap'); if (w) w.style.display = officiantIsOther('mf-officiant') ? 'block' : 'none'; }
 
 function marSpouseToggle(n) {
   const p = n === 1 ? 's1' : 's2';
@@ -736,11 +637,11 @@ function marFeePaid(i, v) { _M.fees[i].paid = v; _M.fees[i].paid_date = v ? nowI
 function _v(id) { const e = document.getElementById(id); return e ? e.value.trim() : ''; }
 function _chk(id) { return !!document.getElementById(id)?.checked; }
 
-async function marSaveCouple() {
+// Shared DOM→payload reader, used by the create modal AND the shell inline edit.
+function _marReadPayload() {
   _syncPriorFromDom(1); _syncPriorFromDom(2);
   const external = _M.external;
   const respSel = _v('mf-resp') || document.getElementById('mf-resp')?.value || '';
-  const offSel = document.getElementById('mf-officiant')?.value || '';
   const instSel = document.getElementById('mf-inst')?.value || '';
   const s1first = _v('mf-s1-first'), s1last = _v('mf-s1-last'), s2first = _v('mf-s2-first'), s2last = _v('mf-s2-last');
 
@@ -778,9 +679,10 @@ async function marSaveCouple() {
     wedding_church_override: instSel === '__other' ? (_v('mf-church-override') || null) : null,
     wedding_city: _v('mf-wcity') || null,
     wedding_state: _v('mf-wstate') || null,
-    officiant_id: (offSel && offSel !== '__other') ? offSel : null,
-    officiant_override: offSel === '__other' ? (_v('mf-officiant-override') || null) : null,
-    delegation_given: offSel === '__other' ? _chk('mf-delegation') : false,
+    // Officiant + preparer via the shared clergy helpers (name strings).
+    officiant: readOfficiantValue('mf-officiant'),
+    delegation_given: officiantIsOther('mf-officiant') ? _chk('mf-delegation') : false,
+    preparer: readPreparerValue('mf-preparer'),
     documents: finalDocs,
     steps: external ? [] : _M.steps,
     fees: _M.fees,
@@ -789,30 +691,70 @@ async function marSaveCouple() {
     bride: `${s2first} ${s2last}`.trim() || (prior?.bride || null),
     updated_at: nowIso(),
   };
-  if (!payload.groom && !payload.bride) { alert('At least one spouse name is required.'); return; }
+  return { ok: !!(payload.groom || payload.bride), payload, external, prior };
+}
 
-  if (_M.isEdit) {
-    payload.status_code = external ? 'external' : (document.getElementById('mf-status')?.value || prior?.status_code || 'inprogress');
-    payload.archived = _chk('mf-archive');
-    const { error } = await sb.from('couples').update(payload).eq('id', _M.id);
-    if (error) { reportWriteError('couples update', error); return; }
-    logActivity({ action: 'updated marriage prep record', entityType: 'marriage', entityName: `${payload.groom} & ${payload.bride}`, contextType: 'couple', contextId: _M.id });
-    marCloseModal(); await loadCouples();
-  } else {
-    payload.status_code = external ? 'external' : 'inprogress';
-    payload.archived = false;
-    const { error } = await sb.from('couples').insert(payload);
-    if (error) { reportWriteError('couples insert', error); return; }
-    logActivity({ action: 'created marriage prep record', entityType: 'marriage', entityName: `${payload.groom} & ${payload.bride}`, contextType: 'couple' });
-    marCloseModal(); await loadCouples();
+// Shared edit writer (status/archive) used by the modal + the shell.
+async function _marWriteEdit(id) {
+  const r = _marReadPayload();
+  if (!r.ok) { alert('At least one spouse name is required.'); return { ok: false }; }
+  const { payload, external, prior } = r;
+  payload.status_code = external ? 'external' : (document.getElementById('mf-status')?.value || prior?.status_code || 'inprogress');
+  payload.archived = _chk('mf-archive');
+  const { error } = await sb.from('couples').update(payload).eq('id', id);
+  if (error) { reportWriteError('couples update', error); return { ok: false }; }
+  logActivity({ action: 'updated marriage prep record', entityType: 'marriage', entityName: `${payload.groom} & ${payload.bride}`, contextType: 'couple', contextId: id });
+  await loadCouplesData();
+  return { ok: true };
+}
+
+// Create modal save.
+async function marSaveCouple() {
+  const r = _marReadPayload();
+  if (!r.ok) { alert('At least one spouse name is required.'); return; }
+  if (_M.isEdit) { const res = await _marWriteEdit(_M.id); if (res.ok) { marCloseModal(); refreshActivePanel(); } return; }
+  const { payload, external } = r;
+  payload.status_code = external ? 'external' : 'inprogress';
+  payload.archived = false;
+  const { error } = await sb.from('couples').insert(payload);
+  if (error) { reportWriteError('couples insert', error); return; }
+  logActivity({ action: 'created marriage prep record', entityType: 'marriage', entityName: `${payload.groom} & ${payload.bride}`, contextType: 'couple' });
+  marCloseModal(); await loadCouplesData(); refreshActivePanel();
+}
+
+// ── Shell config hooks (inline edit form + save/delete/bulk) ─────────────────
+export function buildMarEditForm(c) {
+  _M = newModalState(c, marType(c), c?.preparation_responsible_id || null);
+  const html = buildCoupleModalHtml(c, { inline: true });
+  setTimeout(() => _hydrateModal(), 0);
+  return html;
+}
+export async function marSaveEdit(id) { return _marWriteEdit(id); }
+export async function marDeleteRec(id) {
+  if (!confirm('Permanently delete this file? This cannot be undone.')) return { ok: false };
+  const { error } = await sb.from('couples').delete().eq('id', id);
+  if (error) { reportWriteError('couples delete', error); return { ok: false }; }
+  allCouples = allCouples.filter(x => x.id !== id);
+  logActivity({ action: 'deleted marriage prep record', entityType: 'marriage', entityName: id, contextType: 'couple' });
+  updateCoupleStats();
+  return { ok: true };
+}
+export async function marBulkStatus(ids, status) {
+  for (const id of ids) {
+    const { error } = await sb.from('couples').update({ status_code: status, updated_at: nowIso() }).eq('id', id);
+    if (error) { reportWriteError('couples bulk', error); return { ok: false }; }
+    const c = allCouples.find(x => x.id === id); if (c) c.status_code = status;
   }
+  logActivity({ action: 'bulk-updated marriage status', entityType: 'marriage', entityName: `${ids.length} files`, contextType: 'couple' });
+  updateCoupleStats();
+  return { ok: true };
 }
 
 async function marDeleteCouple(id) {
   if (!confirm('Permanently delete this file? This cannot be undone.')) return;
   const { error } = await sb.from('couples').delete().eq('id', id);
   if (error) { alert('Delete failed: ' + error.message); return; }
-  marCloseModal(); await loadCouples();
+  marCloseModal(); await loadCouplesData(); refreshActivePanel();
 }
 
 // ── Template settings ────────────────────────────────────────────────────────
@@ -870,10 +812,10 @@ async function marTplSave() {
 }
 
 Object.assign(window, {
-  renderCouples, setCoupleFilter, toggleCouple, openCoupleAdd, openCoupleEdit,
+  openCoupleAdd, openCoupleEdit,
   toggleCoupleDoc, toggleCoupleStep, toggleCoupleFee, addCoupleNoteLog,
   marCloseModal, marSaveCouple, marDeleteCouple,
-  marOnRespChange, marOnExternalToggle, marOnTypeChange, marOnNonChurchToggle, marOnInstitutionChange, marOnOfficiantChange,
+  marOnRespChange, marOnExternalToggle, marOnTypeChange, marOnNonChurchToggle, marOnInstitutionChange, marOnOfficiantOtherToggle,
   marSpouseToggle, marPriorToggle, marAddPrior, marRemovePrior, marPriorEndedChange,
   marOciaSearch, marRemoveOcia, marAnnulSearch, marRemoveAnnul,
   marDocReceived, marRemoveDoc, marAddDoc, marAddStep, marRemoveStep, marStepDragStart, marStepDrop, marAddFee, marRemoveFee, marFeePaid,

@@ -1,0 +1,178 @@
+// ── Marriage config for the sacramental master-detail shell ─────────────────
+// First COUPLE-KEYED panel (subject is a couple, not one person) and the first
+// to use the shared OFFICIANT dropdown. Flat list sorted by wedding date,
+// upcoming-first. Reuses the existing Marriage queries / four-type / status /
+// edit-form / save logic from panels/marriage.js — nothing reimplemented here.
+
+import { fmtDate, formatDateDisplay } from '../utils.js';
+import { formatPhone } from '../utils/phone.js';
+import { todayCST } from '../utils.js';
+import {
+  getCouples, getCouple, marCanManage, COUPLE_STATUS, MTYPE_BADGE,
+  marType, coupleLabel, s1Name, s2Name, normDocs, normSteps, normFees, notesOf,
+  progressOf, feeTotals, weddingDateOf, officiantOf, preparerOf, weddingChurch,
+  buildMarEditForm, marSaveEdit, marDeleteRec, marBulkStatus,
+} from '../panels/marriage.js';
+
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+const STATUS_TONE = { inprogress: 'active', complete: 'complete', external: 'neutral', inactive: 'neutral' };
+function statusKey(c) { return c.archived ? 'inactive' : (c.status_code || 'inprogress'); }
+function statusChip(c) { const k = statusKey(c); return { label: (COUPLE_STATUS[k] || {}).label || k, tone: STATUS_TONE[k] || 'neutral' }; }
+function typeChip(c) { return { label: MTYPE_BADGE[marType(c)] || 'Marriage', tone: 'neutral' }; }
+function ini(name) { const p = String(name || '').trim().split(/\s+/).filter(Boolean); return ((p[0]?.[0] || '') + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase(); }
+function coupleInitials(c) { const a = ini(s1Name(c)) || '?', b = ini(s2Name(c)) || '?'; return `${a}·${b}`; }
+
+// ── Read-detail section renderers ───────────────────────────────────────────
+function row(label, val) {
+  return val ? `<div style="display:flex;gap:10px;font-size:13px;padding:3px 0;"><span style="color:#6B7280;min-width:120px;">${esc(label)}</span><span style="flex:1;color:var(--navy);">${val}</span></div>` : '';
+}
+function spouseLine(c, n) {
+  const name = n === 1 ? s1Name(c) : s2Name(c);
+  if (!name) return '';
+  const phone = n === 1 ? c.groom_phone : c.bride_phone;
+  return `${esc(name)}${phone ? ' · ' + esc(formatPhone(phone)) : ''}`;
+}
+function fileDetails(c) {
+  const wd = weddingDateOf(c);
+  const dateLine = wd ? `${esc(formatDateDisplay(wd))}${c.wedding_time ? ' · ' + esc(c.wedding_time) : ''}` : '<span style="color:#9CA3AF;">Not set</span>';
+  return [
+    row('Spouse 1', spouseLine(c, 1)),
+    row('Spouse 2', spouseLine(c, 2)),
+    row('Type', esc(MTYPE_BADGE[marType(c)] || '') + (c.is_external ? ' · External' : '')),
+    row('Wedding', dateLine),
+    row('Church', weddingChurch(c) ? esc(weddingChurch(c)) : (c.non_church_wedding ? 'Non-church wedding' : '')),
+    row('Officiant', officiantOf(c) ? esc(officiantOf(c)) + (c.delegation_given ? ' · delegation given' : '') : ''),
+    row('Preparer', preparerOf(c) ? esc(preparerOf(c)) : ''),
+    row('Civil marriage', c.civil_marriage_date ? esc(formatDateDisplay(c.civil_marriage_date)) : ''),
+  ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
+}
+function documents(c) {
+  if (c.is_external) return '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">External — preparation handled elsewhere.</div>';
+  const docs = normDocs(c), steps = normSteps(c), fees = normFees(c);
+  let h = '';
+  if (docs.length) {
+    h += `<div style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin:2px 0 4px;">Documents</div>`;
+    h += docs.map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+      <span style="font-size:15px;cursor:pointer;" onclick="toggleCoupleDoc('${c.id}',${i})">${d.received ? '✅' : '⬜'}</span>
+      <span style="flex:1;cursor:pointer;color:${d.received ? '#2D6A4F' : 'var(--navy)'};" onclick="toggleCoupleDoc('${c.id}',${i})">${esc(d.name)}</span>
+      ${!d.deletable ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : ''}
+    </div>`).join('');
+  }
+  if (steps.length) {
+    h += `<div style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px;">Steps of Preparation</div>`;
+    h += steps.map((s, i) => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+      <span style="font-size:15px;cursor:pointer;" onclick="toggleCoupleStep('${c.id}',${i})">${s.completed ? '✅' : '⬜'}</span>
+      <span style="flex:1;cursor:pointer;color:${s.completed ? '#2D6A4F' : 'var(--navy)'};" onclick="toggleCoupleStep('${c.id}',${i})">${esc(s.step)}</span>
+    </div>`).join('');
+  }
+  if (fees.length) {
+    const ft = feeTotals(c);
+    h += `<div style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px;">Fees <span style="text-transform:none;">($${ft.paid} / $${ft.total})</span></div>`;
+    h += fees.map((f, i) => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+      <span style="font-size:15px;cursor:pointer;" onclick="toggleCoupleFee('${c.id}',${i})">${f.paid ? '✅' : '⬜'}</span>
+      <span style="flex:1;cursor:pointer;color:var(--navy);" onclick="toggleCoupleFee('${c.id}',${i})">${esc(f.name)}</span>
+      <span style="font-size:12px;color:#5B4636;">$${Number(f.amount) || 0}</span>
+    </div>`).join('');
+  }
+  return h || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No documents.</div>';
+}
+function activity(c) {
+  const notes = notesOf(c);
+  const add = marCanManage() ? `<div style="display:flex;gap:6px;margin-bottom:8px;">
+      <input type="text" id="cn-${c.id}" placeholder="Add a note…" onkeydown="if(event.key==='Enter'){event.preventDefault();addCoupleNoteLog('${c.id}');}"
+        style="flex:1;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;outline:none;" />
+      <button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="addCoupleNoteLog('${c.id}')">Add</button>
+    </div>` : '';
+  const list = notes.length
+    ? notes.map(n => `<div style="font-size:13px;color:#555;margin-bottom:6px;padding:8px 12px;background:#FFF8EE;border-left:3px solid var(--gold);border-radius:3px;"><div style="white-space:pre-wrap;">${esc(n.note)}</div>${(n.by || n.created_at) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${n.created_at ? esc(fmtDate(String(n.created_at).slice(0, 10))) : ''}${n.by ? ' · ' + esc(n.by) : ''}</div>` : ''}</div>`).join('')
+    : '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No notes yet.</div>';
+  return add + list;
+}
+
+function emailCouple(c) {
+  const to = [c.groom_email, c.bride_email].filter(Boolean).join(',');
+  const subject = `Marriage Preparation — ${coupleLabel(c)}`;
+  const wd = weddingDateOf(c);
+  const lines = [
+    `Re: Marriage preparation for ${coupleLabel(c)}`,
+    ``,
+    `Status: ${(COUPLE_STATUS[statusKey(c)] || {}).label || statusKey(c)}`,
+    wd ? `Wedding date: ${formatDateDisplay(wd)}` : `Wedding date: not yet set`,
+  ];
+  window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join('\n'))}`;
+}
+
+// Upcoming-first sort: date-not-set (active work) at the very top, then upcoming
+// soonest→latest, then past most-recent→oldest, then archived/inactive last.
+function sortRank(c) {
+  if (c.archived || c.status_code === 'inactive') return 3;
+  const d = weddingDateOf(c);
+  if (!d) return 0;                       // date not set → top of active
+  return d >= todayCST() ? 1 : 2;         // upcoming : past
+}
+
+// ── Config object ───────────────────────────────────────────────────────────
+export const marriageConfig = {
+  panelKey: 'marriage',
+  title: 'Marriage Prep',
+  newLabel: '+ New File',
+  groupBy: null,   // flat list (a SORT, not a grouping layer)
+
+  canManage: () => marCanManage(),
+  openCreate: () => window.openCoupleAdd?.(),
+
+  fetchRecords: async () => getCouples(),
+  fetchRecord: (id) => getCouple(id),
+  searchText: (c) => coupleLabel(c),
+  compare: (a, b) => {
+    const ra = sortRank(a), rb = sortRank(b);
+    if (ra !== rb) return ra - rb;
+    const da = weddingDateOf(a) || '', db = weddingDateOf(b) || '';
+    if (ra === 1) return da.localeCompare(db);     // upcoming: soonest first
+    if (ra === 2) return db.localeCompare(da);     // past: most recent first
+    return coupleLabel(a).toLowerCase().localeCompare(coupleLabel(b).toLowerCase());  // date-not-set / archived: alpha
+  },
+
+  statusFilters: [
+    { key: 'all',        label: 'All',         match: () => true },
+    { key: 'inprogress', label: 'In Progress', match: c => c.status_code === 'inprogress' && !c.archived },
+    { key: 'complete',   label: 'Complete',    match: c => c.status_code === 'complete' && !c.archived },
+    { key: 'external',   label: 'External',    match: c => (c.is_external || c.status_code === 'external') && !c.archived },
+    { key: 'inactive',   label: 'Inactive',    match: c => c.status_code === 'inactive' || c.archived },
+  ],
+
+  listItem: (c) => ({
+    title: coupleLabel(c),
+    secondary: weddingDateOf(c) ? `💍 ${formatDateDisplay(weddingDateOf(c))}` : 'Date not set',
+    chips: [statusChip(c), typeChip(c)],
+    flags: [],
+  }),
+
+  detailHeader: (c) => ({
+    initials: coupleInitials(c),
+    name: coupleLabel(c),
+    chips: [statusChip(c), typeChip(c)],
+    flags: [],
+  }),
+  actions: [{ label: 'Email couple', icon: 'fa-envelope', handler: emailCouple }],
+
+  detailSections: [
+    { title: 'File details', render: fileDetails },
+    { title: 'Documents',    render: documents },
+    { title: 'Activity',     render: activity },
+  ],
+
+  editForm: (c) => buildMarEditForm(c),
+  saveRecord: (id) => marSaveEdit(id),
+  deleteRecord: (id) => marDeleteRec(id),
+
+  bulkStatusOptions: [
+    { key: 'inprogress', label: 'In Progress' },
+    { key: 'complete',   label: 'Complete' },
+    { key: 'external',   label: 'External' },
+    { key: 'inactive',   label: 'Inactive' },
+  ],
+  bulkUpdateStatus: (ids, status) => marBulkStatus(ids, status),
+};

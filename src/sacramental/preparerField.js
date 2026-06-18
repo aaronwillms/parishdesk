@@ -8,17 +8,17 @@
 // read view. The caller supplies its own coordinator source; never hand-rolled.
 
 import { store } from '../store.js';
-import { getInstitutionClergy } from '../ui/directory.js';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-// Clergy NAMES across one institution, or all institutions (deduped, sorted).
-export function clergyNames(institutionId = null) {
-  const insts = institutionId ? [{ id: institutionId }] : (store.institutions || []);
-  const names = new Set();
-  insts.forEach(i => getInstitutionClergy(i.id).forEach(p => { if (p.name) names.add(p.name); }));
-  return [...names].sort((a, b) => a.localeCompare(b));
+// Clergy NAMES for the dropdowns. Clergy is a parish-wide, person-level boolean
+// (personnel.clergy); institution membership is HR-derived (Move 2) and no longer
+// stored on personnel, so the clergy roster is parish-wide. `institutionId` is
+// kept for signature stability but currently unused.
+export function clergyNames(_institutionId = null) {
+  return [...new Set((store.personnel || []).filter(p => p.clergy && p.name).map(p => p.name))]
+    .sort((a, b) => a.localeCompare(b));
 }
 
 // Build the dropdown HTML. `id` is the base element id; the free-entry input is
