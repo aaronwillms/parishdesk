@@ -63,26 +63,12 @@ function clergyPersonnel() {
 }
 
 // ── Field accessors (backward-compatible) ────────────────────────────────────
-function marType(c) {
-  const t = c.marriage_type;
-  if (c.is_external) return 'external';
-  if (!t) return 'nuptial_mass';
-  if (MTYPE_BADGE[t]) return t;
-  const lt = String(t).toLowerCase();
-  if (lt.includes('outside')) return 'outside_mass';
-  if (lt.includes('convalid')) return 'convalidation';
-  if (lt.includes('sanatio')) return 'sanatio';
-  return 'nuptial_mass';
-}
-// The REAL ceremony type, independent of the external flag. `marType()` collapses
-// external files to 'external' (the first chip / external badge owns that), but the
-// file still has a real type (Nuptial Mass / Outside Mass / Convalidation / Sanatio)
-// that the TYPE chip + viewer must show. Same normalization, minus the short-circuit.
+// The REAL ceremony type — the SINGLE source of truth for a file's marriage type.
+// External is a separate boolean (is_external); the type is NEVER collapsed to
+// 'external'. Legacy/corrupted rows that stored marriage_type='external' fall back
+// to the default real type (the user can correct it in the edit dialog).
 export function marTypeReal(c) {
   const t = c.marriage_type;
-  // 'external' is NOT a ceremony type (it's a status). Legacy/ corrupted rows that
-  // stored marriage_type='external' fall back to the default real type so the type
-  // chip never renders "External"; the user can correct it in the edit dialog.
   if (!t || t === 'external') return 'nuptial_mass';
   if (MTYPE_BADGE[t]) return t;
   const lt = String(t).toLowerCase();
@@ -171,7 +157,7 @@ export async function loadCouples() {
 export function getCouples() { return allCouples; }
 export function getCouple(id) { return allCouples.find(x => x.id === id) || null; }
 export { fullAccess as marCanManage };
-export { MTYPE_BADGE, marType, coupleLabel, s1Name, s2Name, normDocs, normSteps, normFees, notesOf, progressOf, feeTotals };
+export { MTYPE_BADGE, coupleLabel, s1Name, s2Name, normDocs, normSteps, normFees, notesOf, progressOf, feeTotals };
 export function weddingDateOf(c) { return c?.wedding_date || null; }
 export function officiantOf(c) {
   if (c?.officiant) return c.officiant;                                  // new shared-helper value
@@ -459,9 +445,11 @@ function buildCoupleModalHtml(c, opts = {}) {
 
   // Status — shown in BOTH Add and Edit (default "In progress") so an already-
   // complete paper file can be back-entered at any status. Archive stays edit-only.
-  const curStatus = c?.status_code || 'inprogress';
+  // 'external' is NOT a selectable status — it's the is_external toggle below.
+  // Status choices are only In Progress / Complete / Inactive.
+  const curStatus = (c?.status_code && c.status_code !== 'external') ? c.status_code : 'inprogress';
   h += _sectionHead('Status');
-  h += `<label>Status</label><select id="mf-status" onchange="marOnStatusChange()">${Object.entries(COUPLE_STATUS).map(([k, v]) => `<option value="${k}"${curStatus === k ? ' selected' : ''}>${v.label}</option>`).join('')}</select>`;
+  h += `<label>Status</label><select id="mf-status" onchange="marOnStatusChange()">${Object.entries(COUPLE_STATUS).filter(([k]) => k !== 'external').map(([k, v]) => `<option value="${k}"${curStatus === k ? ' selected' : ''}>${v.label}</option>`).join('')}</select>`;
   // "Marriage File Placed in Parish Records" — visible only when status is Complete.
   h += `<div id="mf-records-wrap" style="display:${curStatus === 'complete' ? 'block' : 'none'};">${_toggle('mf-records-placed', 'Marriage File Placed in Parish Records', !!c?.records_placed)}</div>`;
   if (isEdit) h += _toggle('mf-archive', 'Archive this file', !!c?.archived);
@@ -762,9 +750,9 @@ function _marReadPayload() {
     // Officiant + preparer via the shared clergy helpers (name strings).
     officiant: readOfficiantValue('mf-officiant'),
     delegation_given: officiantIsOther('mf-officiant') ? _chk('mf-delegation') : false,
-    // Records-placement only applies to a (non-external) Complete file; reset
+    // Records-placement applies to any COMPLETE file (external or not); reset
     // otherwise so it can't linger when a file moves out of Complete.
-    records_placed: (!external && (document.getElementById('mf-status')?.value === 'complete')) ? _chk('mf-records-placed') : false,
+    records_placed: (document.getElementById('mf-status')?.value === 'complete') ? _chk('mf-records-placed') : false,
     preparer: readPreparerValue('mf-preparer'),
     documents: finalDocs,
     steps: external ? [] : _M.steps,
@@ -781,8 +769,12 @@ function _marReadPayload() {
 async function _marWriteEdit(id) {
   const r = _marReadPayload();
   if (!r.ok) { alert('At least one spouse name is required.'); return { ok: false }; }
-  const { payload, external, prior } = r;
-  payload.status_code = external ? 'external' : (document.getElementById('mf-status')?.value || prior?.status_code || 'inprogress');
+  const { payload, prior } = r;
+  // status_code holds ONLY a real status; External is the independent is_external
+  // boolean (already in payload). A file can be is_external=true AND complete.
+  let st = document.getElementById('mf-status')?.value || prior?.status_code || 'inprogress';
+  if (st === 'external') st = 'inprogress';
+  payload.status_code = st;
   payload.archived = _chk('mf-archive');
   const { error } = await withWriteRetry(() => sb.from('couples').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('couples update', error); return { ok: false }; }
@@ -796,8 +788,10 @@ async function marSaveCouple() {
   const r = _marReadPayload();
   if (!r.ok) { alert('At least one spouse name is required.'); return; }
   if (_M.isEdit) { const res = await _marWriteEdit(_M.id); if (res.ok) { marCloseModal(); refreshActivePanel(); } return; }
-  const { payload, external } = r;
-  payload.status_code = external ? 'external' : (document.getElementById('mf-status')?.value || 'inprogress');
+  const { payload } = r;
+  let st = document.getElementById('mf-status')?.value || 'inprogress';
+  if (st === 'external') st = 'inprogress';
+  payload.status_code = st;
   payload.archived = false;
   const { error } = await withWriteRetry(() => sb.from('couples').insert(payload), { kind: 'insert' });
   if (error) { reportWriteError('couples insert', error); return; }

@@ -28,7 +28,17 @@ const STATUS_STYLE = {
   external:   'background:#D6EAF8;color:#1B4F72;',  // blue
   inactive:   'background:#F2F3F4;color:#616A6B;',  // grey (archived/inactive)
 };
-function statusKey(c) { return c.archived ? 'inactive' : (c.status_code || 'inprogress'); }
+// Status-slot chip. External (is_external boolean) substitutes for the In Progress
+// chip ONLY — any terminal status wins and the External chip is not shown:
+//   is_external && inprogress → External · is_external && complete/inactive → that
+//   status · archived → Inactive · is_external false → the real status.
+function statusKey(c) {
+  if (c.archived) return 'inactive';
+  let s = c.status_code || 'inprogress';
+  if (s === 'external') s = 'inprogress';            // legacy: 'external' was never a real status
+  if (c.is_external && s === 'inprogress') return 'external';
+  return s;
+}
 function statusChip(c) { const k = statusKey(c); return { label: (COUPLE_STATUS[k] || {}).label || k, tone: STATUS_TONE[k] || 'neutral', style: STATUS_STYLE[k] }; }
 // The TYPE chip shows the real ceremony type (Nuptial Mass / Outside Mass /
 // Convalidation / Sanatio), never "External" — the first chip owns the external
@@ -264,10 +274,11 @@ export const marriageConfig = {
   saveRecord: (id) => marSaveEdit(id),
   deleteRecord: (id) => marDeleteRec(id),
 
+  // External is not a status — it's the is_external toggle in the edit modal. Bulk
+  // status writes only real statuses.
   bulkStatusOptions: [
     { key: 'inprogress', label: 'In Progress' },
     { key: 'complete',   label: 'Complete' },
-    { key: 'external',   label: 'External' },
     { key: 'inactive',   label: 'Inactive' },
   ],
   bulkUpdateStatus: (ids, status) => marBulkStatus(ids, status),
