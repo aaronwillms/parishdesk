@@ -6,6 +6,7 @@ import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
+import { registerFamilyPanel, familyAddPickerHtml, getPendingAdd, clearPendingAdd, familyLink } from '../sacramental/familyLink.js';
 
 const CONF_STATUS = {
   enrolled:    { label:'Enrolled',             color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -90,6 +91,17 @@ export function getConfRecords() { return allConf; }
 export function getConfRecord(id) { return allConf.find(x => x.id === id) || null; }
 export { fullAccess as confCanManage };
 export { CONF_STATUS, nameOf, lastNameOf, statusOf, tmplType, confDate, normDocs, notesOf, ageOf, svcEnabled, svcIncomplete };
+
+// Register with the shared family-link mechanism — same mechanism as First Communion,
+// just a different table. Applies to ALL candidates (youth and adult; no type gate).
+registerFamilyPanel('confirmation', {
+  table: 'sacramental_confirmation',
+  nameOf: (r) => nameOf(r),
+  getAll: () => allConf,
+  refresh: async () => { await loadConfData(); refreshActivePanel(); },
+  canManage: () => fullAccess(),
+  noun: 'candidate',
+});
 export function isYouth(p) { return tmplType(p) === 'youth'; }
 export function cohortKeyOf(p) { return p?.cohort_id || null; }
 export function cohortName(cohortId) {
@@ -152,6 +164,7 @@ function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;le
 
 // ── Create / Edit ────────────────────────────────────────────────────────────
 async function openConfCreate() {
+  clearPendingAdd('confirmation');
   _M = newModalState(null, 'youth');
   _confOpen(buildModalHtml(null)); _hydrate();
 }
@@ -160,7 +173,6 @@ function newModalState(p, type) {
   return {
     id: p?.id || null, isEdit: !!p, type,
     docs: p ? normDocs(p) : computeTemplateDocs(type),
-    family: p?.family_group_id ? { group_id: p.family_group_id, label: `${lastNameOf(p)} Family` } : null,
   };
 }
 function computeTemplateDocs(type) { return (_templates[type]?.documents || FALLBACK_TEMPLATES[type].documents).map(d => ({ name: d.name, received: false, deletable: d.deletable ?? true, auto: d.deletable === false })); }
@@ -240,8 +252,11 @@ function buildModalHtml(p, opts = {}) {
   h += `<div id="cf-docs"></div><div style="display:flex;gap:6px;margin-top:6px;"><input type="text" id="cf-doc-new" placeholder="Add document…" style="flex:1;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" onkeydown="if(event.key==='Enter'){event.preventDefault();confAddDoc();}" /><button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="confAddDoc()">+ Add</button></div>`;
 
   // 9 — Family group (create + edit)
-  h += _sectionHead('Family Group');
-  h += `<div style="position:relative;"><input type="text" id="cf-family-search" placeholder="Link to family group (search by last name)…" autocomplete="off" oninput="confFamilySearch()" style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" /><div id="cf-family-results" class="anl-link-results" style="display:none;"></div></div><div id="cf-family-chip" style="margin-top:6px;"></div>`;
+  if (!isEdit) {
+    h += _sectionHead('Family');
+    h += `<div style="font-size:11.5px;color:#9CA3AF;margin-bottom:6px;">Link this candidate to a sibling already on file — they’ll share one family group.</div>`;
+    h += familyAddPickerHtml('confirmation');
+  }
 
   if (isEdit) {
     h += _sectionHead('Status');
@@ -265,7 +280,7 @@ function buildModalHtml(p, opts = {}) {
   return h;
 }
 
-function _hydrate() { renderModalDocs(); renderFamilyChip(); }
+function _hydrate() { renderModalDocs(); }
 function renderModalDocs() {
   const el = document.getElementById('cf-docs'); if (!el) return;
   el.innerHTML = _M.docs.map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;">
@@ -274,7 +289,6 @@ function renderModalDocs() {
     ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : `<button onclick="confRemoveDoc(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">×</button>`}
   </div>`).join('') || `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No documents.</div>`;
 }
-function renderFamilyChip() { const el = document.getElementById('cf-family-chip'); if (!el) return; el.innerHTML = _M.family ? `<span style="display:inline-flex;align-items:center;gap:8px;background:#1C2B3A;color:#fff;border-radius:14px;padding:3px 8px 3px 12px;font-size:12px;"><span>${_esc(_M.family.label)}</span><button onclick="confRemoveFamily()" style="background:none;border:none;color:#cdd6df;cursor:pointer;font-size:12px;padding:0;">×</button></span>` : ''; }
 
 // modal handlers
 function confSetType(t) {
@@ -304,17 +318,6 @@ function confChurchChange(v) {
 function confDocReceived(i, v) { _M.docs[i].received = v; }
 function confRemoveDoc(i) { _M.docs.splice(i, 1); renderModalDocs(); }
 function confAddDoc() { const inp = document.getElementById('cf-doc-new'); const name = (inp?.value || '').trim(); if (!name) return; _M.docs.push({ name, received: false, deletable: true, auto: false }); inp.value = ''; renderModalDocs(); }
-async function confFamilySearch() {
-  const q = document.getElementById('cf-family-search')?.value || ''; const box = document.getElementById('cf-family-results'); if (!box) return;
-  if (q.trim().length < 2) { box.style.display = 'none'; return; }
-  const safe = q.replace(/[%_,()'"*]/g, ' ');
-  const { data } = await sb.from('sacramental_confirmation').select('id,name,first_name,last_name,family_group_id').or(`name.ilike.%${safe}%,last_name.ilike.%${safe}%,first_name.ilike.%${safe}%`).limit(6);
-  const rows = (data || []);
-  box.innerHTML = rows.length ? rows.map(r => `<div class="anl-link-opt" data-id="${r.id}" data-gid="${r.family_group_id || ''}" data-last="${_esc(lastNameOf(r))}">${_esc(nameOf(r))} — ${_esc(lastNameOf(r))} Family</div>`).join('') : `<div style="padding:.5rem .7rem;font-size:12px;color:#9CA3AF;">No matches</div>`;
-  box.style.display = 'block';
-  box.querySelectorAll('.anl-link-opt').forEach(o => o.addEventListener('mousedown', e => { e.preventDefault(); _M.family = { target_id: o.dataset.id, group_id: o.dataset.gid || null, label: `${o.dataset.last} Family` }; box.style.display = 'none'; document.getElementById('cf-family-search').value = ''; renderFamilyChip(); }));
-}
-function confRemoveFamily() { _M.family = null; renderFamilyChip(); }
 
 // ── Save ─────────────────────────────────────────────────────────────────────
 function _v(id) { const e = document.getElementById(id); return e ? e.value.trim() : ''; }
@@ -330,9 +333,6 @@ function _confReadPayload() {
   const cohortSel = document.getElementById('cf-cohort')?.value || '';
   const coh = _cohorts.find(c => c.id === cohortSel);
   const churchSel = document.getElementById('cf-church')?.value || '';
-
-  let familyGroupId = null, linkTarget = null;
-  if (_M.family) { if (_M.family.group_id) familyGroupId = _M.family.group_id; else { familyGroupId = (crypto?.randomUUID?.() || String(Date.now())); linkTarget = _M.family.target_id; } }
 
   const tmpl = _templates[type] || FALLBACK_TEMPLATES[type];
   const payload = {
@@ -357,15 +357,14 @@ function _confReadPayload() {
     baptism_church: _v('cf-bchurch') || null, baptism_city: _v('cf-bcity') || null, baptism_state: _v('cf-bstate') || null, baptism_country: _v('cf-bcountry') || null,
     first_communion_church: _v('cf-fcchurch') || null, first_communion_city: _v('cf-fccity') || null, first_communion_state: _v('cf-fcstate') || null, first_communion_country: _v('cf-fccountry') || null,
     documents: _M.docs,
-    family_group_id: familyGroupId,
     updated_at: nowIso(),
   };
-  return { ok: true, payload, name, type, tmpl, familyGroupId, linkTarget };
+  return { ok: true, payload, name, type, tmpl };
 }
 
 // Shared edit writer (status/archive/timeline + youth-only service hours).
 async function _confWriteEdit(id, r) {
-  const { payload, name, type, familyGroupId, linkTarget } = r;
+  const { payload, name, type } = r;
   const prior = allConf.find(x => x.id === id);
   const newStatus = document.getElementById('cf-status')?.value || statusOf(prior);
   payload.status_code = newStatus;
@@ -382,7 +381,6 @@ async function _confWriteEdit(id, r) {
   payload.timeline = tl;
   const { error } = await withWriteRetry(() => sb.from('sacramental_confirmation').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('confirmation update', error); return { ok: false }; }
-  if (linkTarget) await sb.from('sacramental_confirmation').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
   logActivity({ action: 'updated Confirmation record', entityType: 'confirmation', entityName: name, contextType: 'confirmation', contextId: id });
   await loadConfData();
   return { ok: true };
@@ -393,15 +391,16 @@ async function confSave() {
   const r = _confReadPayload();
   if (!r.ok) { alert('Candidate name is required.'); return; }
   if (_M.isEdit) { const res = await _confWriteEdit(_M.id, r); if (res.ok) { confCloseModal(); refreshActivePanel(); } return; }
-  const { payload, name, type, tmpl, familyGroupId, linkTarget } = r;
+  const { payload, name, type, tmpl } = r;
   payload.status_code = 'enrolled';
   payload.archived = false;
   payload.service_hours_required = (type === 'youth' && tmpl.service_hours_enabled) ? (tmpl.service_hours_required || 20) : 0;
   payload.service_hours_completed = 0;
   payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-  const { error } = await withWriteRetry(() => sb.from('sacramental_confirmation').insert(payload), { kind: 'insert' });
+  const { data: ins, error } = await withWriteRetry(() => sb.from('sacramental_confirmation').insert(payload).select('id').maybeSingle(), { kind: 'insert' });
   if (error) { reportWriteError('confirmation insert', error); return; }
-  if (linkTarget) await sb.from('sacramental_confirmation').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
+  const pend = getPendingAdd('confirmation');
+  if (pend && ins?.id) { await familyLink('confirmation', ins.id, pend.id); clearPendingAdd('confirmation'); }
   logActivity({ action: 'added Confirmation candidate', entityType: 'confirmation', entityName: name, contextType: 'confirmation' });
   const { data: { user } } = await sb.auth.getUser();
   const uids = await getUserIdsForSacrament('confirmation');
@@ -529,7 +528,7 @@ Object.assign(window, {
   openConfCreate, openConfEdit, openConfTemplates, confCloseModal,
   toggleConfDoc, addConfNote,
   confSetType, confCohortPick, confDobChange, confChurchChange,
-  confDocReceived, confRemoveDoc, confAddDoc, confFamilySearch, confRemoveFamily,
+  confDocReceived, confRemoveDoc, confAddDoc,
   confSave, confDeletePerson,
   openCohortManager, confCohortChurchChange, confSaveCohort, confDeleteCohort,
   confTplTab, confTplAdd, confTplRemove, confTplSvcToggle, confTplSave,

@@ -6,6 +6,7 @@
 import { formatDateDisplay, fmtDate } from '../utils.js';
 import { formatPhone } from '../utils/phone.js';
 import { isSacramentCoordinator } from '../roles.js';
+import { familySectionHtml } from './familyLink.js';
 import {
   getFcRecords, getFcRecord, fcCanManage, FC_STATUS,
   nameOf, lastNameOf, statusOf, commDate, ageOf, normDocs, notesOf,
@@ -148,6 +149,7 @@ export const firstCommunionConfig = {
 
   detailSections: [
     { title: 'File details', render: fileDetails },
+    { title: 'Family',       render: (p) => familySectionHtml('firstcomm', p) },
     { title: 'Documents',    render: documents },
     { title: 'Activity',     render: activity },
   ],

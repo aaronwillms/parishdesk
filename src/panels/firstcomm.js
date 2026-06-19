@@ -6,6 +6,7 @@ import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
+import { registerFamilyPanel, familyAddPickerHtml, getPendingAdd, clearPendingAdd, familyLink } from '../sacramental/familyLink.js';
 
 const FC_STATUS = {
   enrolled:    { label:'Enrolled',                  color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -90,6 +91,17 @@ export function communionChurch(p) {
   return p?.communion_church_override || '';
 }
 export { nameOf, lastNameOf, statusOf, commDate, cohortLabel, cohortChurchName, normDocs, notesOf, ageOf };
+
+// Register this panel with the shared family-link mechanism (sacramental/familyLink.js).
+registerFamilyPanel('firstcomm', {
+  table: 'sacramental_firstcomm',
+  nameOf: (r) => nameOf(r),
+  getAll: () => allFc,
+  refresh: async () => { await loadFcData(); refreshActivePanel(); },
+  canManage: () => fullAccess(),
+  noun: 'student',
+});
+
 function updateStats() {
   const active = allFc.filter(p => !p.archived && statusOf(p) !== 'inactive');
   const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
@@ -142,6 +154,7 @@ function _toggle(id, label, on, onchange = '') { return `<label style="display:f
 function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cardinal);margin:1.4rem 0 .5rem;border-bottom:.5px solid var(--stone);padding-bottom:4px;">${t}</div>`; }
 
 async function openFcCreate() {
+  clearPendingAdd('firstcomm');
   _M = newModalState(null);
   _fcOpen(buildModalHtml(null)); _hydrate();
 }
@@ -150,7 +163,6 @@ function newModalState(p) {
   return {
     id: p?.id || null, isEdit: !!p,
     docs: p ? normDocs(p) : computeTemplateDocs(),
-    family: p?.family_group_id ? { group_id: p.family_group_id, label: `${lastNameOf(p)} Family` } : null,
   };
 }
 function computeTemplateDocs() {
@@ -215,9 +227,12 @@ function buildModalHtml(p, opts = {}) {
   h += _sectionHead('Document Checklist');
   h += `<div id="ff-docs"></div><div style="display:flex;gap:6px;margin-top:6px;"><input type="text" id="ff-doc-new" placeholder="Add document…" style="flex:1;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" onkeydown="if(event.key==='Enter'){event.preventDefault();fcAddDoc();}" /><button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="fcAddDoc()">+ Add</button></div>`;
 
-  // 8 — Family group (create + edit)
-  h += _sectionHead('Family Group');
-  h += `<div style="position:relative;"><input type="text" id="ff-family-search" placeholder="Link to family group (search by last name)…" autocomplete="off" oninput="fcFamilySearch()" style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" /><div id="ff-family-results" class="anl-link-results" style="display:none;"></div></div><div id="ff-family-chip" style="margin-top:6px;"></div>`;
+  // 8 — Family (Add only; for an existing file, family is managed in the file view)
+  if (!isEdit) {
+    h += _sectionHead('Family');
+    h += `<div style="font-size:11.5px;color:#9CA3AF;margin-bottom:6px;">Link this student to a sibling already on file — they’ll share one family group.</div>`;
+    h += familyAddPickerHtml('firstcomm');
+  }
 
   if (isEdit) {
     h += _sectionHead('Status');
@@ -234,7 +249,7 @@ function buildModalHtml(p, opts = {}) {
   return h;
 }
 
-function _hydrate() { renderModalDocs(); renderFamilyChip(); }
+function _hydrate() { renderModalDocs(); }
 function renderModalDocs() {
   const el = document.getElementById('ff-docs'); if (!el) return;
   el.innerHTML = _M.docs.map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;">
@@ -243,7 +258,6 @@ function renderModalDocs() {
     ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : `<button onclick="fcRemoveDoc(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">×</button>`}
   </div>`).join('') || `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No documents.</div>`;
 }
-function renderFamilyChip() { const el = document.getElementById('ff-family-chip'); if (!el) return; el.innerHTML = _M.family ? `<span style="display:inline-flex;align-items:center;gap:8px;background:#1C2B3A;color:#fff;border-radius:14px;padding:3px 8px 3px 12px;font-size:12px;"><span>${_esc(_M.family.label)}</span><button onclick="fcRemoveFamily()" style="background:none;border:none;color:#cdd6df;cursor:pointer;font-size:12px;padding:0;">×</button></span>` : ''; }
 
 function fcCohortPick(v) { const coh = _cohorts.find(c => c.id === v); if (coh?.cohort_date) { const dt = document.getElementById('ff-cdate'); if (dt && !dt.value) dt.value = coh.cohort_date; } }
 function fcDobChange() { const age = ageOf(document.getElementById('ff-dob').value); document.getElementById('ff-age-note').style.display = (age !== null && age > 13) ? 'block' : 'none'; }
@@ -251,17 +265,6 @@ function fcChurchChange(v) { document.getElementById('ff-church-other-wrap').sty
 function fcDocReceived(i, v) { _M.docs[i].received = v; }
 function fcRemoveDoc(i) { _M.docs.splice(i, 1); renderModalDocs(); }
 function fcAddDoc() { const inp = document.getElementById('ff-doc-new'); const name = (inp?.value || '').trim(); if (!name) return; _M.docs.push({ name, received: false, deletable: true, auto: false }); inp.value = ''; renderModalDocs(); }
-async function fcFamilySearch() {
-  const q = document.getElementById('ff-family-search')?.value || ''; const box = document.getElementById('ff-family-results'); if (!box) return;
-  if (q.trim().length < 2) { box.style.display = 'none'; return; }
-  const safe = q.replace(/[%_,()'"*]/g, ' ');
-  const { data } = await sb.from('sacramental_firstcomm').select('id,name,first_name,last_name,family_group_id').or(`name.ilike.%${safe}%,last_name.ilike.%${safe}%,first_name.ilike.%${safe}%`).limit(6);
-  const rows = (data || []);
-  box.innerHTML = rows.length ? rows.map(r => `<div class="anl-link-opt" data-id="${r.id}" data-gid="${r.family_group_id || ''}" data-last="${_esc(lastNameOf(r))}">${_esc(nameOf(r))} — ${_esc(lastNameOf(r))} Family</div>`).join('') : `<div style="padding:.5rem .7rem;font-size:12px;color:#9CA3AF;">No matches</div>`;
-  box.style.display = 'block';
-  box.querySelectorAll('.anl-link-opt').forEach(o => o.addEventListener('mousedown', e => { e.preventDefault(); _M.family = { target_id: o.dataset.id, group_id: o.dataset.gid || null, label: `${o.dataset.last} Family` }; box.style.display = 'none'; document.getElementById('ff-family-search').value = ''; renderFamilyChip(); }));
-}
-function fcRemoveFamily() { _M.family = null; renderFamilyChip(); }
 
 // ── Save ─────────────────────────────────────────────────────────────────────
 function _v(id) { const e = document.getElementById(id); return e ? e.value.trim() : ''; }
@@ -275,9 +278,6 @@ function _fcReadPayload() {
   const cohortSel = document.getElementById('ff-cohort')?.value || '';
   const coh = _cohorts.find(c => c.id === cohortSel);
   const churchSel = document.getElementById('ff-church')?.value || '';
-
-  let familyGroupId = null, linkTarget = null;
-  if (_M.family) { if (_M.family.group_id) familyGroupId = _M.family.group_id; else { familyGroupId = (crypto?.randomUUID?.() || String(Date.now())); linkTarget = _M.family.target_id; } }
 
   const payload = {
     name, first_name: first || null, middle_name: _v('ff-middle') || null, last_name: last || null,
@@ -293,24 +293,25 @@ function _fcReadPayload() {
     communion_church_override: churchSel === '__other' ? (_v('ff-church-override') || null) : null,
     communion_city: _v('ff-ccity') || null, communion_state: _v('ff-cstate') || null,
     documents: _M.docs,
-    family_group_id: familyGroupId,
     updated_at: nowIso(),
   };
-  return { ok: true, payload, name, familyGroupId, linkTarget };
+  return { ok: true, payload, name };
 }
 
 // Create modal save.
 async function fcSave() {
   const r = _fcReadPayload();
   if (!r.ok) { alert('Student name is required.'); return; }
-  const { payload, name, familyGroupId, linkTarget } = r;
+  const { payload, name } = r;
   if (_M.isEdit) { const res = await _fcWriteEdit(_M.id, r); if (res.ok) { fcCloseModal(); refreshActivePanel(); } return; }
   payload.status_code = 'enrolled';
   payload.archived = false;
   payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-  const { error } = await withWriteRetry(() => sb.from('sacramental_firstcomm').insert(payload), { kind: 'insert' });
+  const { data: ins, error } = await withWriteRetry(() => sb.from('sacramental_firstcomm').insert(payload).select('id').maybeSingle(), { kind: 'insert' });
   if (error) { reportWriteError('firstcomm insert', error); return; }
-  if (linkTarget) await sb.from('sacramental_firstcomm').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
+  // Apply the pending "Link Family Member" pick via the shared rule (mint/join).
+  const pend = getPendingAdd('firstcomm');
+  if (pend && ins?.id) { await familyLink('firstcomm', ins.id, pend.id); clearPendingAdd('firstcomm'); }
   logActivity({ action: 'added First Communion student', entityType: 'firstcomm', entityName: name, contextType: 'firstcomm' });
   const { data: { user } } = await sb.auth.getUser();
   const uids = await getUserIdsForSacrament('first_communion');
@@ -320,7 +321,7 @@ async function fcSave() {
 
 // Shared edit writer (status/archive/timeline) used by modal + shell.
 async function _fcWriteEdit(id, r) {
-  const { payload, name, familyGroupId, linkTarget } = r;
+  const { payload, name } = r;
   const prior = allFc.find(x => x.id === id);
   const newStatus = document.getElementById('ff-status')?.value || statusOf(prior);
   payload.status_code = newStatus;
@@ -330,7 +331,6 @@ async function _fcWriteEdit(id, r) {
   payload.timeline = tl;
   const { error } = await withWriteRetry(() => sb.from('sacramental_firstcomm').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('firstcomm update', error); return { ok: false }; }
-  if (linkTarget) await sb.from('sacramental_firstcomm').update({ family_group_id: familyGroupId }).eq('id', linkTarget);
   logActivity({ action: 'updated First Communion record', entityType: 'firstcomm', entityName: name, contextType: 'firstcomm', contextId: id });
   await loadFcData();
   return { ok: true };
@@ -447,7 +447,7 @@ Object.assign(window, {
   openFcCreate, openFcEdit, openFcTemplate, fcCloseModal,
   toggleFcDoc, toggleFcPrep, addFcNote,
   fcCohortPick, fcDobChange, fcChurchChange,
-  fcDocReceived, fcRemoveDoc, fcAddDoc, fcFamilySearch, fcRemoveFamily,
+  fcDocReceived, fcRemoveDoc, fcAddDoc,
   fcSave, fcDeletePerson,
   openCohortManager, fcCohortChurchChange, fcSaveCohort, fcDeleteCohort,
   fcTplAdd, fcTplRemove, fcTplSave,

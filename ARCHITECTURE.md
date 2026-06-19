@@ -93,7 +93,7 @@ for adults (the edit form's service-hours field is likewise youth-gated).
 ### First Communion cohorts — created in the panel, selected in Add Student
 
 Cohort **creation** lives in the First Communion panel via a **Manage Cohorts**
-button (calendar icon) in the shell list header, gated to `canManageTemplate()`
+button (`fa-children` icon) in the shell list header, gated to `canManageTemplate()`
 (the same role that manages templates). It opens the existing cohort manager
 (`openCohortManager` → `fcSaveCohort`, writing `sacramental_cohorts` with
 `panel='firstcomm'`) — unchanged; only the launch point moved here. The header
@@ -102,6 +102,31 @@ don't set it (Baptism, etc.) are unaffected. The **Add Student** modal only
 **selects** an existing cohort from a plain dropdown (no create option); with no
 cohorts it shows a disabled empty state pointing to Manage Cohorts — Add Student
 is never a back-door to cohort creation.
+
+### Family-member linking (shared mechanism)
+
+Grouping sacramental files into a family runs on the existing **`family_group_id`**
+column (present on `sacramental_firstcomm` and `sacramental_confirmation` — same
+field name, **separate per-panel tables**; it does NOT span panels). All the rules
+live ONCE in [`src/sacramental/familyLink.js`](src/sacramental/familyLink.js); each
+panel registers an adapter (`registerFamilyPanel(key, { table, nameOf, getAll,
+refresh, canManage })`). First Communion and Confirmation both use it; Confirmation
+applies to **all** candidates (youth and adult, no type gate).
+
+`resolveFamilyLink(gidA, gidB)` is the pure rule: neither grouped → **mint** a new
+id for both; exactly one grouped → the other **joins** it; both in **different**
+groups → **confirm**, then merge (naming both rosters); same group → **no-op**.
+`familyLink(key, idA, idB)` reads both rows fresh from the DB (correct even right
+after an insert) and writes via the retry-wrapped path; `familyUnlink(key, id)`
+confirms, clears the member, and **retires** the group if it drops to one member
+(clears the last one too). Membership is mutual — both files derive their roster
+from the shared id.
+
+Two surfaces, both reusing the shared logic: the **Add** dialog holds a pending
+"Link Family Member" pick (applied via `familyLink` right after insert), and the
+**file viewer** (a "Family" detail section) shows the roster with per-member
+**Unlink** plus a live link picker that links immediately. Every link/unlink is
+`logActivity`'d; interactive controls respect `canManage()`.
 
 ### Shell sort — upcoming-date + archived-last
 

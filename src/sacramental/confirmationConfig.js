@@ -7,6 +7,7 @@
 import { formatDateDisplay, fmtDate } from '../utils.js';
 import { formatPhone } from '../utils/phone.js';
 import { isSacramentCoordinator } from '../roles.js';
+import { familySectionHtml } from './familyLink.js';
 import {
   getConfRecords, getConfRecord, confCanManage, CONF_STATUS,
   nameOf, lastNameOf, statusOf, tmplType, confDate, normDocs, notesOf, ageOf,
@@ -155,6 +156,7 @@ export const confirmationConfig = {
 
   detailSections: [
     { title: 'File details',  render: fileDetails },
+    { title: 'Family',        render: (p) => familySectionHtml('confirmation', p) },
     { title: 'Service Hours', render: serviceHours, when: (p) => isYouth(p) && svcEnabled(p) },   // YOUTH ONLY
     { title: 'Documents',     render: documents },
     { title: 'Activity',      render: activity },
