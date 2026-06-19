@@ -80,7 +80,10 @@ function marType(c) {
 // that the TYPE chip + viewer must show. Same normalization, minus the short-circuit.
 export function marTypeReal(c) {
   const t = c.marriage_type;
-  if (!t) return 'nuptial_mass';
+  // 'external' is NOT a ceremony type (it's a status). Legacy/ corrupted rows that
+  // stored marriage_type='external' fall back to the default real type so the type
+  // chip never renders "External"; the user can correct it in the edit dialog.
+  if (!t || t === 'external') return 'nuptial_mass';
   if (MTYPE_BADGE[t]) return t;
   const lt = String(t).toLowerCase();
   if (lt.includes('outside')) return 'outside_mass';
@@ -346,7 +349,7 @@ export async function openCoupleAdd() {
 
 function openCoupleEdit(id) {
   const c = allCouples.find(x => x.id === id); if (!c) return;
-  _M = newModalState(c, marType(c));
+  _M = newModalState(c, marTypeReal(c));
   _marOpen(buildCoupleModalHtml(c));
   _hydrateModal();
 }
@@ -804,7 +807,7 @@ async function marSaveCouple() {
 
 // ── Shell config hooks (inline edit form + save/delete/bulk) ─────────────────
 export function buildMarEditForm(c) {
-  _M = newModalState(c, marType(c));
+  _M = newModalState(c, marTypeReal(c));
   const html = buildCoupleModalHtml(c, { inline: true });
   setTimeout(() => _hydrateModal(), 0);
   return html;
