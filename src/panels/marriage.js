@@ -384,8 +384,11 @@ function buildCoupleModalHtml(c, opts = {}) {
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Marriage File' : 'New Marriage File'}</div>`;
 
   // Section 1 — Person responsible for formation (clergy + marriage coordinator + Other) + External
-  h += _sectionHead('Person Responsible for Formation');
-  h += buildPreparerField('mf-preparer', c?.preparer || '', { coordinatorNames: _marCoordinatorNames, label: 'Person Responsible for Formation' });
+  // Marriage panel uses context-dependent labels for this ONE field (same value/
+  // column): add/edit dialogs say "…for Marriage Preparation"; the viewer (see
+  // marriageConfig fileDetails) uses the short "Marriage Prep" for alignment.
+  h += _sectionHead('Person Responsible for Marriage Preparation');
+  h += buildPreparerField('mf-preparer', c?.preparer || '', { coordinatorNames: _marCoordinatorNames, label: 'Person Responsible for Marriage Preparation' });
 
   h += _toggle('mf-external', 'External (preparation handled elsewhere)', _M.external, 'marOnExternalToggle()');
 

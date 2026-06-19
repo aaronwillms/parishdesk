@@ -113,7 +113,7 @@ function fileDetails(c) {
     row('Address', loc.lines.length ? esc(loc.lines.join(', ')) : ''),
     row('Officiant', officiantCell(c)),                 // includes inline editable delegation toggle
     recordsPlacedRow(c),                                // editable, Complete-only
-    row('Person Responsible for Formation', preparerOf(c) ? esc(preparerOf(c)) : ''),
+    row('Marriage Prep', preparerOf(c) ? esc(preparerOf(c)) : ''),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
 }
 // Documents + Steps — omitted entirely for external files (per the rule).
