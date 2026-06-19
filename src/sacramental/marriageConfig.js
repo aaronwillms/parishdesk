@@ -34,6 +34,32 @@ function statusChip(c) { const k = statusKey(c); return { label: (COUPLE_STATUS[
 // Convalidation / Sanatio), never "External" — the first chip owns the external
 // badge. marTypeReal() drops marType()'s external short-circuit.
 function typeChip(c) { return { label: MTYPE_BADGE[marTypeReal(c)] || 'Marriage', tone: 'neutral' }; }
+
+// Derived card chips (READ-ONLY — they never write). Same green/yellow as the
+// status palette; dark mode's !important badge rule slates them like every badge.
+const CHIP_GREEN = 'background:#D8F3DC;color:#2D6A4F;';
+const CHIP_YELLOW = 'background:#FEF9E7;color:#7D6608;';
+const fmtMoney = (n) => (n % 1 === 0 ? String(n) : n.toFixed(2));
+// Green "Documents Complete" when every document on the file is checked (and there
+// is at least one). External files have no documents, so it never shows for them.
+function docsCompleteChip(c) {
+  const docs = normDocs(c);
+  if (!docs.length || !docs.every(d => d.received)) return null;
+  return { label: 'Documents Complete', tone: 'complete', style: CHIP_GREEN };
+}
+// Fee chip derived from feeTotals(c) (Σ amount / Σ paid; balance = total − paid):
+//   • no fee set (no fees OR total ≤ 0) → NEITHER chip
+//   • balance ≤ 0 (fully paid)          → green "Paid"
+//   • balance > 0 (unpaid/partial)      → yellow "Unpaid $<remaining balance>"
+// Mutually exclusive — only one ever returns.
+function feeChip(c) {
+  const ft = feeTotals(c);
+  if (!ft || ft.total <= 0) return null;
+  const balance = ft.total - ft.paid;
+  return balance <= 0
+    ? { label: 'Paid', tone: 'complete', style: CHIP_GREEN }
+    : { label: `Unpaid $${fmtMoney(balance)}`, tone: 'pending', style: CHIP_YELLOW };
+}
 function ini(name) { const p = String(name || '').trim().split(/\s+/).filter(Boolean); return ((p[0]?.[0] || '') + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase(); }
 function coupleInitials(c) { const a = ini(s1Name(c)) || '?', b = ini(s2Name(c)) || '?'; return `${a}·${b}`; }
 
@@ -210,7 +236,7 @@ export const marriageConfig = {
   listItem: (c) => ({
     title: coupleLabel(c),
     secondary: weddingDateOf(c) ? formatDateDisplay(weddingDateOf(c)) : 'Date not set',
-    chips: [statusChip(c), typeChip(c)],
+    chips: [statusChip(c), typeChip(c), docsCompleteChip(c), feeChip(c)].filter(Boolean),
     flags: [],
   }),
 
