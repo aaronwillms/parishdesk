@@ -103,6 +103,23 @@ don't set it (Baptism, etc.) are unaffected. The **Add Student** modal only
 cohorts it shows a disabled empty state pointing to Manage Cohorts — Add Student
 is never a back-door to cohort creation.
 
+### Church → location model (shared: `src/sacramental/churchLocation.js`)
+
+One coherent flow shared by First Communion and Confirmation (and **OCIA Phase 2 will
+reuse it** — not yet wired). Church location always resolves through
+`getInstitutionAddress()` (the marriage resolver; principal → `parish_settings`).
+- **Cohort manager** (`cohortChurchLocation(v, prefix)`): selecting a listed church
+  with a stored address **pre-fills + locks** (read-only) the cohort City/State; a
+  church with no address (or "Other") stays editable.
+- **Details section** (`detailsChurchToggle` / `detailsCityState`): City/State live
+  inside the church "Other" wrapper, so they show **only for "Other"**. A listed
+  church derives City/State from the institution on save (`detailsCityState`), so the
+  read views (which read the `*_city`/`*_state` columns) stay correct.
+- **Cohort → student inheritance** (`inheritCohortChurch(coh, prefix)`): assigning a
+  cohort defaults the student's Details church to the cohort's church — **editable
+  per-student** (not locked). Columns: First Communion `communion_city/state`;
+  Confirmation `confirmation_city/state` (added by `20260619_confirmation_church_city_state.sql`).
+
 ### Family-member linking (shared mechanism)
 
 Grouping sacramental files into a family runs on the existing **`family_group_id`**

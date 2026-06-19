@@ -6,6 +6,7 @@ import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
+import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 
 const OCIA_STATUS = {
   inquirer:    { label:'Inquirer',             color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -22,7 +23,17 @@ const CLERGY_TITLE_RE = /^(fr\.|rev\.|deacon|msgr\.|bishop|archbishop|cardinal)/
 const FALLBACK_TEMPLATES = { catechumen: [], candidate: [{ name: 'Baptismal Certificate', deletable: false }] };
 
 let allOcia = [], ociaFilter = 'all', ociaExpanded = null;
-let _templates = {}, _M = null, _ociaCoordinatorNames = [];
+let _templates = {}, _M = null, _ociaCoordinatorNames = [], _cohorts = [];
+
+// ── Cohort mechanism (mirrors Confirmation: sacramental_cohorts, panel='ocia') ──
+function cohortLabel(dateStr) { if (!dateStr) return 'No date'; const d = new Date(dateStr + 'T00:00:00'); return isNaN(d) ? 'No date' : d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); }
+async function loadCohorts() {
+  const { data } = await sb.from('sacramental_cohorts').select('*').eq('panel', 'ocia').order('cohort_date', { ascending: false });
+  _cohorts = data || [];
+}
+export function cohortKeyOf(p) { return p?.cohort_id || null; }
+export function ociaCohortName(id) { if (!id) return 'No Cohort'; return cohortLabel(_cohorts.find(c => c.id === id)?.cohort_date); }
+export function ociaCohortDateOf(id) { return _cohorts.find(c => c.id === id)?.cohort_date || ''; }
 
 // Formation coordinator display names for the "Person Responsible for Formation"
 // dropdown (Clergy + coordinator(s) + Other), mirroring the other sacrament panels.
@@ -94,15 +105,34 @@ async function loadTemplates() {
   if (!error && data) data.forEach(r => { _templates[r.candidate_type] = r.documents || []; });
   ['catechumen', 'candidate'].forEach(k => { if (!_templates[k]) _templates[k] = JSON.parse(JSON.stringify(FALLBACK_TEMPLATES[k])); });
 }
-export async function loadOcia() {
-  await Promise.all([loadTemplates(), loadOciaCoordinator()]);
+// Data-only refresh (used by the shell + autosave/modal). Returns the record list.
+export async function loadOciaData() {
+  await Promise.all([loadTemplates(), loadOciaCoordinator(), loadCohorts()]);
   const { data, error } = await sb.from('sacramental_ocia').select('*').order('created_at', { ascending: false });
-  if (error) { console.error('[ocia]', error); return; }
+  if (error) { console.error('[ocia]', error); return []; }
   allOcia = data || [];
   store.allOcia = allOcia;
-  const gear = document.getElementById('ocia-gear'); if (gear) gear.style.display = isSacramentCoordinator('ocia') ? '' : 'none';
-  updateOciaStats(); renderOciaAlerts(); renderOcia();
+  updateOciaStats();
+  return allOcia;
 }
+// Nav loader — fetch then mount the master-detail shell into #ocia-root.
+export async function loadOcia() {
+  await loadOciaData();
+  const root = document.getElementById('ocia-root');
+  if (!root) return;
+  const { ociaConfig } = await import('../sacramental/ociaConfig.js');
+  renderSacramentalPanel(root, ociaConfig);
+}
+
+// ── Shell accessors (consumed by ociaConfig) ────────────────────────────────
+export function getOciaRecords() { return allOcia; }
+export function getOciaRecord(id) { return allOcia.find(x => x.id === id) || null; }
+export { fullAccess as ociaCanManage, OCIA_STATUS, ociaAge };
+export function ociaName(p) { return p?.name || '—'; }
+export function ociaLastName(p) { return lastNameOf(p); }
+export function ociaStatusOf(p) { return p?.status_code || 'inquirer'; }
+export function candTypeOf(p) { return candType(p); }
+export function ociaNotesOf(p) { return notesOf(p); }
 function updateOciaStats() {
   const active = allOcia.filter(p => !p.archived && p.status_code !== 'inactive');
   const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
@@ -111,171 +141,11 @@ function updateOciaStats() {
   const yr = String(new Date().getFullYear());
   set('stat-ocia-received', allOcia.filter(p => p.status_code === 'received' && p.reception_date && String(p.reception_date).startsWith(yr)).length);
 }
-function renderOciaAlerts() {
-  const el = document.getElementById('ocia-alerts'); if (!el) return;
-  const flags = allOcia.filter(p => { if (p.archived || p.status_code === 'inactive') return false; if (isMinor(p) && !hasConsent(p)) return true; if ((p.prior_marriages || []).some(m => !pmResolved(m))) return true; return false; });
-  if (!flags.length) { el.innerHTML = ''; return; }
-  el.innerHTML = `<div class="alert-strip" style="margin-bottom:1rem;flex-direction:column;align-items:flex-start;">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><i class="ti ti-alert-triangle" style="color:var(--gold);font-size:15px;"></i><strong style="font-size:13px;">Attention required</strong></div>
-    ${flags.map(p => { const r = []; if (isMinor(p) && !hasConsent(p)) r.push('parental consent outstanding'); if ((p.prior_marriages || []).some(m => !pmResolved(m))) r.push('annulment needed'); return `<div style="font-size:13px;color:var(--navy);margin-bottom:3px;">· <strong>${_esc(p.name)}</strong> — ${r.join(', ')}</div>`; }).join('')}
-  </div>`;
-}
 
-function setOciaFilter(f, el) {
-  ociaFilter = f;
-  document.querySelectorAll('#panel-ocia .cf-btn').forEach(b => b.classList.remove('active'));
-  el?.classList.add('active');
-  renderOcia();
-}
-
-function renderOcia() {
-  const q = (document.getElementById('ocia-search')?.value || '').toLowerCase();
-  const items = allOcia.filter(p => (ociaFilter === 'all' ? true : p.status_code === ociaFilter) && (!q || (p.name || '').toLowerCase().includes(q)));
-  const el = document.getElementById('ocia-list'); if (!el) return;
-  if (!items.length) { el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No records found.</div>'; return; }
-  const renderUnits = (list) => {
-    const groups = {}; list.forEach(p => { if (p.family_group_id) (groups[p.family_group_id] = groups[p.family_group_id] || []).push(p); });
-    const seen = new Set(); const units = [];
-    list.forEach(p => {
-      if (p.family_group_id) {
-        if (seen.has(p.family_group_id)) return; seen.add(p.family_group_id);
-        const members = groups[p.family_group_id].slice().sort((a, b) => (ociaAge(b.dob) ?? -1) - (ociaAge(a.dob) ?? -1)); // oldest → youngest
-        units.push({ members, sort: (lastNameOf(members[0]) + ' ' + (members[0].name || '')).toLowerCase() });
-      } else {
-        units.push({ members: [p], sort: (lastNameOf(p) + ' ' + (p.name || '')).toLowerCase() });
-      }
-    });
-    units.sort((a, b) => a.sort.localeCompare(b.sort));
-    return units.map(u => u.members.map(renderOciaCard).join('')).join('');
-  };
-  const active = items.filter(p => !p.archived), archived = items.filter(p => p.archived);
-  let html = renderUnits(active);
-  if (archived.length) {
-    html += `<div style="display:flex;align-items:center;gap:10px;margin:18px 0 10px;"><div style="flex:1;height:.5px;background:var(--stone);"></div><span style="font-size:11px;color:#6B7280;letter-spacing:.07em;text-transform:uppercase;font-weight:500;">Archived</span><div style="flex:1;height:.5px;background:var(--stone);"></div></div>`;
-    html += renderUnits(archived);
-  }
-  el.innerHTML = html;
-}
-
-// ── Card ─────────────────────────────────────────────────────────────────────
-function renderOciaCard(p) {
-  const sm = OCIA_STATUS[p.status_code] || OCIA_STATUS.inquirer;
-  const age = ociaAge(p.dob);
-  const minorFlag = isMinor(p) && !hasConsent(p);
-  const priorFlag = (p.prior_marriages || []).some(m => !pmResolved(m));
-  const flagged = minorFlag || priorFlag;
-  const exp = ociaExpanded === p.id;
-  const recChip = receptionChip(p);
-  const fam = p.family_group_id ? `${lastNameOf(p)} Family` : null;
-  const docs = normDocs(p); const done = docs.filter(d => d.received).length;
-  const progress = docs.length ? Math.round((done / docs.length) * 100) : null;
-
-  let h = `<div class="couple-card${flagged ? ' urgent' : ''}" id="ocia-card-${p.id}" style="border-left:4px solid ${sm.dot};">
-    <div class="couple-header" onclick="toggleOcia('${p.id}')">
-      <div style="flex:1;min-width:0;">
-        <span class="couple-name">${_esc(p.name || '—')}${age !== null ? ` <span style="font-size:12px;color:#6B7280;font-weight:400;">(${age})</span>` : ''}</span>
-        <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center;">
-          <span style="background:${sm.bg};color:${sm.color};border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;letter-spacing:.04em;display:inline-flex;align-items:center;gap:5px;border:1px solid ${sm.color}33;"><span style="width:7px;height:7px;border-radius:50%;background:${sm.dot};display:inline-block;"></span>${sm.label}</span>
-          <span style="font-size:11px;color:#4A1D96;background:#EDE9FE;border-radius:20px;padding:2px 8px;">${candType(p) === 'candidate' ? 'Candidate' : 'Catechumen'}</span>
-          ${recChip ? `<span style="font-size:11px;background:#FEF9E7;color:#7D6608;border-radius:20px;padding:2px 8px;">🕊 ${recChip}</span>` : ''}
-          ${fam ? `<span style="font-size:11px;color:#5B4636;background:#F3ECE0;border-radius:20px;padding:2px 8px;">👪 ${_esc(fam)}</span>` : ''}
-          ${progress !== null ? (progress === 100 ? `<span style="font-size:11px;color:#2D6A4F;">✅ docs complete</span>` : `<span style="font-size:11px;color:#922B21;">${done}/${docs.length} docs</span>`) : ''}
-        </div>
-        ${minorFlag ? `<div style="margin-top:5px;background:#FEF9E7;border-left:3px solid #D4AC0D;border-radius:3px;padding:4px 10px;font-size:12px;font-weight:600;color:#7D6608;">⚠ Parental consent outstanding</div>` : ''}
-        ${priorFlag ? `<div style="margin-top:5px;background:#FDEDEC;border-left:3px solid #E74C3C;border-radius:3px;padding:4px 10px;font-size:12px;font-weight:600;color:#922B21;">❗ Prior marriage — annulment needed</div>` : ''}
-      </div>
-      <span style="font-size:16px;color:#B0A090;">${exp ? '▲' : '▼'}</span>
-    </div>`;
-  if (exp) h += renderOciaBody(p, docs, progress, done);
-  h += `</div>`;
-  return h;
-}
-
-function renderOciaBody(p, docs, progress, done) {
-  let h = `<div class="couple-body">`;
-  // detail chips
-  h += `<div style="margin-top:10px;">`;
-  if (p.dob) h += `<span class="detail-chip">🎂 ${_esc(p.dob)}</span>`;
-  if (p.place_of_birth) h += `<span class="detail-chip">📍 ${_esc(p.place_of_birth)}</span>`;
-  h += `</div>`;
-  if (p.phone || p.email) {
-    h += `<div style="margin-top:8px;">`;
-    if (p.phone) h += `<a href="tel:${normalizePhone(p.phone)}" class="contact-chip">📞 ${_esc(formatPhone(p.phone))}</a>`;
-    if (p.email) h += `<a href="mailto:${p.email}" class="contact-chip">✉️ ${_esc(p.email)}</a>`;
-    h += `</div>`;
-  }
-  // baptism (candidate) / sponsor
-  if (candType(p) === 'candidate') {
-    const bcity = p.baptism_city || p.baptism_city_state || '';
-    h += `<div class="couple-section-label">Baptism</div><div style="font-size:13px;">${p.baptism_church ? '⛪ ' + _esc(p.baptism_church) : ''}${bcity ? ' · ' + _esc(bcity) : ''}${p.baptism_state ? ', ' + _esc(p.baptism_state) : ''}</div>`;
-  }
-  const sponsor = p.sponsor_name || p.sponsor1;
-  if (sponsor) h += `<div style="font-size:13px;margin-top:6px;">Sponsor: <strong>${_esc(sponsor)}</strong></div>`;
-  if (p.preparer) h += `<div style="font-size:13px;margin-top:6px;">Person Responsible for Formation: <strong>${_esc(p.preparer)}</strong></div>`;
-  // minor consent status
-  if (isMinor(p)) {
-    h += hasConsent(p)
-      ? `<div style="margin-top:8px;padding:6px 10px;background:#D8F3DC;border-left:3px solid #2D6A4F;border-radius:3px;font-size:13px;color:#2D6A4F;">✅ Permission received${(p.minor_guardian_name || p.consent_parent_name) ? ' — ' + _esc(p.minor_guardian_name || p.consent_parent_name) : ''}</div>`
-      : `<div style="margin-top:8px;padding:6px 10px;background:#FEF9E7;border-left:3px solid #D4AC0D;border-radius:3px;font-size:13px;color:#7D6608;">⚠ Parental/guardian permission outstanding</div>`;
-  }
-  // prior marriages (read-only with annulment flag + link)
-  const pm = p.prior_marriages || [];
-  if (pm.length) {
-    h += `<div class="couple-section-label">Prior marriages</div>`;
-    h += pm.map(m => {
-      const lc = m.annulment_case_id ? (store.allCases || []).find(c => c.id === m.annulment_case_id) : null;
-      const resolved = pmResolved(m);
-      return `<div style="padding:6px 10px;background:${resolved ? '#F8F7F4' : '#FEF9E7'};border-left:3px solid ${resolved ? 'var(--stone)' : '#D4AC0D'};border-radius:3px;margin-bottom:6px;font-size:13px;">
-        <div><strong>${_esc(pmName(m))}</strong>${m.how_ended ? ` · ${_esc(m.how_ended)}` : ''}</div>
-        <div style="font-size:11px;margin-top:2px;color:${resolved ? '#2D6A4F' : '#854F0B'};">${resolved ? '✅ resolved' : '⚠ annulment needed'}</div>
-        ${lc ? `<div style="font-size:11px;color:#1B4F72;margin-top:4px;">🔗 <span onclick="window.expandCase('${lc.id}')" style="cursor:pointer;text-decoration:underline;"><strong>${_esc(lc.petitioner)}${lc.respondent ? ' v. ' + _esc(lc.respondent) : ''}</strong></span></div>` : ''}
-      </div>`;
-    }).join('');
-  }
-  // documents (autosave)
-  if (docs.length) {
-    h += `<div class="couple-section-label" style="margin-top:12px;">Document checklist</div>`;
-    if (progress !== null) h += `<div class="prog-bar-wrap"><div class="prog-bar-fill" style="width:${progress}%;background:${progress === 100 ? '#2D6A4F' : 'var(--gold)'};"></div></div><div style="font-size:11px;color:#888;margin-bottom:6px;">${done}/${docs.length} received</div>`;
-    h += docs.map((d, i) => `<div class="doc-item" style="padding:4px 6px;display:flex;align-items:center;gap:8px;">
-      <span style="font-size:15px;cursor:pointer;" onclick="toggleOciaDoc('${p.id}',${i})">${d.received ? '✅' : '⬜'}</span>
-      <span style="flex:1;color:${d.received ? '#2D6A4F' : 'var(--navy)'};cursor:pointer;" onclick="toggleOciaDoc('${p.id}',${i})">${_esc(d.name)}</span>
-      ${!d.deletable ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : ''}
-    </div>`).join('');
-  }
-  // notes
-  const notes = notesOf(p);
-  h += `<div class="couple-section-label" style="margin-top:12px;">Notes</div>
-    <div style="display:flex;gap:6px;margin-bottom:8px;"><input type="text" id="on-${p.id}" placeholder="Add a note…" style="flex:1;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" onkeydown="if(event.key==='Enter'){event.preventDefault();addOciaNoteLog('${p.id}');}" /><button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="addOciaNoteLog('${p.id}')">Add</button></div>`;
-  h += notes.length ? notes.map(n => `<div style="font-size:13px;color:#555;margin-bottom:6px;padding:8px 12px;background:#FFF8EE;border-left:3px solid var(--gold);border-radius:3px;"><div style="white-space:pre-wrap;">${_esc(n.note)}</div>${(n.by || n.created_at) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${n.created_at ? fmtDate(String(n.created_at).slice(0, 10)) : ''}${n.by ? ' · ' + _esc(n.by) : ''}</div>` : ''}</div>`).join('') : `<div style="font-size:13px;color:#9CA3AF;font-style:italic;padding:.25rem 0;">No notes yet.</div>`;
-
-  h += `<div style="margin-top:12px;text-align:right;"><button class="anl-icon-btn" title="Edit" onclick="openOciaEdit('${p.id}')"><i class="fa-solid fa-pencil"></i></button></div>`;
-  h += `</div>`;
-  return h;
-}
-
-function toggleOcia(id) { ociaExpanded = ociaExpanded === id ? null : id; renderOcia(); }
+// Cross-link entry — open a specific OCIA record in the shell (deep-link).
 export async function expandOcia(id) {
-  ociaExpanded = id; window.switchPanel('ocia'); await loadOcia();
-  document.getElementById('ocia-card-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-// ── Autosave (live card) ─────────────────────────────────────────────────────
-async function _patch(id, patch) { const p = allOcia.find(x => x.id === id); if (!p) return null; const { error } = await serializeWrite(`ocia:${id}`, () => withWriteRetry(() => sb.from('sacramental_ocia').update({ ...patch, updated_at: nowIso() }).eq('id', id), { kind: 'update' })); if (error) { alert('Save failed: ' + error.message); return null; } Object.assign(p, patch); return p; }
-async function toggleOciaDoc(id, i) {
-  const p = allOcia.find(x => x.id === id); if (!p) return;
-  const docs = normDocs(p); docs[i].received = !docs[i].received;
-  const prevAll = normDocs(p).length > 0 && normDocs(p).every(d => d.received);
-  const allDone = docs.length > 0 && docs.every(d => d.received);
-  const patch = { documents: docs };
-  if (allDone && !prevAll) { const tl = JSON.parse(JSON.stringify(p.timeline || [])); tl.push({ type: 'auto', text: 'All documents received', created_at: nowIso() }); patch.timeline = tl; }
-  if (await _patch(id, patch)) renderOcia();
-}
-async function addOciaNoteLog(id) {
-  const inp = document.getElementById('on-' + id); const note = (inp?.value || '').trim(); if (!note) return;
-  const p = allOcia.find(x => x.id === id); if (!p) return;
-  const log = Array.isArray(p.notes_log) ? JSON.parse(JSON.stringify(p.notes_log)) : [];
-  log.push({ note, by: _curUserName(), created_at: nowIso() });
-  if (await _patch(id, { notes_log: log })) renderOcia();
+  openSacramentalRecord('ocia', id);   // set the hash first so the shell opens it on mount
+  window.switchPanel('ocia');
 }
 
 // ── Big modal scaffolding ────────────────────────────────────────────────────
@@ -327,13 +197,14 @@ function _nameParts(p) {
   return { first: parts[0], middle: parts.slice(1, -1).join(' '), last: parts[parts.length - 1] };
 }
 
-function buildModalHtml(p) {
+function buildModalHtml(p, opts = {}) {
+  const inline = !!opts.inline;
   const isEdit = _M.isEdit;
   const np = _nameParts(p);
   const age = ociaAge(p?.dob);
   const instOpts = (store.institutions || []).map(i => `<option value="${i.name}"${p?.reception_church === i.name ? ' selected' : ''}>${_esc(i.name)}</option>`).join('');
 
-  let h = `<div class="modal-title">${isEdit ? 'Edit OCIA File' : 'New OCIA Candidate'}</div>`;
+  let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit OCIA File' : 'New OCIA Candidate'}</div>`;
 
   // Section 1 — Candidate Type toggle buttons
   h += _sectionHead('Candidate Type');
@@ -342,9 +213,16 @@ function buildModalHtml(p) {
     <button type="button" id="ot-candidate" class="ocia-type-btn${_M.type === 'candidate' ? ' active' : ''}" onclick="ociaSetType('candidate')" style="flex:1;">Candidate<br><span style="font-size:11px;font-weight:400;opacity:.8;">already baptized</span></button>
   </div>`;
 
-  // Section 2 — Person responsible for formation (clergy + OCIA coordinator + Other)
-  h += _sectionHead('Person Responsible for Formation');
-  h += buildPreparerField('of-preparer', p?.preparer || '', { coordinatorNames: _ociaCoordinatorNames, label: 'Person Responsible for Formation' });
+  // Section 2 — Cohort (SELECT an existing cohort; creation lives in Manage Cohorts).
+  // Picking a cohort defaults the reception church (editable) — see ociaCohortPick.
+  h += _sectionHead('Cohort');
+  if (_cohorts.length) {
+    const cohOpts = _cohorts.map(c => `<option value="${c.id}"${p?.cohort_id === c.id ? ' selected' : ''}>${cohortLabel(c.cohort_date)}</option>`).join('');
+    h += `<label>Cohort</label><select id="of-cohort" onchange="ociaCohortPick(this.value)"><option value="">— None —</option>${cohOpts}</select>`;
+  } else {
+    h += `<label>Cohort</label><select id="of-cohort" disabled style="color:#9CA3AF;"><option value="">No cohorts yet</option></select>
+      <div style="font-size:11.5px;color:#9CA3AF;margin-top:4px;">Create a cohort first via <strong>Manage Cohorts</strong>.</div>`;
+  }
 
   // Section 3 — Candidate info
   h += _sectionHead('Candidate Information');
@@ -401,10 +279,14 @@ function buildModalHtml(p) {
     h += _toggle('of-archive', 'Archive this file', !!p?.archived);
   }
 
-  h += `<div class="modal-actions" style="justify-content:space-between;">
-    ${isEdit ? `<button class="btn-delete" onclick="ociaDeletePerson('${_M.id}')">Delete</button>` : '<span></span>'}
-    <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="ociaCloseModal()">Cancel</button><button class="btn-primary" onclick="ociaSave()">${isEdit ? 'Save' : 'Create File'}</button></div>
-  </div>`;
+  // Actions — only for the create MODAL. The inline edit form lives in the shell's
+  // detail pane, which supplies its own Save / Cancel / Delete buttons.
+  if (!inline) {
+    h += `<div class="modal-actions" style="justify-content:space-between;">
+      ${isEdit ? `<button class="btn-delete" onclick="ociaDeletePerson('${_M.id}')">Delete</button>` : '<span></span>'}
+      <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="ociaCloseModal()">Cancel</button><button class="btn-primary" onclick="ociaSave()">${isEdit ? 'Save' : 'Create File'}</button></div>
+    </div>`;
+  }
   return h;
 }
 
@@ -458,6 +340,17 @@ function ociaSetType(t) {
 }
 function ociaDobChange() { const age = ociaAge(document.getElementById('of-dob').value); document.getElementById('of-minor-wrap').style.display = (age !== null && age <= 17) ? 'block' : 'none'; }
 function ociaStatusChange(v) { const w = document.getElementById('of-rec-wrap'); if (w) w.style.display = (v === 'received' || v === 'complete') ? 'block' : 'none'; }
+// Cohort → reception church inheritance: default (editable) the reception church to
+// the cohort's church when not already set. Reception church stores the church NAME.
+function ociaCohortPick(v) {
+  const coh = _cohorts.find(c => c.id === v);
+  const rc = document.getElementById('of-rec-church');
+  if (!coh || !rc || rc.value) return;
+  const name = coh.church_institution_id
+    ? ((store.institutions || []).find(i => i.id === coh.church_institution_id)?.name || '')
+    : (coh.church_override || '');
+  if (name && [...rc.options].some(o => o.value === name)) rc.value = name;
+}
 function ociaRecOtherChange() { _M.recOther = document.getElementById('of-rec-other').checked; document.getElementById('of-rec-date-wrap').style.display = _M.recOther ? 'block' : 'none'; document.getElementById('of-rec-easter-note').style.display = _M.recOther ? 'none' : 'block'; }
 function ociaPriorToggle() { const on = document.getElementById('of-prior-toggle').checked; document.getElementById('of-prior-wrap').style.display = on ? 'block' : 'none'; if (on && !_M.prior.length) { _M.prior = [{ spouse_name: '', how_ended: 'Death', annulment_case_id: null }]; renderPrior(); } }
 function _syncPrior() { _M.prior = _M.prior.map((m, i) => ({ spouse_name: document.getElementById(`of-pm-name-${i}`)?.value.trim() || '', how_ended: document.getElementById(`of-pm-ended-${i}`)?.value || 'Death', annulment_case_id: m.annulment_case_id || null })); }
@@ -495,15 +388,19 @@ function ociaRemoveAnnul(i) { _syncPrior(); _M.prior[i].annulment_case_id = null
 // ── Save ─────────────────────────────────────────────────────────────────────
 function _v(id) { const e = document.getElementById(id); return e ? e.value.trim() : ''; }
 function _chk(id) { return !!document.getElementById(id)?.checked; }
-async function ociaSave() {
+// Shared DOM→payload reader (create modal AND shell inline edit). Returns
+// { ok, payload, familyGroupId, linkTargetToUpdate }. The `preparer` field was
+// dropped (OCIA has no formation field in Phase 2; the column does not exist).
+function _ociaReadPayload() {
   _syncPrior();
   const name = [_v('of-first'), _v('of-middle'), _v('of-last')].filter(Boolean).join(' ');
-  if (!name) { alert('Candidate name is required.'); return; }
+  if (!name) return { ok: false };
   const type = _M.type;
   const age = ociaAge(_v('of-dob'));
   const minor = age !== null && age <= 17;
+  const cohortSel = document.getElementById('of-cohort')?.value || '';
+  const coh = _cohorts.find(c => c.id === cohortSel);
 
-  // family group resolution
   let familyGroupId = null, linkTargetToUpdate = null;
   if (_M.family) {
     if (_M.family.group_id) familyGroupId = _M.family.group_id;
@@ -512,7 +409,7 @@ async function ociaSave() {
 
   const payload = {
     name, candidate_type: type, baptismal_status: type === 'candidate' ? 'baptized' : 'unbaptized',
-    preparer: readPreparerValue('of-preparer'),
+    cohort_id: cohortSel || null, cohort_date: coh?.cohort_date || null,
     phone: normalizePhone(_v('of-phone')) || null, email: _v('of-email') || null, dob: _v('of-dob') || null,
     parental_consent: minor ? _chk('of-consent') : false,
     minor_guardian_name: minor ? (_v('of-guardian') || null) : null,
@@ -529,48 +426,80 @@ async function ociaSave() {
     family_group_id: familyGroupId,
     updated_at: nowIso(),
   };
-
-  if (_M.isEdit) {
-    const prior = allOcia.find(x => x.id === _M.id);
-    const newStatus = document.getElementById('of-status')?.value || prior?.status_code || 'inquirer';
-    payload.status_code = newStatus;
-    payload.archived = _chk('of-archive');
-    if (newStatus === 'received' || newStatus === 'complete') {
-      const easterVal = document.getElementById('of-rec-wrap')?.dataset.easter || null;
-      payload.reception_is_easter_vigil = !_M.recOther;
-      payload.reception_date = _M.recOther ? (_v('of-rec-date') || null) : easterVal;
-      payload.reception_date_type = _M.recOther ? 'custom' : 'easter';
-      const churchSel = document.getElementById('of-rec-church')?.value || '';
-      payload.reception_church = churchSel && churchSel !== '__other' ? churchSel : (churchSel === '__other' ? prior?.reception_church || null : null);
-      payload.sacraments_received = { baptism: type === 'catechumen' ? _chk('of-sac-baptism') : false, confirmation: _chk('of-sac-confirmation'), eucharist: _chk('of-sac-eucharist') };
-    }
-    const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
-    if (prior && prior.status_code !== 'received' && newStatus === 'received') tl.push({ type: 'auto', text: 'Received', created_at: nowIso() });
-    payload.timeline = tl;
-    const { error } = await withWriteRetry(() => sb.from('sacramental_ocia').update(payload).eq('id', _M.id), { kind: 'update' });
-    if (error) { reportWriteError('ocia update', error); return; }
-    if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);
-    logActivity({ action: 'updated OCIA record', entityType: 'ocia', entityName: name, contextType: 'ocia', contextId: _M.id });
-    ociaCloseModal(); await loadOcia();
-  } else {
-    payload.status_code = 'inquirer';
-    payload.archived = false;
-    payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-    const { error } = await withWriteRetry(() => sb.from('sacramental_ocia').insert(payload), { kind: 'insert' });
-    if (error) { reportWriteError('ocia insert', error); return; }
-    if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);
-    logActivity({ action: 'added OCIA candidate', entityType: 'ocia', entityName: name, contextType: 'ocia' });
-    const { data: { user } } = await sb.auth.getUser();
-    const uids = await getUserIdsForSacrament('ocia');
-    notifyUsers(uids, user?.id, `New OCIA candidate added: ${name}`, 'info', 'ocia');
-    ociaCloseModal(); await loadOcia();
-  }
+  return { ok: true, payload, familyGroupId, linkTargetToUpdate };
 }
-async function ociaDeletePerson(id) {
-  if (!confirm('Permanently delete this record? This cannot be undone.')) return;
+
+// Apply edit-only fields (status / reception / sacraments / archive) + the auto
+// "Received" timeline milestone. Mutates `payload`.
+function _ociaApplyEditFields(payload, prior) {
+  const type = _M.type;
+  const newStatus = document.getElementById('of-status')?.value || prior?.status_code || 'inquirer';
+  payload.status_code = newStatus;
+  payload.archived = _chk('of-archive');
+  if (newStatus === 'received' || newStatus === 'complete') {
+    const easterVal = document.getElementById('of-rec-wrap')?.dataset.easter || null;
+    payload.reception_is_easter_vigil = !_M.recOther;
+    payload.reception_date = _M.recOther ? (_v('of-rec-date') || null) : easterVal;
+    payload.reception_date_type = _M.recOther ? 'custom' : 'easter';
+    const churchSel = document.getElementById('of-rec-church')?.value || '';
+    payload.reception_church = churchSel && churchSel !== '__other' ? churchSel : (churchSel === '__other' ? prior?.reception_church || null : null);
+    payload.sacraments_received = { baptism: type === 'catechumen' ? _chk('of-sac-baptism') : false, confirmation: _chk('of-sac-confirmation'), eucharist: _chk('of-sac-eucharist') };
+  }
+  const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
+  if (prior && prior.status_code !== 'received' && newStatus === 'received') tl.push({ type: 'auto', text: 'Received', created_at: nowIso() });
+  payload.timeline = tl;
+}
+
+// Create flow (modal).
+async function ociaSave() {
+  const r = _ociaReadPayload();
+  if (!r.ok) { alert('Candidate name is required.'); return; }
+  if (_M.isEdit) { const res = await ociaSaveEdit(_M.id); if (res.ok) { ociaCloseModal(); refreshActivePanel(); } return; }
+  const { payload, familyGroupId, linkTargetToUpdate } = r;
+  payload.status_code = 'inquirer';
+  payload.archived = false;
+  payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
+  const { error } = await withWriteRetry(() => sb.from('sacramental_ocia').insert(payload), { kind: 'insert' });
+  if (error) { reportWriteError('ocia insert', error); return; }
+  if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);
+  logActivity({ action: 'added OCIA candidate', entityType: 'ocia', entityName: payload.name, contextType: 'ocia' });
+  const { data: { user } } = await sb.auth.getUser();
+  const uids = await getUserIdsForSacrament('ocia');
+  notifyUsers(uids, user?.id, `New OCIA candidate added: ${payload.name}`, 'info', 'ocia');
+  ociaCloseModal(); await loadOciaData(); refreshActivePanel();
+}
+
+// ── Shell config hooks (inline edit form + save/delete) ──────────────────────
+export function buildOciaEditForm(p) {
+  _M = newModalState(p, candType(p));
+  const html = buildModalHtml(p, { inline: true });
+  setTimeout(() => _hydrate(), 0);
+  return html;
+}
+export async function ociaSaveEdit(id) {
+  const r = _ociaReadPayload();
+  if (!r.ok) { alert('Candidate name is required.'); return { ok: false }; }
+  const { payload, familyGroupId, linkTargetToUpdate } = r;
+  const prior = allOcia.find(x => x.id === id);
+  _ociaApplyEditFields(payload, prior);
+  const { error } = await withWriteRetry(() => sb.from('sacramental_ocia').update(payload).eq('id', id), { kind: 'update' });
+  if (error) { reportWriteError('ocia update', error); return { ok: false }; }
+  if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);
+  logActivity({ action: 'updated OCIA record', entityType: 'ocia', entityName: payload.name, contextType: 'ocia', contextId: id });
+  await loadOciaData();
+  return { ok: true };
+}
+export async function ociaDeleteRec(id) {
+  if (!confirm('Permanently delete this record? This cannot be undone.')) return { ok: false };
   const { error } = await sb.from('sacramental_ocia').delete().eq('id', id);
-  if (error) { alert('Delete failed: ' + error.message); return; }
-  ociaCloseModal(); await loadOcia();
+  if (error) { reportWriteError('ocia delete', error); return { ok: false }; }
+  allOcia = allOcia.filter(x => x.id !== id); store.allOcia = allOcia;
+  logActivity({ action: 'deleted OCIA record', entityType: 'ocia', entityName: id, contextType: 'ocia' });
+  return { ok: true };
+}
+async function ociaDeletePerson(id) {   // modal Delete button
+  const res = await ociaDeleteRec(id);
+  if (res.ok) { ociaCloseModal(); refreshActivePanel(); }
 }
 
 // ── Templates ────────────────────────────────────────────────────────────────
@@ -604,10 +533,9 @@ async function ociaTplSave() {
 }
 
 Object.assign(window, {
-  renderOcia, setOciaFilter, toggleOcia, expandOcia, expandCase,
+  expandOcia, expandCase,
   openOciaCreate, openOciaEdit, openOciaTemplates, ociaCloseModal,
-  toggleOciaDoc, addOciaNoteLog,
-  ociaSetType, ociaDobChange, ociaStatusChange, ociaRecOtherChange,
+  ociaSetType, ociaDobChange, ociaStatusChange, ociaRecOtherChange, ociaCohortPick,
   ociaPriorToggle, ociaAddPrior, ociaRemovePrior, ociaPriorEnded,
   ociaDocReceived, ociaRemoveDoc, ociaAddDoc,
   ociaFamilySearch, ociaRemoveFamily, ociaAnnulSearch, ociaRemoveAnnul,

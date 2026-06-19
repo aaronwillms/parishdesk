@@ -179,14 +179,7 @@ function buildModalHtml(p, opts = {}) {
   h += _input('bf-street', 'Mailing Street Address', p?.child_street || '');
   h += _row(_input('bf-city', 'City', p?.child_city || ''), _stateSelect('bf-state', p?.child_state || ''), _input('bf-zip', 'ZIP', p?.child_zip || ''));
 
-  // 3 — Baptism details
-  h += _sectionHead('Baptism Details');
-  h += _input('bf-bdate', 'Baptism Date', bapDate(p) || '', 'date');
-  h += `<label>Church of Baptism</label><select id="bf-inst" onchange="bapInstChange(this.value)"><option value="">— Select —</option>${instOpts}<option value="__other"${_M.instMode === 'other' ? ' selected' : ''}>Other…</option></select>
-    <div id="bf-inst-other-wrap" style="display:${_M.instMode === 'other' ? 'block' : 'none'};">${_input('bf-church-override', 'Church name', p?.baptism_church_override || '')}</div>
-    ${_row(_input('bf-bcity', 'City', p?.baptism_city || ''), _stateSelect('bf-bstate', p?.baptism_state || ''))}`;
-
-  // 4 — Parents
+  // 3 — Parents (moved ABOVE Baptism Details)
   h += _sectionHead('Parent / Guardian 1');
   h += _row(_input('bf-p1first', 'First Name', p?.parent1_first || ''), _input('bf-p1last', 'Last Name', p?.parent1_last || ''));
   h += _row(_input('bf-p1phone', 'Cell Phone', p?.parent1_phone || '', 'tel'), _input('bf-p1email', 'Email', p?.parent1_email || ''));
@@ -202,6 +195,13 @@ function buildModalHtml(p, opts = {}) {
     <button class="btn-secondary" style="padding:.3rem .8rem;font-size:12px;margin-top:8px;" onclick="bapToggleParent2(false)">× Remove second parent</button>
   </div>
   <button id="bf-add-p2" class="btn-secondary" style="display:${_M.showParent2 ? 'none' : 'inline-block'};padding:.3rem .8rem;font-size:12px;margin-top:8px;" onclick="bapToggleParent2(true)">+ Add second parent/guardian</button>`;
+
+  // 4 — Baptism details
+  h += _sectionHead('Baptism Details');
+  h += _input('bf-bdate', 'Baptism Date', bapDate(p) || '', 'date');
+  h += `<label>Church of Baptism</label><select id="bf-inst" onchange="bapInstChange(this.value)"><option value="">— Select —</option>${instOpts}<option value="__other"${_M.instMode === 'other' ? ' selected' : ''}>Other…</option></select>
+    <div id="bf-inst-other-wrap" style="display:${_M.instMode === 'other' ? 'block' : 'none'};">${_input('bf-church-override', 'Church name', p?.baptism_church_override || '')}</div>
+    ${_row(_input('bf-bcity', 'City', p?.baptism_city || ''), _stateSelect('bf-bstate', p?.baptism_state || ''))}`;
 
   // adoption
   h += _sectionHead('Adoption');

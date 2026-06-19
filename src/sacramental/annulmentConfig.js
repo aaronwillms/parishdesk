@@ -302,14 +302,14 @@ export const annulmentConfig = {
   listItem: (c) => ({
     title: caseTitle(c),
     secondary: advocateName(c) ? `Advocate: ${advocateName(c)}` : '',
-    chips: [typeChip(c), statusChip(c), docsCompleteChip(c)].filter(Boolean),
+    chips: [statusChip(c), typeChip(c), docsCompleteChip(c)].filter(Boolean),
     flags: [],
   }),
 
   detailHeader: (c) => ({
     avatarIcon: 'fa-scale-balanced',   // scales of justice (a case has two parties)
     name: viewerTitle(c),
-    chips: [typeChip(c), statusChip(c), docsCompleteChip(c)].filter(Boolean),
+    chips: [statusChip(c), typeChip(c), docsCompleteChip(c)].filter(Boolean),
     flags: [],
   }),
 

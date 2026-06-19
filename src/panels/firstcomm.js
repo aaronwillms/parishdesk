@@ -7,6 +7,7 @@ import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { registerFamilyPanel, familyAddPickerHtml, getPendingAdd, clearPendingAdd, familyLink } from '../sacramental/familyLink.js';
+import { cohortChurchLocation, detailsChurchToggle, detailsCityState, inheritCohortChurch } from '../sacramental/churchLocation.js';
 
 const FC_STATUS = {
   enrolled:    { label:'Enrolled',                  color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -206,7 +207,7 @@ function buildModalHtml(p, opts = {}) {
   h += _row(_input('ff-city', 'City', p?.child_city || ''), _stateSelect('ff-state', p?.child_state || ''), _input('ff-zip', 'ZIP', p?.child_zip || ''));
 
   // 4 — Parents
-  h += _sectionHead('Parent / Guardian');
+  h += _sectionHead('Parent/Guardian Contact');
   h += _row(_input('ff-p1first', 'First Name', p?.parent1_first || ''), _input('ff-p1last', 'Last Name', p?.parent1_last || ''));
   h += _row(_input('ff-p1phone', 'Cell Phone', p?.parent1_phone || p?.phone || '', 'tel'), _input('ff-p1email', 'Email', p?.parent1_email || p?.email || ''));
 
@@ -220,8 +221,10 @@ function buildModalHtml(p, opts = {}) {
   h += _sectionHead('First Communion Details');
   h += _input('ff-cdate', 'First Communion Date', commDate(p) || '', 'date');
   h += `<label>Church</label><select id="ff-church" onchange="fcChurchChange(this.value)"><option value="">— Select —</option>${instOpts}<option value="__other"${(p?.communion_church_override && !p?.communion_institution_id) ? ' selected' : ''}>Other…</option></select>
-    <div id="ff-church-other-wrap" style="display:${(p?.communion_church_override && !p?.communion_institution_id) ? 'block' : 'none'};">${_input('ff-church-override', 'Church name', p?.communion_church_override || '')}</div>
-    ${_row(_input('ff-ccity', 'City', p?.communion_city || ''), _stateSelect('ff-cstate', p?.communion_state || ''))}`;
+    <div id="ff-church-other-wrap" style="display:${(p?.communion_church_override && !p?.communion_institution_id) ? 'block' : 'none'};">
+      ${_input('ff-church-override', 'Church name', p?.communion_church_override || '')}
+      ${_row(_input('ff-ccity', 'City', p?.communion_city || ''), _stateSelect('ff-cstate', p?.communion_state || ''))}
+    </div>`;
 
   // 7 — Documents
   h += _sectionHead('Document Checklist');
@@ -259,9 +262,13 @@ function renderModalDocs() {
   </div>`).join('') || `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No documents.</div>`;
 }
 
-function fcCohortPick(v) { const coh = _cohorts.find(c => c.id === v); if (coh?.cohort_date) { const dt = document.getElementById('ff-cdate'); if (dt && !dt.value) dt.value = coh.cohort_date; } }
+function fcCohortPick(v) {
+  const coh = _cohorts.find(c => c.id === v);
+  if (coh?.cohort_date) { const dt = document.getElementById('ff-cdate'); if (dt && !dt.value) dt.value = coh.cohort_date; }
+  inheritCohortChurch(coh, 'ff');   // default (editable) the church to the cohort's
+}
 function fcDobChange() { const age = ageOf(document.getElementById('ff-dob').value); document.getElementById('ff-age-note').style.display = (age !== null && age > 13) ? 'block' : 'none'; }
-function fcChurchChange(v) { document.getElementById('ff-church-other-wrap').style.display = v === '__other' ? 'block' : 'none'; }
+function fcChurchChange(v) { detailsChurchToggle(v, 'ff'); }
 function fcDocReceived(i, v) { _M.docs[i].received = v; }
 function fcRemoveDoc(i) { _M.docs.splice(i, 1); renderModalDocs(); }
 function fcAddDoc() { const inp = document.getElementById('ff-doc-new'); const name = (inp?.value || '').trim(); if (!name) return; _M.docs.push({ name, received: false, deletable: true, auto: false }); inp.value = ''; renderModalDocs(); }
@@ -291,7 +298,8 @@ function _fcReadPayload() {
     communion_date: _v('ff-cdate') || null,
     communion_institution_id: churchSel && churchSel !== '__other' ? churchSel : null,
     communion_church_override: churchSel === '__other' ? (_v('ff-church-override') || null) : null,
-    communion_city: _v('ff-ccity') || null, communion_state: _v('ff-cstate') || null,
+    // City/State: manual for "Other", else derived from the listed institution.
+    ...(() => { const cs = detailsCityState(churchSel, 'ff-ccity', 'ff-cstate'); return { communion_city: cs.city, communion_state: cs.state }; })(),
     documents: _M.docs,
     updated_at: nowIso(),
   };
@@ -394,7 +402,7 @@ function buildCohortHtml() {
     ${_row(_input('fcoh-city', 'City', ''), _stateSelect('fcoh-state', ''))}
     <div class="modal-actions"><button class="btn-secondary" onclick="fcCloseModal()">Close</button><button class="btn-primary" onclick="fcSaveCohort()">+ Add Cohort</button></div>`;
 }
-function fcCohortChurchChange(v) { const other = v === '__other'; document.getElementById('fcoh-other-wrap').style.display = other ? 'block' : 'none'; if (!other && v) { const inst = (store.institutions || []).find(i => i.id === v); const cs = parseCityState(inst?.address || ''); const ce = document.getElementById('fcoh-city'), se = document.getElementById('fcoh-state'); if (ce && cs.city) ce.value = cs.city; if (se && cs.state) se.value = cs.state; } }
+function fcCohortChurchChange(v) { cohortChurchLocation(v, 'fcoh'); }
 function parseCityState(addr) { if (!addr) return {}; const parts = addr.split(',').map(s => s.trim()).filter(Boolean); if (parts.length < 2) return {}; const city = parts[parts.length - 2]; const sz = parts[parts.length - 1].split(/\s+/); return { city, state: US_STATES.includes(sz[0]) ? sz[0] : '' }; }
 async function fcSaveCohort() {
   const date = _v('fcoh-date'); if (!date) { alert('First Communion date is required.'); return; }

@@ -185,11 +185,14 @@ function listBodyHtml() {
     return html;
   }
 
-  // Group, then order keys: "__none" (Unassigned) always last; otherwise by the
-  // config's groupCompare (most-recent first) so the newest cohort leads.
+  // Group, then order keys: the "__archived" group always sinks to the very bottom,
+  // then "__none" (Unassigned); otherwise by the config's groupCompare (most-recent
+  // first) so the newest cohort leads. (Additive: only affects panels whose groupBy
+  // emits "__archived" — Confirmation / First Communion never do, so unchanged.)
   const groups = new Map();
   recs.forEach(r => { const k = cfg.groupBy(r) ?? '__none'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
   const keys = [...groups.keys()].sort((a, b) => {
+    if (a === '__archived') return 1; if (b === '__archived') return -1;
     if (a === '__none') return 1; if (b === '__none') return -1;
     return cfg.groupCompare ? cfg.groupCompare(a, b) : 0;
   });
@@ -284,25 +287,28 @@ function detailPaneHtml() {
 
   const head = cfg.detailHeader(r);
   const canManage = cfg.canManage ? cfg.canManage() : true;
+  // Action buttons: icon + a labelled span. The CSS class carries padding/font (so the
+  // mobile media query can restyle them to icon-only ~44px tap targets); the aria-label
+  // keeps an accessible name when the label span is hidden on mobile.
   const actions = (cfg.actions || []).map((a, i) =>
-    `<button class="btn-secondary" style="padding:.3rem .8rem;font-size:12.5px;" data-act="action" data-i="${i}" data-id="${r.id}">${a.icon ? `<i class="fa-solid ${a.icon}"></i> ` : ''}${esc(a.label)}</button>`).join('');
+    `<button class="btn-secondary sac-detail-btn" data-act="action" data-i="${i}" data-id="${r.id}" aria-label="${esc(a.label)}">${a.icon ? `<i class="fa-solid ${a.icon}"></i> ` : ''}<span class="sac-btn-label">${esc(a.label)}</span></button>`).join('');
   const sections = (cfg.detailSections || []).filter(sec => !sec.when || sec.when(r)).map(sec =>
     `<div class="sac-section"><div class="sac-section-title">${esc(sec.title)}</div><div>${sec.render(r)}</div></div>`).join('');
 
   return `
-    <div style="display:flex;align-items:flex-start;gap:14px;">
-      <button class="sac-back" data-act="back">‹</button>
+    <div class="sac-detail-head">
+      <button class="sac-back" data-act="back" aria-label="Back">‹</button>
       <div class="sac-avatar">${head.avatarIcon ? `<i class="fa-solid ${esc(head.avatarIcon)}"></i>` : esc(head.initials || '?')}</div>
-      <div style="flex:1;min-width:0;">
+      <div class="sac-detail-main">
         <div class="sac-detail-name">${esc(head.name)}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">
           ${(head.chips || []).map(chipHtml).join('')}
           ${(head.flags || []).map(flagHtml).join('')}
         </div>
       </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0;">
+      <div class="sac-detail-actions">
         ${actions}
-        ${canManage ? `<button class="btn-primary" style="padding:.3rem .8rem;font-size:12.5px;" data-act="edit" data-id="${r.id}"><i class="fa-solid fa-pencil"></i> Edit</button>` : ''}
+        ${canManage ? `<button class="btn-primary sac-detail-btn" data-act="edit" data-id="${r.id}" aria-label="Edit"><i class="fa-solid fa-pencil"></i> <span class="sac-btn-label">Edit</span></button>` : ''}
       </div>
     </div>
     ${sections}`;

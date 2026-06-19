@@ -2,14 +2,39 @@
 
 ## ▶ Pending — run this
 
-### `migrations/20260619_annulment_marriage_location.sql`  ⚠️ BLOCKING (proposed — awaiting approval)
+### `migrations/20260619_ocia_baptism_by_affidavit.sql`  proposed — awaiting approval
+Adds `sacramental_ocia.baptism_by_affidavit` (boolean default false), mirroring the
+annulment by-affidavit flag, for the OCIA Candidate baptism-document pattern. **Not
+blocking** the rest of OCIA Phase 2 (the editor + church/city/state/country work
+without it); needed only to wire the "By Affidavit" toggle/suffix in the viewer
+baptism-doc pattern. Additive, idempotent, default false — no data impact.
+- Verify: `select column_name from information_schema.columns where table_name='sacramental_ocia' and column_name='baptism_by_affidavit';` → 1 row.
+
+### `migrations/20260619_confirmation_church_city_state.sql`  ⚠️ BLOCKING (proposed — awaiting approval)
+Adds `sacramental_confirmation.confirmation_city` + `confirmation_state` (text),
+matching First Communion's `communion_city/state`. The Confirmation Details section
+now writes these (manual for an "Other" church; derived from the institution for a
+listed one). **Blocking:** until applied, saving a Confirmation candidate fails
+("column … does not exist"). Additive, idempotent, nullable — no data impact.
+- Verify: `select count(*) from information_schema.columns where table_name='sacramental_confirmation' and column_name in ('confirmation_city','confirmation_state');` → 2.
+
+### `migrations/20260619_ocia_cohort.sql`  ⚠️ RE-RUN needed (columns applied; CHECK relax pending)
+Adds `sacramental_ocia.cohort_id` (uuid FK sacramental_cohorts) + `cohort_date`
+(date), mirroring `sacramental_confirmation`, **and widens the
+`sacramental_cohorts.panel` CHECK** from `('firstcomm','confirmation')` to include
+`'ocia'` (without it, no OCIA cohort can be created). The column-adds already ran;
+the CHECK relaxation was added after and still needs to run. The whole file is
+idempotent (IF NOT EXISTS / DROP CONSTRAINT IF EXISTS + ADD), so **re-running it is
+safe**. No data impact (sacramental_ocia empty).
+- Verify cols: `select count(*) from information_schema.columns where table_name='sacramental_ocia' and column_name in ('cohort_id','cohort_date');` → 2.
+- Verify CHECK: inserting `sacramental_cohorts(panel='ocia', cohort_date=…)` succeeds.
+
+## ✅ Applied
+
+### `migrations/20260619_annulment_marriage_location.sql`  ✅ applied (per user)
 Adds `annulment_cases.marriage_state`, `marriage_country`, `marriage_county` (text)
-and `non_church_wedding` (boolean default false). Splits the combined
-`marriage_state_country` (now dead — probe found all 13 rows empty, no data to
-migrate) and adds the county + non-church fields the reformatted marriage section
-needs. **Blocking:** the Add/Edit save writes these columns; until applied, every
-annulment case save fails. Additive, idempotent, default false — no data impact.
-- Verify: `select count(*) from information_schema.columns where table_name='annulment_cases' and column_name in ('marriage_state','marriage_country','marriage_county','non_church_wedding');` → 4.
+and `non_church_wedding` (boolean default false). Verified: columns exist + full
+create→save→viewer round-trip passed.
 
 ### `migrations/20260619_annulment_baptism_by_affidavit.sql`  ✅ applied (per user)
 Adds `annulment_cases.petitioner_baptism_by_affidavit (boolean default false)`.

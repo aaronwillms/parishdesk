@@ -47,9 +47,9 @@
       <div class="nav-sec">Daily</div>
       <div class="nav-item active" data-panel="dashboard"><i class="fa-solid fa-house"></i> Dashboard</div>
       <div class="nav-sec">Sacramental</div>
-      <div class="nav-item" data-panel="baptism"><i class="fa-solid fa-droplet"></i> Baptismal Preparation</div>
-      <div class="nav-item" data-panel="firstcomm"><i class="fa-solid fa-wine-glass"></i> First Communion</div>
-      <div class="nav-item" data-panel="confirmation"><i class="fa-solid fa-fire"></i> Confirmation</div>
+      <div class="nav-item" data-panel="baptism"><i class="fa-solid fa-droplet"></i> Child Records</div>
+      <div class="nav-item" data-panel="firstcomm"><i class="fa-solid fa-wine-glass"></i> Student Records</div>
+      <div class="nav-item" data-panel="confirmation"><i class="fa-solid fa-fire"></i> Candidate Records</div>
       <div class="nav-item" data-panel="ocia"><i class="fa-solid fa-user-plus"></i> OCIA</div>
       <div class="nav-item" data-panel="marriage"><i class="fa-solid fa-heart"></i> Marriage Preparation</div>
       <div class="nav-sec">Pastoral Care</div>
@@ -277,22 +277,7 @@
           <div class="stat-card"><div class="stat-num" id="stat-ocia-received">—</div><div class="stat-label">Received this year</div></div>
         </div>
         <div id="ocia-alerts"></div>
-        <div class="card" style="padding:.875rem 1.25rem;">
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <input type="text" id="ocia-search" placeholder="Search by name…" oninput="renderOcia()" style="flex:1;min-width:140px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
-            <button id="ocia-gear" class="anl-icon-btn" title="Document templates" style="display:none;" onclick="openOciaTemplates()"><i class="fa-solid fa-gear"></i></button>
-            <button class="btn-primary" style="white-space:nowrap;" onclick="openOciaCreate()">+ Add Candidate</button>
-          </div>
-          <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;">
-            <button class="cf-btn active" onclick="setOciaFilter('all',this)">All</button>
-            <button class="cf-btn" onclick="setOciaFilter('inquirer',this)">Inquirer</button>
-            <button class="cf-btn" onclick="setOciaFilter('preparation',this)">In Preparation</button>
-            <button class="cf-btn" onclick="setOciaFilter('complete',this)">Preparation Complete</button>
-            <button class="cf-btn" onclick="setOciaFilter('received',this)">Received</button>
-            <button class="cf-btn" onclick="setOciaFilter('inactive',this)">Inactive</button>
-          </div>
-        </div>
-        <div id="ocia-list"><span class="pulse"></span></div>
+        <div id="ocia-root"><span class="pulse"></span></div>
       </div>
 
       <!-- CATHEDRAL SCHOOL -->

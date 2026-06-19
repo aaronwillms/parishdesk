@@ -7,6 +7,7 @@ import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { registerFamilyPanel, familyAddPickerHtml, getPendingAdd, clearPendingAdd, familyLink } from '../sacramental/familyLink.js';
+import { cohortChurchLocation, detailsChurchToggle, detailsCityState, inheritCohortChurch } from '../sacramental/churchLocation.js';
 
 const CONF_STATUS = {
   enrolled:    { label:'Enrolled',             color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -233,7 +234,10 @@ function buildModalHtml(p, opts = {}) {
   h += _input('cf-sponsor', 'Sponsor Name', p?.sponsor_name || p?.sponsor || '');
   h += _input('cf-confdate', 'Confirmation Date', confDate(p) || '', 'date');
   h += `<label>Church</label><select id="cf-church" onchange="confChurchChange(this.value)"><option value="">— Select —</option>${instOpts}<option value="__other"${(p?.confirmation_location && !p?.confirmation_institution_id) ? ' selected' : ''}>Other…</option></select>
-    <div id="cf-church-other-wrap" style="display:${(p?.confirmation_location && !p?.confirmation_institution_id) ? 'block' : 'none'};">${_input('cf-church-override', 'Church name', p?.confirmation_location || '')}</div>`;
+    <div id="cf-church-other-wrap" style="display:${(p?.confirmation_location && !p?.confirmation_institution_id) ? 'block' : 'none'};">
+      ${_input('cf-church-override', 'Church name', p?.confirmation_location || '')}
+      ${_row(_input('cf-ccity', 'City', p?.confirmation_city || ''), _stateSelect('cf-cstate', p?.confirmation_state || ''))}
+    </div>`;
 
   // 6 — Baptism
   h += _sectionHead('Baptism Information');
@@ -303,6 +307,7 @@ function confSetType(t) {
 function confCohortPick(v) {
   const coh = _cohorts.find(c => c.id === v);
   if (coh && coh.cohort_date) { const dt = document.getElementById('cf-confdate'); if (dt && !dt.value) dt.value = coh.cohort_date; }
+  inheritCohortChurch(coh, 'cf');   // default (editable) the church to the cohort's
 }
 function confDobChange() {
   const age = ageOf(document.getElementById('cf-dob').value);
@@ -311,10 +316,7 @@ function confDobChange() {
   document.getElementById('cf-adult-block').style.display = minor ? 'none' : 'block';
   document.getElementById('cf-adultage-note').style.display = adultAge ? 'block' : 'none';
 }
-function confChurchChange(v) {
-  const other = v === '__other';
-  document.getElementById('cf-church-other-wrap').style.display = other ? 'block' : 'none';
-}
+function confChurchChange(v) { detailsChurchToggle(v, 'cf'); }
 function confDocReceived(i, v) { _M.docs[i].received = v; }
 function confRemoveDoc(i) { _M.docs.splice(i, 1); renderModalDocs(); }
 function confAddDoc() { const inp = document.getElementById('cf-doc-new'); const name = (inp?.value || '').trim(); if (!name) return; _M.docs.push({ name, received: false, deletable: true, auto: false }); inp.value = ''; renderModalDocs(); }
@@ -354,6 +356,8 @@ function _confReadPayload() {
     confirmation_date: _v('cf-confdate') || null,
     confirmation_institution_id: churchSel && churchSel !== '__other' ? churchSel : null,
     confirmation_location: churchSel === '__other' ? (_v('cf-church-override') || null) : (churchSel && churchSel !== '__other' ? ((store.institutions || []).find(i => i.id === churchSel)?.name || null) : null),
+    // City/State: manual for "Other", else derived from the listed institution.
+    ...(() => { const cs = detailsCityState(churchSel, 'cf-ccity', 'cf-cstate'); return { confirmation_city: cs.city, confirmation_state: cs.state }; })(),
     baptism_church: _v('cf-bchurch') || null, baptism_city: _v('cf-bcity') || null, baptism_state: _v('cf-bstate') || null, baptism_country: _v('cf-bcountry') || null,
     first_communion_church: _v('cf-fcchurch') || null, first_communion_city: _v('cf-fccity') || null, first_communion_state: _v('cf-fcstate') || null, first_communion_country: _v('cf-fccountry') || null,
     documents: _M.docs,
@@ -465,12 +469,7 @@ function buildCohortHtml() {
     ${_row(_input('coh-city', 'City', ''), _stateSelect('coh-state', ''))}
     <div class="modal-actions"><button class="btn-secondary" onclick="confCloseModal()">Close</button><button class="btn-primary" onclick="confSaveCohort()">+ Add Cohort</button></div>`;
 }
-function confCohortChurchChange(v) {
-  const other = v === '__other';
-  document.getElementById('coh-other-wrap').style.display = other ? 'block' : 'none';
-  if (!other && v) { const inst = (store.institutions || []).find(i => i.id === v); const cs = parseCityState(inst?.address || ''); const ce = document.getElementById('coh-city'), se = document.getElementById('coh-state'); if (ce && cs.city) ce.value = cs.city; if (se && cs.state) se.value = cs.state; }
-}
-function parseCityState(addr) { if (!addr) return {}; const parts = addr.split(',').map(s => s.trim()).filter(Boolean); if (parts.length < 2) return {}; const city = parts[parts.length - 2]; const sz = parts[parts.length - 1].split(/\s+/); return { city, state: US_STATES.includes(sz[0]) ? sz[0] : '' }; }
+function confCohortChurchChange(v) { cohortChurchLocation(v, 'coh'); }
 async function confSaveCohort() {
   const date = _v('coh-date'); if (!date) { alert('Confirmation date is required.'); return; }
   const churchSel = document.getElementById('coh-church')?.value || '';
