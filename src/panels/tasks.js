@@ -691,8 +691,7 @@ async function saveTask(id) {
     }
     if (prior) Object.assign(prior, payload);
     logActivity({ action: 'updated task', entityType: 'task', entityName: payload.title, contextType: 'task', contextId: id });
-    closeModal();
-    renderTasks();
+    window.flashSavedThen(() => { closeModal(); renderTasks(); });
   } else {
     const { data: { user } } = await sb.auth.getUser();
     payload.created_by = user?.id || null;
@@ -713,8 +712,7 @@ async function saveTask(id) {
       if (uid) notifyUsers([uid], user?.id, `You've been assigned to task: ${newTask.title}`, 'info', 'tasks', newTask.id);
     }
     _newTaskTeamId = null;
-    closeModal();
-    renderTasks();
+    window.flashSavedThen(() => { closeModal(); renderTasks(); });
   }
 }
 

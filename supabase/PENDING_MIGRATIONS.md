@@ -31,6 +31,14 @@ safe**. No data impact (sacramental_ocia empty).
 
 ## ✅ Applied
 
+### `migrations/20260619_ocia_preparer.sql`  ✅ applied & verified
+`sacramental_ocia.preparer (text)` exists; OCIA create→save→viewer round-trip passes
+(preparer persists, shows as "OCIA Prep").
+
+### `migrations/20260619_cohort_preparer.sql`  ✅ applied & verified
+`sacramental_cohorts.preparer (text)` exists (Phase 2 will wire the cohort formation
+field + inheritance).
+
 ### `migrations/20260619_annulment_marriage_location.sql`  ✅ applied (per user)
 Adds `annulment_cases.marriage_state`, `marriage_country`, `marriage_county` (text)
 and `non_church_wedding` (boolean default false). Verified: columns exist + full

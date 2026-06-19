@@ -7,7 +7,8 @@ import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { registerFamilyPanel, familyAddPickerHtml, getPendingAdd, clearPendingAdd, familyLink } from '../sacramental/familyLink.js';
-import { cohortChurchLocation, detailsChurchToggle, detailsCityState, inheritCohortChurch } from '../sacramental/churchLocation.js';
+import { detailsChurchToggle, detailsCityState, inheritCohortChurch, inheritCohortFormation } from '../sacramental/churchLocation.js';
+import { registerCohortManager } from '../sacramental/cohortManager.js';
 
 const FC_STATUS = {
   enrolled:    { label:'Enrolled',                  color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -140,7 +141,7 @@ async function addFcNote(id) {
   const p = allFc.find(x => x.id === id); if (!p) return;
   const log = Array.isArray(p.notes_log) ? JSON.parse(JSON.stringify(p.notes_log)) : [];
   log.push({ note, by: _curUserName(), created_at: nowIso() });
-  if (await _patch(id, { notes_log: log })) refreshActivePanel();
+  if (await _patch(id, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
 }
 
 // ── Big modal ────────────────────────────────────────────────────────────────
@@ -183,12 +184,9 @@ function buildModalHtml(p, opts = {}) {
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit First Communion File' : 'New First Communion Student'}</div>`;
 
-  // 1 — Person responsible for formation (clergy + FC coordinator + Other)
-  h += _sectionHead('Person Responsible for Formation');
-  h += buildPreparerField('ff-preparer', p?.preparer || '', { coordinatorNames: _fcCoordinatorNames, label: 'Person Responsible for Formation' });
-
-  // 2 — Cohort (SELECT an existing cohort only; cohorts are created in the panel
-  // via Manage Cohorts, never from here).
+  // 1 — Cohort FIRST (SELECT an existing cohort only; cohorts are created in the panel
+  // via Manage Cohorts, never from here). Picking it first defaults BOTH the church
+  // and the formation person (see fcCohortPick → inheritCohortChurch + inheritCohortFormation).
   h += _sectionHead('Cohort');
   if (_cohorts.length) {
     h += `<label>Cohort</label><select id="ff-cohort" onchange="fcCohortPick(this.value)"><option value="">— None —</option>${cohortOpts}</select>`;
@@ -196,6 +194,10 @@ function buildModalHtml(p, opts = {}) {
     h += `<label>Cohort</label><select id="ff-cohort" disabled style="color:#9CA3AF;"><option value="">No cohorts yet</option></select>
       <div style="font-size:11.5px;color:#9CA3AF;margin-top:4px;">Create a cohort first via <strong>Manage Cohorts</strong> in the First Communion panel.</div>`;
   }
+
+  // 2 — Person responsible for formation (clergy + FC coordinator + Other)
+  h += _sectionHead('Person Responsible for Formation');
+  h += buildPreparerField('ff-preparer', p?.preparer || '', { coordinatorNames: _fcCoordinatorNames, label: 'Person Responsible for Formation' });
 
   // 3 — Child info
   h += _sectionHead('Child Information');
@@ -265,7 +267,8 @@ function renderModalDocs() {
 function fcCohortPick(v) {
   const coh = _cohorts.find(c => c.id === v);
   if (coh?.cohort_date) { const dt = document.getElementById('ff-cdate'); if (dt && !dt.value) dt.value = coh.cohort_date; }
-  inheritCohortChurch(coh, 'ff');   // default (editable) the church to the cohort's
+  inheritCohortChurch(coh, 'ff');             // default (editable) the church to the cohort's
+  inheritCohortFormation(coh, 'ff-preparer'); // default (editable) the formation person too
 }
 function fcDobChange() { const age = ageOf(document.getElementById('ff-dob').value); document.getElementById('ff-age-note').style.display = (age !== null && age > 13) ? 'block' : 'none'; }
 function fcChurchChange(v) { detailsChurchToggle(v, 'ff'); }
@@ -311,7 +314,7 @@ async function fcSave() {
   const r = _fcReadPayload();
   if (!r.ok) { alert('Student name is required.'); return; }
   const { payload, name } = r;
-  if (_M.isEdit) { const res = await _fcWriteEdit(_M.id, r); if (res.ok) { fcCloseModal(); refreshActivePanel(); } return; }
+  if (_M.isEdit) { const res = await _fcWriteEdit(_M.id, r); if (res.ok) { window.flashSavedThen(() => { fcCloseModal(); refreshActivePanel(); }); } return; }
   payload.status_code = 'enrolled';
   payload.archived = false;
   payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
@@ -324,7 +327,7 @@ async function fcSave() {
   const { data: { user } } = await sb.auth.getUser();
   const uids = await getUserIdsForSacrament('first_communion');
   notifyUsers(uids, user?.id, `New First Communion student added: ${name}`, 'info', 'firstcomm');
-  fcCloseModal(); await loadFcData(); refreshActivePanel();
+  window.flashSavedThen(async () => { fcCloseModal(); await loadFcData(); refreshActivePanel(); });
 }
 
 // Shared edit writer (status/archive/timeline) used by modal + shell.
@@ -384,40 +387,15 @@ async function fcDeletePerson(id) {
   fcCloseModal(); await loadFcData(); refreshActivePanel();
 }
 
-// ── Cohort manager (panel = 'firstcomm') ─────────────────────────────────────
-function openCohortManager() { _fcOpen(buildCohortHtml()); }
-function buildCohortHtml() {
-  const counts = {}; allFc.forEach(p => { if (p.cohort_id) counts[p.cohort_id] = (counts[p.cohort_id] || 0) + 1; });
-  const list = _cohorts.length ? _cohorts.map(c => `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:.5px solid var(--stone);">
-      <div style="flex:1;"><div style="font-size:14px;font-weight:600;color:var(--navy);">${cohortLabel(c.cohort_date)}</div><div style="font-size:12px;color:#6B7280;">${_esc(cohortChurchName(c) || '—')} · ${counts[c.id] || 0} student${(counts[c.id] || 0) === 1 ? '' : 's'}</div></div>
-      <button onclick="fcDeleteCohort('${c.id}')" class="btn-delete" style="padding:.3rem .7rem;font-size:12px;">Delete</button>
-    </div>`).join('') : `<div style="font-size:13px;color:#9CA3AF;font-style:italic;padding:.5rem 0;">No cohorts yet.</div>`;
-  const instOpts = (store.institutions || []).map(i => `<option value="${i.id}">${_esc(i.name)}</option>`).join('');
-  return `<div class="modal-title">Manage Cohorts</div>
-    ${list}
-    ${_sectionHead('New Cohort')}
-    ${_input('fcoh-date', 'First Communion Date', '', 'date')}
-    <label>Church</label><select id="fcoh-church" onchange="fcCohortChurchChange(this.value)"><option value="">— Select —</option>${instOpts}<option value="__other">Other…</option></select>
-    <div id="fcoh-other-wrap" style="display:none;">${_input('fcoh-church-name', 'Church name', '')}</div>
-    ${_row(_input('fcoh-city', 'City', ''), _stateSelect('fcoh-state', ''))}
-    <div class="modal-actions"><button class="btn-secondary" onclick="fcCloseModal()">Close</button><button class="btn-primary" onclick="fcSaveCohort()">+ Add Cohort</button></div>`;
-}
-function fcCohortChurchChange(v) { cohortChurchLocation(v, 'fcoh'); }
-function parseCityState(addr) { if (!addr) return {}; const parts = addr.split(',').map(s => s.trim()).filter(Boolean); if (parts.length < 2) return {}; const city = parts[parts.length - 2]; const sz = parts[parts.length - 1].split(/\s+/); return { city, state: US_STATES.includes(sz[0]) ? sz[0] : '' }; }
-async function fcSaveCohort() {
-  const date = _v('fcoh-date'); if (!date) { alert('First Communion date is required.'); return; }
-  const churchSel = document.getElementById('fcoh-church')?.value || '';
-  const payload = { panel: 'firstcomm', cohort_date: date, church_institution_id: churchSel && churchSel !== '__other' ? churchSel : null, church_override: churchSel === '__other' ? (_v('fcoh-church-name') || null) : null, church_city: _v('fcoh-city') || null, church_state: _v('fcoh-state') || null };
-  const { error } = await sb.from('sacramental_cohorts').insert(payload);
-  if (error) { alert('Save failed: ' + error.message); return; }
-  await loadCohorts(); _fcOpen(buildCohortHtml());
-}
-async function fcDeleteCohort(id) {
-  if (!confirm('Delete this cohort? Students keep their data but lose the cohort link.')) return;
-  const { error } = await sb.from('sacramental_cohorts').delete().eq('id', id);
-  if (error) { alert('Delete failed: ' + error.message); return; }
-  await loadCohorts(); _fcOpen(buildCohortHtml()); refreshActivePanel();
-}
+// ── Cohort manager — shared module (src/sacramental/cohortManager.js) ─────────
+registerCohortManager({
+  panel: 'firstcomm', idPrefix: 'fcoh', dateLabel: 'First Communion Date', stateLabel: 'State',
+  noun: 'student', pluralNoun: 'students', deleteNote: 'Students keep their data but lose the cohort link.',
+  coordinatorNames: () => _fcCoordinatorNames,
+  getCohorts: () => _cohorts, getRecords: () => allFc,
+  open: (html) => _fcOpen(html), close: () => fcCloseModal(),
+  reloadCohorts: () => loadCohorts(), refresh: () => refreshActivePanel(),
+});
 
 // ── Template ─────────────────────────────────────────────────────────────────
 let _tplState = null, _tplRowId = null;
@@ -446,8 +424,7 @@ async function fcTplSave() {
   else { ({ error } = await sb.from('firstcomm_templates').insert(payload)); }
   if (error) { alert('Save failed: ' + error.message); return; }
   _tplDocs = _tplState;
-  const btn = document.querySelector('#fc-overlay .modal-actions .btn-primary');
-  if (btn) { btn.textContent = 'Saved ✓'; btn.style.background = '#2D6A4F'; setTimeout(() => { btn.textContent = 'Save Template'; btn.style.background = ''; }, 1600); }
+  window.flashSaved();   // shared green "Saved ✓" confirmation
 }
 
 Object.assign(window, {
@@ -457,6 +434,5 @@ Object.assign(window, {
   fcCohortPick, fcDobChange, fcChurchChange,
   fcDocReceived, fcRemoveDoc, fcAddDoc,
   fcSave, fcDeletePerson,
-  openCohortManager, fcCohortChurchChange, fcSaveCohort, fcDeleteCohort,
   fcTplAdd, fcTplRemove, fcTplSave,
 });

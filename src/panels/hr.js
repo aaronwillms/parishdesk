@@ -433,8 +433,7 @@ async function hrSaveInstitution(id) {
     await sb.from('personnel').update({ institution: name, updated_at: new Date().toISOString() }).eq('institution', old.name);
   }
   logActivity({ action: 'renamed institution', entityType: 'institution', entityName: name });
-  closeModal();
-  await loadHr();
+  window.flashSavedThen(async () => { closeModal(); await loadHr(); });
 }
 
 // Reorder by renumbering sort_order across all institutions in the new order.
@@ -491,8 +490,7 @@ async function hrSavePosition(posId, parentId) {
     if (parentId) _collapsed.delete(parentId);   // reveal the new child
   }
   logActivity({ action: posId ? 'updated position' : 'created position', entityType: 'position', entityName: title });
-  closeModal();
-  await loadHr();
+  window.flashSavedThen(async () => { closeModal(); await loadHr(); });
 }
 
 function openMoveModal(posId) {

@@ -60,9 +60,11 @@ async function saveSchoolEvent(id) {
     updated_at:new Date().toISOString()
   };
   if(!payload.title){alert('Title is required.');return;}
-  if(id){await sb.from('school_events').update(payload).eq('id',id);}
-  else{await sb.from('school_events').insert(payload);}
-  closeModal(); loadSchool();
+  let error;
+  if(id){({ error } = await sb.from('school_events').update(payload).eq('id',id));}
+  else{({ error } = await sb.from('school_events').insert(payload));}
+  if(error){alert('Save failed: '+error.message);return;}
+  window.flashSavedThen(() => { closeModal(); loadSchool(); });
 }
 
 function openSchoolDetail(id) {

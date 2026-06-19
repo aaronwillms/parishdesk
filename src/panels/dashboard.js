@@ -594,8 +594,7 @@ async function saveAnnouncement(id) {
     }
     notifyUsers(targetUserIds, currentUserId, `New announcement: ${payload.message.slice(0, 80)}`, 'info', 'announcement', savedId);
   }
-  closeModal();
-  loadAnnouncements();
+  window.flashSavedThen(() => { closeModal(); loadAnnouncements(); });
 }
 
 async function deleteAnnouncement(id) {

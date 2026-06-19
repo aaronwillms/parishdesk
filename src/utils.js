@@ -112,6 +112,7 @@ export const PANEL_TITLES = {
   annulments:   'Annulments',
   discernment:  'Discernment Tracker',
   homebound:    'Sick & Homebound',
+  youthministry:'Youth Ministry',
   baptism:      'Baptismal Preparation',
   firstcomm:    'First Communion',
   confirmation: 'Confirmation',

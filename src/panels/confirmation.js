@@ -7,7 +7,8 @@ import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { registerFamilyPanel, familyAddPickerHtml, getPendingAdd, clearPendingAdd, familyLink } from '../sacramental/familyLink.js';
-import { cohortChurchLocation, detailsChurchToggle, detailsCityState, inheritCohortChurch } from '../sacramental/churchLocation.js';
+import { detailsChurchToggle, detailsCityState, inheritCohortChurch, inheritCohortFormation } from '../sacramental/churchLocation.js';
+import { registerCohortManager } from '../sacramental/cohortManager.js';
 
 const CONF_STATUS = {
   enrolled:    { label:'Enrolled',             color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -145,7 +146,7 @@ async function addConfNote(id) {
   const p = allConf.find(x => x.id === id); if (!p) return;
   const log = Array.isArray(p.notes_log) ? JSON.parse(JSON.stringify(p.notes_log)) : [];
   log.push({ note, by: _curUserName(), created_at: nowIso() });
-  if (await _patch(id, { notes_log: log })) refreshActivePanel();
+  if (await _patch(id, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
 }
 
 // ── Big modal scaffolding ────────────────────────────────────────────────────
@@ -192,12 +193,8 @@ function buildModalHtml(p, opts = {}) {
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Confirmation File' : 'New Confirmation Candidate'}</div>`;
 
-  // 1 — Template type
-  h += _sectionHead('Template Type');
-  h += `<div style="display:flex;gap:10px;"><button type="button" id="ct-youth" class="sac-type-btn${_M.type === 'youth' ? ' active' : ''}" onclick="confSetType('youth')" style="flex:1;">Youth</button><button type="button" id="ct-adult" class="sac-type-btn${_M.type === 'adult' ? ' active' : ''}" onclick="confSetType('adult')" style="flex:1;">Adult</button></div>
-    <div id="cf-adult-note" class="anl-info-box" style="display:${_M.type === 'adult' ? 'block' : 'none'};">For adult candidates who are unbaptized, please use the OCIA panel instead.</div>`;
-
-  // 2 — Cohort (SELECT only; created in the panel via Manage Cohorts)
+  // 1 — Cohort FIRST (SELECT only; created in the panel via Manage Cohorts). Picking it
+  // first defaults BOTH the church and the formation person (confCohortPick).
   h += _sectionHead('Cohort');
   if (_cohorts.length) {
     h += `<label>Cohort</label><select id="cf-cohort" onchange="confCohortPick(this.value)"><option value="">— None —</option>${cohortOpts}</select>`;
@@ -205,6 +202,11 @@ function buildModalHtml(p, opts = {}) {
     h += `<label>Cohort</label><select id="cf-cohort" disabled style="color:#9CA3AF;"><option value="">No cohorts yet</option></select>
       <div style="font-size:11.5px;color:#9CA3AF;margin-top:4px;">Create a cohort first via <strong>Manage Cohorts</strong> in the Confirmation panel.</div>`;
   }
+
+  // 2 — Template type
+  h += _sectionHead('Template Type');
+  h += `<div style="display:flex;gap:10px;"><button type="button" id="ct-youth" class="sac-type-btn${_M.type === 'youth' ? ' active' : ''}" onclick="confSetType('youth')" style="flex:1;">Youth</button><button type="button" id="ct-adult" class="sac-type-btn${_M.type === 'adult' ? ' active' : ''}" onclick="confSetType('adult')" style="flex:1;">Adult</button></div>
+    <div id="cf-adult-note" class="anl-info-box" style="display:${_M.type === 'adult' ? 'block' : 'none'};">For adult candidates who are unbaptized, please use the OCIA panel instead.</div>`;
 
   // 3 — Person responsible for formation (clergy + Confirmation coordinator + Other)
   h += _sectionHead('Person Responsible for Formation');
@@ -307,7 +309,8 @@ function confSetType(t) {
 function confCohortPick(v) {
   const coh = _cohorts.find(c => c.id === v);
   if (coh && coh.cohort_date) { const dt = document.getElementById('cf-confdate'); if (dt && !dt.value) dt.value = coh.cohort_date; }
-  inheritCohortChurch(coh, 'cf');   // default (editable) the church to the cohort's
+  inheritCohortChurch(coh, 'cf');             // default (editable) the church to the cohort's
+  inheritCohortFormation(coh, 'cf-preparer'); // default (editable) the formation person too
 }
 function confDobChange() {
   const age = ageOf(document.getElementById('cf-dob').value);
@@ -394,7 +397,7 @@ async function _confWriteEdit(id, r) {
 async function confSave() {
   const r = _confReadPayload();
   if (!r.ok) { alert('Candidate name is required.'); return; }
-  if (_M.isEdit) { const res = await _confWriteEdit(_M.id, r); if (res.ok) { confCloseModal(); refreshActivePanel(); } return; }
+  if (_M.isEdit) { const res = await _confWriteEdit(_M.id, r); if (res.ok) { window.flashSavedThen(() => { confCloseModal(); refreshActivePanel(); }); } return; }
   const { payload, name, type, tmpl } = r;
   payload.status_code = 'enrolled';
   payload.archived = false;
@@ -409,7 +412,7 @@ async function confSave() {
   const { data: { user } } = await sb.auth.getUser();
   const uids = await getUserIdsForSacrament('confirmation');
   notifyUsers(uids, user?.id, `New Confirmation candidate added: ${name}`, 'info', 'confirmation');
-  confCloseModal(); await loadConfData(); refreshActivePanel();
+  window.flashSavedThen(async () => { confCloseModal(); await loadConfData(); refreshActivePanel(); });
 }
 
 // ── Shell config hooks (inline edit form + save/delete/bulk) ─────────────────
@@ -451,39 +454,15 @@ async function confDeletePerson(id) {
   confCloseModal(); await loadConfData(); refreshActivePanel();
 }
 
-// ── Cohort manager ───────────────────────────────────────────────────────────
-function openCohortManager() { _confOpen(buildCohortHtml()); }
-function buildCohortHtml() {
-  const counts = {}; allConf.forEach(p => { if (p.cohort_id) counts[p.cohort_id] = (counts[p.cohort_id] || 0) + 1; });
-  const list = _cohorts.length ? _cohorts.map(c => `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:.5px solid var(--stone);">
-      <div style="flex:1;"><div style="font-size:14px;font-weight:600;color:var(--navy);">${cohortLabel(c.cohort_date)}</div><div style="font-size:12px;color:#6B7280;">${_esc(cohortChurchName(c) || '—')} · ${counts[c.id] || 0} candidate${(counts[c.id] || 0) === 1 ? '' : 's'}</div></div>
-      <button onclick="confDeleteCohort('${c.id}')" class="btn-delete" style="padding:.3rem .7rem;font-size:12px;">Delete</button>
-    </div>`).join('') : `<div style="font-size:13px;color:#9CA3AF;font-style:italic;padding:.5rem 0;">No cohorts yet.</div>`;
-  const instOpts = (store.institutions || []).map(i => `<option value="${i.id}">${_esc(i.name)}</option>`).join('');
-  return `<div class="modal-title">Manage Cohorts</div>
-    ${list}
-    ${_sectionHead('New Cohort')}
-    ${_input('coh-date', 'Confirmation Date', '', 'date')}
-    <label>Church</label><select id="coh-church" onchange="confCohortChurchChange(this.value)"><option value="">— Select —</option>${instOpts}<option value="__other">Other…</option></select>
-    <div id="coh-other-wrap" style="display:none;">${_input('coh-church-name', 'Church name', '')}</div>
-    ${_row(_input('coh-city', 'City', ''), _stateSelect('coh-state', ''))}
-    <div class="modal-actions"><button class="btn-secondary" onclick="confCloseModal()">Close</button><button class="btn-primary" onclick="confSaveCohort()">+ Add Cohort</button></div>`;
-}
-function confCohortChurchChange(v) { cohortChurchLocation(v, 'coh'); }
-async function confSaveCohort() {
-  const date = _v('coh-date'); if (!date) { alert('Confirmation date is required.'); return; }
-  const churchSel = document.getElementById('coh-church')?.value || '';
-  const payload = { panel: 'confirmation', cohort_date: date, church_institution_id: churchSel && churchSel !== '__other' ? churchSel : null, church_override: churchSel === '__other' ? (_v('coh-church-name') || null) : null, church_city: _v('coh-city') || null, church_state: _v('coh-state') || null };
-  const { error } = await sb.from('sacramental_cohorts').insert(payload);
-  if (error) { alert('Save failed: ' + error.message); return; }
-  await loadCohorts(); _confOpen(buildCohortHtml());
-}
-async function confDeleteCohort(id) {
-  if (!confirm('Delete this cohort? Candidates keep their data but lose the cohort link.')) return;
-  const { error } = await sb.from('sacramental_cohorts').delete().eq('id', id);
-  if (error) { alert('Delete failed: ' + error.message); return; }
-  await loadCohorts(); _confOpen(buildCohortHtml()); refreshActivePanel();
-}
+// ── Cohort manager — shared module (src/sacramental/cohortManager.js) ─────────
+registerCohortManager({
+  panel: 'confirmation', idPrefix: 'coh', dateLabel: 'Confirmation Date', stateLabel: 'State/Province',
+  noun: 'candidate', pluralNoun: 'candidates', deleteNote: 'Candidates keep their data but lose the cohort link.',
+  coordinatorNames: () => _confCoordinatorNames,
+  getCohorts: () => _cohorts, getRecords: () => allConf,
+  open: (html) => _confOpen(html), close: () => confCloseModal(),
+  reloadCohorts: () => loadCohorts(), refresh: () => refreshActivePanel(),
+});
 
 // ── Templates ────────────────────────────────────────────────────────────────
 let _tplState = null, _tplActive = 'youth';
@@ -518,8 +497,7 @@ async function confTplSave() {
   const { error } = await sb.from('confirmation_templates').upsert({ template_type: _tplActive, documents: t.documents, service_hours_enabled: !!t.service_hours_enabled, service_hours_required: t.service_hours_required || 20, updated_at: nowIso() }, { onConflict: 'template_type' });
   if (error) { alert('Save failed: ' + error.message); return; }
   _templates[_tplActive] = JSON.parse(JSON.stringify(t));
-  const btn = document.querySelector('#conf-overlay .modal-actions .btn-primary');
-  if (btn) { btn.textContent = 'Saved ✓'; btn.style.background = '#2D6A4F'; setTimeout(() => { btn.textContent = 'Save Template'; btn.style.background = ''; }, 1600); }
+  window.flashSaved();   // shared green "Saved ✓" confirmation
 }
 
 Object.assign(window, {
@@ -529,6 +507,5 @@ Object.assign(window, {
   confSetType, confCohortPick, confDobChange, confChurchChange,
   confDocReceived, confRemoveDoc, confAddDoc,
   confSave, confDeletePerson,
-  openCohortManager, confCohortChurchChange, confSaveCohort, confDeleteCohort,
   confTplTab, confTplAdd, confTplRemove, confTplSvcToggle, confTplSave,
 });

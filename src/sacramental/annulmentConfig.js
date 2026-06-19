@@ -76,7 +76,16 @@ function statusChip(c) {
 function docsCompleteChip(c) {
   const code = c.status_code || 'prep';
   if (code !== 'prep' && code !== 'archived') return null;
-  const docs = caseDocs(c);
+  // Ignore baptism docs that are HIDDEN by the baptismal-status logic (petitioner 5/6,
+  // or respondent doc not applicable) — they aren't required, so they must not block.
+  const petNoBap = partyNoBaptism(c, 'pet'), respNoBap = partyNoBaptism(c, 'resp');
+  const docs = caseDocs(c).filter(d => {
+    const isResp = /baptism/i.test(d.name) && /respondent/i.test(d.name);
+    const isPet = /baptism/i.test(d.name) && !/respondent/i.test(d.name);
+    if (isPet && petNoBap) return false;
+    if (isResp && (!petNoBap || respNoBap)) return false;
+    return true;
+  });
   if (!docs.length || !docs.every(d => d.received)) return null;
   return { label: 'Docs Complete', tone: 'active' };
 }
@@ -99,7 +108,9 @@ function caseDetails(c) {
   return [
     row('Petitioner', petName(c) ? esc(petName(c)) : ''),
     row('Respondent', respName(c) ? esc(respName(c)) : ''),
-    c.co_petitioner ? row('Co-petitioner', esc(c.co_petitioner)) : '',
+    // Briefer Process: the respondent IS the co-petitioner by definition — derive the
+    // display from the respondent's name (not a separately-entered co_petitioner value).
+    c.briefer_process && respName(c) ? row('Co-Petitioner', esc(respName(c))) : '',
     row('Type', c.briefer_process ? 'Briefer Process' : esc(TYPE_BADGE[caseType(c)] || '')),
     row('Status', esc(statusLabel(c))),
     row('Tribunal diocese', c.tribunal_diocese ? esc(c.tribunal_diocese) : ''),
@@ -118,47 +129,57 @@ function caseDetails(c) {
     row('Country', c.marriage_country ? esc(c.marriage_country) : ''),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
 }
-// Detect the PETITIONER baptism document: a doc whose name mentions "baptism"
-// (covers "Baptismal Record", "Petitioner Baptismal Certificate or Affidavit",
-// "Baptism Documentation", etc.) and is NOT the respondent's. Its `received` flag
-// gates the viewer baptism block. Petitioner only.
-function petBaptismDocIdx(docs) {
-  return docs.findIndex(d => /baptism/i.test(d.name) && !/respondent/i.test(d.name));
+// Per-party baptism column map + doc detection. 'pet' = petitioner, 'resp' =
+// respondent. The respondent doc name contains "respondent"; the petitioner doc is any
+// "baptism" doc that is NOT the respondent's.
+const VIEWER_BAP_COLS = {
+  pet:  { church: 'petitioner_baptism_church', city: 'petitioner_baptism_city', state: 'petitioner_baptism_state', country: 'petitioner_baptism_country', affidavit: 'petitioner_baptism_by_affidavit' },
+  resp: { church: 'respondent_baptism_church', city: 'respondent_baptism_city', state: 'respondent_baptism_state', country: 'respondent_baptism_country', affidavit: 'respondent_baptism_by_affidavit' },
+};
+function baptismDocIdx(docs, party) {
+  return party === 'resp'
+    ? docs.findIndex(d => /baptism/i.test(d.name) && /respondent/i.test(d.name))
+    : docs.findIndex(d => /baptism/i.test(d.name) && !/respondent/i.test(d.name));
 }
+// A party is "unbaptized" (no baptism doc/fields apply) when (5) Never or (6) Non-Religious.
+const partyNoBaptism = (c, party) => party === 'resp'
+  ? !!(c.resp_bap_never || c.resp_bap_nonreligious)
+  : !!(c.pet_bap_never || c.pet_bap_nonreligious);
 // Compact read-only baptism location (shown beneath the doc line when received).
-// A "(By Affidavit)" suffix is appended when petitioner_baptism_by_affidavit is true.
-function baptismReadonly(c) {
-  const cityState = [c.petitioner_baptism_city, c.petitioner_baptism_state].filter(Boolean).map(esc).join(', ');
-  const parts = [c.petitioner_baptism_church ? esc(c.petitioner_baptism_church) : '', cityState, c.petitioner_baptism_country ? esc(c.petitioner_baptism_country) : ''].filter(Boolean);
-  const aff = c.petitioner_baptism_by_affidavit ? ' (By Affidavit)' : '';
+// A "(By Affidavit)" suffix is appended when that party's by-affidavit flag is true.
+function baptismReadonly(c, party) {
+  const m = VIEWER_BAP_COLS[party];
+  const cityState = [c[m.city], c[m.state]].filter(Boolean).map(esc).join(', ');
+  const parts = [c[m.church] ? esc(c[m.church]) : '', cityState, c[m.country] ? esc(c[m.country]) : ''].filter(Boolean);
+  const aff = c[m.affidavit] ? ' (By Affidavit)' : '';
   const wrap = (txt, italic) => `<div style="margin:0 0 5px 23px;font-size:11.5px;color:${italic ? '#9CA3AF' : '#6B7280'};${italic ? 'font-style:italic;' : ''}line-height:1.4;">${txt}</div>`;
   if (parts.length) return wrap(parts.join(' · ') + aff, false);
-  return c.petitioner_baptism_by_affidavit ? wrap('(By Affidavit)', false) : wrap('No baptism location recorded.', true);
+  return c[m.affidavit] ? wrap('(By Affidavit)', false) : wrap('No baptism location recorded.', true);
 }
-// All four petitioner baptism fields filled (trimmed)? Gates the baptism checkbox.
-const BAPTISM_FIELDS = ['petitioner_baptism_church', 'petitioner_baptism_city', 'petitioner_baptism_state', 'petitioner_baptism_country'];
+// All four of that party's baptism fields filled (trimmed)? Gates the baptism checkbox.
 export const BAPTISM_LOCK_TIP = 'Enter the church name, city, and state before marking the baptism record received.';
-function baptismFilled(c) { return BAPTISM_FIELDS.every(k => String(c[k] || '').trim()); }
+function baptismFilled(c, party) { const m = VIEWER_BAP_COLS[party]; return [m.church, m.city, m.state, m.country].every(k => String(c[k] || '').trim()); }
 
 // Inline-editable baptism location (shown beneath the doc line when NOT received).
-// Pre-populated from the stored petitioner_baptism_* values; each field saves on
-// change via the write-retry wrapper (anlSaveBaptismField). When `locked` (not all
-// fields filled), shows the prompt explaining why the checkbox is disabled.
-function baptismEditable(c, locked) {
+// Pre-populated from the stored {party}_baptism_* values; each field saves on change
+// via the write-retry wrapper (anlSaveBaptismField). When `locked` (not all fields
+// filled), shows the prompt explaining why the checkbox is disabled.
+function baptismEditable(c, party, locked) {
+  const m = VIEWER_BAP_COLS[party];
   const inS = `border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.3rem .5rem;font-size:12px;font-family:'Inter',sans-serif;background:#fff;box-sizing:border-box;`;
-  const fld = (field, ph, val, grow) => `<input type="text" value="${esc(val || '')}" placeholder="${ph}" onchange="anlSaveBaptismField('${c.id}','${field}',this)" style="${inS}flex:${grow};min-width:0;" />`;
+  const fld = (field, ph, val, grow) => `<input type="text" value="${esc(val || '')}" placeholder="${ph}" onchange="anlSaveBaptismField('${c.id}','${party}','${field}',this)" style="${inS}flex:${grow};min-width:0;" />`;
   return `<div style="margin:1px 0 8px 23px;">
     <div style="font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#9CA3AF;margin-bottom:4px;">Baptism location (record not yet received)</div>
     <div style="display:flex;gap:5px;flex-wrap:wrap;">
-      ${fld('church', 'Church of Baptism', c.petitioner_baptism_church, 2)}
-      ${fld('city', 'City', c.petitioner_baptism_city, 1)}
-      ${fld('state', 'State', c.petitioner_baptism_state, 1)}
-      ${fld('country', 'Country', c.petitioner_baptism_country || 'United States of America', 1)}
+      ${fld('church', 'Church of Baptism', c[m.church], 2)}
+      ${fld('city', 'City', c[m.city], 1)}
+      ${fld('state', 'State', c[m.state], 1)}
+      ${fld('country', 'Country', c[m.country] || 'United States of America', 1)}
     </div>
     <label style="display:inline-flex;align-items:center;gap:5px;margin-top:6px;font-size:11.5px;color:#6B7280;cursor:pointer;">
-      <input type="checkbox" ${c.petitioner_baptism_by_affidavit ? 'checked' : ''} onchange="anlToggleBaptismAffidavit('${c.id}',this.checked)" style="width:13px;height:13px;accent-color:var(--cardinal);" />By Affidavit
+      <input type="checkbox" ${c[m.affidavit] ? 'checked' : ''} onchange="anlToggleBaptismAffidavit('${c.id}','${party}',this.checked)" style="width:13px;height:13px;accent-color:var(--cardinal);" />By Affidavit
     </label>
-    <div id="anl-bdoc-note-${c.id}" style="display:${locked ? 'block' : 'none'};font-size:11px;color:#9A6A1E;margin-top:5px;">
+    <div id="anl-bdoc-note-${party}-${c.id}" style="display:${locked ? 'block' : 'none'};font-size:11px;color:#9A6A1E;margin-top:5px;">
       <i class="fa-solid fa-circle-info" style="margin-right:4px;"></i>${esc(BAPTISM_LOCK_TIP)}
     </div>
   </div>`;
@@ -181,18 +202,28 @@ function docLine(c, d, i, opts = {}) {
     ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : ''}
   </div>`;
 }
+// Render a baptism doc line for a party with its location block + forward-only lock.
+function baptismDocBlock(c, d, i, party, canManage) {
+  const locked = canManage && !d.received && !baptismFilled(c, party);
+  const line = docLine(c, d, i, { locked, boxId: `anl-bdoc-box-${party}-${c.id}` });
+  const extra = d.received ? baptismReadonly(c, party) : (canManage ? baptismEditable(c, party, locked) : baptismReadonly(c, party));
+  return line + extra;
+}
 function documents(c) {
   const canManage = anlCanManage();
   const docs = caseDocs(c);
   if (!docs.length) return '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No documents.</div>';
-  const bIdx = petBaptismDocIdx(docs);
+  const petIdx = baptismDocIdx(docs, 'pet');
+  const respIdx = baptismDocIdx(docs, 'resp');
+  const petNoBap = partyNoBaptism(c, 'pet');
+  const respNoBap = partyNoBaptism(c, 'resp');
   return docs.map((d, i) => {
-    if (i !== bIdx) return docLine(c, d, i);
-    // Forward-only gate: lock only when UNCHECKED and not all four fields filled.
-    const locked = canManage && !d.received && !baptismFilled(c);
-    const line = docLine(c, d, i, { locked, boxId: `anl-bdoc-box-${c.id}` });
-    const extra = d.received ? baptismReadonly(c) : (canManage ? baptismEditable(c, locked) : baptismReadonly(c));
-    return line + extra;
+    // Petitioner baptism doc: hidden (kept in data) when the petitioner is 5/6.
+    if (i === petIdx) return petNoBap ? '' : baptismDocBlock(c, d, i, 'pet', canManage);
+    // Respondent baptism doc: shown only when the PETITIONER is 5/6 (cross-party) AND
+    // the respondent is NOT 5/6 (two-layer); otherwise hidden (kept in data).
+    if (i === respIdx) return (!petNoBap || respNoBap) ? '' : baptismDocBlock(c, d, i, 'resp', canManage);
+    return docLine(c, d, i);
   }).join('');
 }
 // Shared timeline/notes list entry: a gold bullet on a gold vertical line, the text

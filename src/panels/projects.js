@@ -430,7 +430,7 @@ async function saveNewProject() {
   if (error) { alert('Save failed: ' + error.message); return; }
   _newProjPicker    = null;
   _newProjAssignees = [];
-  closeModal();
+  window.flashSavedThen(() => closeModal());
   if (!store.allProjects) store.allProjects = [];
   store.allProjects.unshift(newProj);
   renderProjects();
@@ -538,9 +538,7 @@ async function saveProject(id) {
       }
     }
   }
-  closeModal();
-  await invalidateProjects();
-  loadProjects();
+  window.flashSavedThen(async () => { closeModal(); await invalidateProjects(); loadProjects(); });
 }
 
 async function deleteProject(id) {

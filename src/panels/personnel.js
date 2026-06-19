@@ -375,8 +375,7 @@ async function saveInstitution() {
   if (data?.id) {
     await sb.from('positions').insert({ institution_id: data.id, title: 'Root Administrator', parent_position_id: null, is_administrator: true });
   }
-  closeModal();
-  await loadPersonnel();
+  window.flashSavedThen(() => { closeModal(); loadPersonnel(); });
 }
 
 function openInstitutionSettingsModal(id, currentName) {
@@ -423,8 +422,7 @@ async function saveInstitutionSettings(id, oldName) {
       .eq('institution', oldName);
     if (persErr) { alert('Failed to update personnel records: ' + persErr.message); return; }
   }
-  closeModal();
-  await loadPersonnel();
+  window.flashSavedThen(() => { closeModal(); loadPersonnel(); });
 }
 
 // Reorder the GLOBAL parish-wide institution order (institutions.sort_order) —
@@ -508,8 +506,7 @@ async function savePersonnel(id) {
     if (error) { reportWriteError('personnel insert', error); return; }
     logActivity({ action: 'added person to directory', entityType: 'personnel', entityName: payload.name, contextType: 'personnel' });
   }
-  closeModal();
-  await loadPersonnel();
+  window.flashSavedThen(() => { closeModal(); loadPersonnel(); });
 }
 
 async function deletePersonnel(id) {

@@ -16,6 +16,7 @@ import { loadMessaging, initChatBubble } from './panels/messaging.js';
 import { sb } from './supabase.js';
 import { store } from './store.js';
 import { installPhoneMask } from './utils/phone.js';
+import './ui/saveButton.js';   // installs window.flashSaved / flashSavedThen + click tracker
 
 async function loadParishSettings() {
   const { data, error } = await sb.from('parish_settings').select('*').limit(1).single();
@@ -91,6 +92,7 @@ async function startApp(user) {
     annulments:    () => ensurePanel('annulments').then(m => m.loadCases()),
     discernment:   () => ensurePanel('discernment').then(m => m.loadDiscernment()),
     homebound:     () => ensurePanel('homebound').then(m => m.loadHomebound()),
+    youthministry: () => ensurePanel('youthministry').then(m => m.loadYouthMinistry()),
     projects:      () => ensurePanel('projects').then(m => m.loadProjects()),
     personnel:     loadPersonnel,
     hr:            () => ensurePanel('hr').then(m => m.loadHr()),

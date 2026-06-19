@@ -7,6 +7,7 @@
 // config — see baptismConfig.js and the schema in ARCHITECTURE.md.
 
 import { todayCST } from '../utils.js';
+import { flashSaved } from '../ui/saveButton.js';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -146,7 +147,7 @@ function listPaneHtml() {
       <div style="display:flex;gap:5px;margin-top:.5rem;flex-wrap:wrap;align-items:center;">
         ${pills}
         ${canManage ? `<button class="cf-btn" data-act="bulk-toggle" title="Select multiple" style="margin-left:auto;${s.bulk ? 'background:var(--navy);color:var(--gold);' : ''}"><i class="fa-solid fa-list-check"></i></button>` : ''}
-        ${cfg.openManageCohorts && cfg.canManageTemplate && cfg.canManageTemplate() ? `<button class="cf-btn" data-act="cohorts" title="Manage cohorts"><i class="fa-solid fa-children"></i></button>` : ''}
+        ${cfg.openManageCohorts && cfg.canManageTemplate && cfg.canManageTemplate() ? `<button class="cf-btn" data-act="cohorts" title="Manage cohorts"><i class="fa-solid ${esc(cfg.cohortIcon || 'fa-children')}"></i></button>` : ''}
         ${cfg.canManageTemplate && cfg.canManageTemplate() ? `<button class="cf-btn" data-act="template" title="Settings"><i class="fa-solid fa-gear"></i></button>` : ''}
       </div>
     </div>
@@ -358,7 +359,8 @@ async function onShellClick(e) {
       const res = await cfg.saveRecord(id);
       if (res && res.ok) {
         s.records = (await cfg.fetchRecords()) || [];   // pick up updated chips/flags
-        s.editing = false; render();
+        flashSaved(t);                                  // green "Saved ✓" on the inline Save button
+        setTimeout(() => { s.editing = false; render(); }, 1100);   // hold so the confirmation shows
       }
       break;
     }

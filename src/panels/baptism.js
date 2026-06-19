@@ -346,7 +346,7 @@ async function bapSave() {
   if (_M.isEdit) {
     const r = await _bapWriteEdit(_M.id, payload, name);
     if (!r.ok) return;
-    bapCloseModal(); await loadBaptism();
+    window.flashSavedThen(async () => { bapCloseModal(); await loadBaptism(); });
   } else {
     payload.status_code = 'scheduled';
     payload.archived = false;
@@ -357,7 +357,7 @@ async function bapSave() {
     const { data: { user } } = await sb.auth.getUser();
     const uids = await getUserIdsForSacrament('baptism');
     notifyUsers(uids, user?.id, `New baptism file added: ${name}`, 'info', 'baptism');
-    bapCloseModal(); await loadBaptism();
+    window.flashSavedThen(async () => { bapCloseModal(); await loadBaptism(); });
   }
 }
 
@@ -456,8 +456,7 @@ async function bapTplSave() {
   else { ({ error } = await sb.from('baptism_templates').insert(payload)); }
   if (error) { alert('Save failed: ' + error.message); return; }
   _tplRow = { ..._tplRow, ...payload };
-  const btn = document.querySelector('#bap-overlay .modal-actions .btn-primary');
-  if (btn) { btn.textContent = 'Saved ✓'; btn.style.background = '#2D6A4F'; setTimeout(() => { btn.textContent = 'Save'; btn.style.background = ''; }, 1600); }
+  window.flashSaved();   // shared green "Saved ✓" confirmation
 }
 
 Object.assign(window, {

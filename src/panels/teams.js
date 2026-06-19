@@ -201,8 +201,7 @@ async function saveTeam(id) {
   }
   if (err) { alert('Save failed: ' + err.message); return; }
   logActivity({ action: id ? 'updated team' : 'created team', entityType: 'team', entityName: payload.name, contextType: 'team', contextId: id || null });
-  closeModal();
-  await loadTeams();
+  window.flashSavedThen(() => { closeModal(); loadTeams(); });
 }
 
 async function deleteTeam(id) {

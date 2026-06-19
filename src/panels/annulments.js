@@ -53,6 +53,32 @@ const TYPE_SECTIONS = {
 function typeSections(type) { return TYPE_SECTIONS[type] || TYPE_SECTIONS.formal; }
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
 
+// ── Baptismal status (Petitioner + Respondent share this identical set) ───────
+// Six booleans per party. `n` is the 1-6 index used by the symmetric exclusion sets;
+// `suffix` maps to the DB column `{pet|resp}_bap_{suffix}`. The exclusion sets are
+// SYMMETRIC (checking either member of an excluded pair disables the other, both
+// directions, order-independent): 1 (Catholic) and 6 (Non-Religious) each stand
+// alone; the rest allow the combos 2+3, 2+4, 3+4, 2+3+4, 4+5.
+const BAP_STATUS = [
+  { n: 1, suffix: 'catholic',        label: 'Baptized Catholic' },
+  { n: 2, suffix: 'noncatholic',     label: 'Baptized in a non-Catholic Christian Community' },
+  { n: 3, suffix: 'became_catholic', label: 'Became Catholic after Baptism' },
+  { n: 4, suffix: 'ocia',            label: 'Enrolled in OCIA' },
+  { n: 5, suffix: 'never',           label: 'Never Been Baptized' },
+  { n: 6, suffix: 'nonreligious',    label: 'Non-Religious Person' },
+];
+const BAP_EXCL = { 1: [2,3,4,5,6], 2: [1,5,6], 3: [1,5,6], 4: [1,6], 5: [1,2,3,6], 6: [1,2,3,4,5] };
+// Baptism-location column map per party (id prefix → DB columns). 'pet'/'resp' match
+// the am-pet-/am-resp- form-id prefixes AND the pet_bap_/resp_bap_ status prefixes.
+const BAP_LOC_COLS = {
+  pet:  { church: 'petitioner_baptism_church', city: 'petitioner_baptism_city', state: 'petitioner_baptism_state', country: 'petitioner_baptism_country', affidavit: 'petitioner_baptism_by_affidavit' },
+  resp: { church: 'respondent_baptism_church', city: 'respondent_baptism_city', state: 'respondent_baptism_state', country: 'respondent_baptism_country', affidavit: 'respondent_baptism_by_affidavit' },
+};
+const RESP_BAPTISM_DOC = 'Respondent Baptismal Certificate or Affidavit';
+const _bapChecked = (prefix, n) => !!document.getElementById(`am-${prefix}-bap${n}`)?.checked;
+// A party is "unbaptized" (no baptism doc/fields apply) when (5) Never OR (6) Non-Religious.
+const _partyNoBaptism = (prefix) => _bapChecked(prefix, 5) || _bapChecked(prefix, 6);
+
 
 // Hardcoded fallback templates (used only if the annulment_templates table can't be read)
 const FALLBACK_TEMPLATES = {
@@ -155,6 +181,7 @@ export async function loadCasesData() {
   allCases = rows;
   store.allCases = allCases;
   renderAnnulmentAlerts();
+  updateAnnulmentStats();
   return allCases;
 }
 
@@ -170,11 +197,29 @@ export async function loadCases() {
     <div class="confid-notice">
       <i class="fa-solid fa-lock" style="margin-right:7px;"></i>Annulment records are strictly confidential. Access is limited to assigned advocates and authorized personnel only.${advNote}
     </div>
+    <div class="stat-row">
+      <div class="stat-card"><div class="stat-num" id="stat-anl-prep">—</div><div class="stat-label">Preparing</div></div>
+      <div class="stat-card"><div class="stat-num" id="stat-anl-tribunal">—</div><div class="stat-label">In Tribunal</div></div>
+      <div class="stat-card"><div class="stat-num" id="stat-anl-notfinal">—</div><div class="stat-label">Not Finalized</div></div>
+    </div>
     <div id="annulments-alerts"></div>
     <div id="annulments-shell"></div>`;
   renderAnnulmentAlerts();
+  updateAnnulmentStats();
   const { annulmentConfig } = await import('../sacramental/annulmentConfig.js');
   renderSacramentalPanel(document.getElementById('annulments-shell'), annulmentConfig);
+}
+
+// Top-of-panel statistics, matching the other sacramental panels' stat-row. Counts
+// exclude archived cases (the `archived` boolean) to match every other panel's
+// convention (active = !archived). Elements only exist once loadCases() has rendered
+// the panel, so each set() is guarded for the data-only refresh path.
+function updateAnnulmentStats() {
+  const active = allCases.filter(c => !c.archived);
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  set('stat-anl-prep', active.filter(c => (c.status_code || 'prep') === 'prep').length);
+  set('stat-anl-tribunal', active.filter(c => c.status_code === 'tribunal').length);
+  set('stat-anl-notfinal', active.filter(c => ['affirm', 'negative'].includes(c.status_code) && c.judgement_finalized === 'no').length);
 }
 
 // ── Shell accessors (consumed by annulmentConfig) ───────────────────────────
@@ -190,9 +235,22 @@ export { caseType, petName, respName, petLast, respLast, advocateName, caseDocs,
 // documents-only. One line per case: "PetLast vs RespLast: doc, doc, …" (maiden
 // overrides last, matching the card title).
 function _caseTitle(c) { return `${petLast(c) || '—'} vs ${respLast(c) || '—'}`; }
+// Data-based "unbaptized" check (5 Never / 6 Non-Religious) — mirrors the viewer's
+// hide logic so a hidden baptism doc never surfaces as a "missing" required document.
+const _caseNoBap = (c, party) => party === 'resp'
+  ? !!(c.resp_bap_never || c.resp_bap_nonreligious)
+  : !!(c.pet_bap_never || c.pet_bap_nonreligious);
 export function annulmentAlertItems(c) {
   if (c.archived || (c.status_code || 'prep') !== 'prep') return [];
-  return caseDocs(c).filter(d => !d.received).map(d => d.name);
+  const petNoBap = _caseNoBap(c, 'pet'), respNoBap = _caseNoBap(c, 'resp');
+  return caseDocs(c).filter(d => {
+    if (d.received) return false;
+    const isResp = /baptism/i.test(d.name) && /respondent/i.test(d.name);
+    const isPet = /baptism/i.test(d.name) && !/respondent/i.test(d.name);
+    if (isPet && petNoBap) return false;                  // petitioner unbaptized → doc not required
+    if (isResp && (!petNoBap || respNoBap)) return false; // respondent baptism doc hidden
+    return true;
+  }).map(d => d.name);
 }
 function renderAnnulmentAlerts() {
   const el = document.getElementById('annulments-alerts'); if (!el) return;
@@ -243,35 +301,37 @@ async function toggleCaseDoc(caseId, i) {
   if (await _anlPatch(caseId, { documents: docs })) { refreshActivePanel(); renderAnnulmentAlerts(); }
 }
 
-// Inline petitioner-baptism-location edit from the viewer (shown when the baptism
-// document is unchecked). field = church|city|state|country → petitioner_baptism_*.
-// Routes through the write-retry wrapper; NO full re-render, so focus/tabbing across
-// the four fields is preserved. After each save we live-sync the baptism checkbox's
-// locked state in place (enables it once all four fields are filled).
+// Inline baptism-location edit from the viewer (shown when the party's baptism doc is
+// unchecked). party = 'pet' | 'resp'; field = church|city|state|country → the matching
+// {party}_baptism_* column (BAP_LOC_COLS). Routes through the write-retry wrapper; NO
+// full re-render, so focus/tabbing across the fields is preserved. After each save we
+// live-sync that party's baptism checkbox lock in place.
 const BAPTISM_LOCK_TIP = 'Enter the church name, city, and state before marking the baptism record received.';
-async function anlSaveBaptismField(caseId, field, el) {
-  const cols = { church: 'petitioner_baptism_church', city: 'petitioner_baptism_city', state: 'petitioner_baptism_state', country: 'petitioner_baptism_country' };
-  const col = cols[field]; if (!col) return;
+// Per-party location columns used by the viewer lock-gate (church/city/state/country).
+const _bapLocColList = (party) => { const m = BAP_LOC_COLS[party]; return [m.church, m.city, m.state, m.country]; };
+async function anlSaveBaptismField(caseId, party, field, el) {
+  const col = BAP_LOC_COLS[party]?.[field]; if (!col) return;
   await _anlPatch(caseId, { [col]: (el?.value || '').trim() || null });
-  _anlSyncBaptismLock(caseId);
+  _anlSyncBaptismLock(caseId, party);
 }
-// Inline "By Affidavit" toggle from the viewer (shown when the baptism doc is
-// unchecked). Independent of the lock-gate — does NOT affect _anlSyncBaptismLock.
-// Saves via the write-retry wrapper; no re-render (the checkbox holds its own state).
-async function anlToggleBaptismAffidavit(caseId, checked) {
-  await _anlPatch(caseId, { petitioner_baptism_by_affidavit: !!checked });
+// Inline "By Affidavit" toggle from the viewer. party = 'pet' | 'resp'. Independent of
+// the lock-gate. Saves via the write-retry wrapper; no re-render.
+async function anlToggleBaptismAffidavit(caseId, party, checked) {
+  const col = BAP_LOC_COLS[party]?.affidavit; if (!col) return;
+  await _anlPatch(caseId, { [col]: !!checked });
 }
-// Enable/disable the baptism checkbox in place as the four fields are filled/cleared,
-// without re-rendering (which would drop input focus mid-edit). Forward-only — only
-// relevant while the doc is unchecked (the editable block, hence the box id, exists).
-function _anlSyncBaptismLock(caseId) {
+// Enable/disable a party's baptism checkbox in place as the location fields are
+// filled/cleared, without re-rendering (which would drop input focus mid-edit).
+// Forward-only; party = 'pet' | 'resp'.
+function _anlSyncBaptismLock(caseId, party) {
   const c = allCases.find(x => x.id === caseId); if (!c) return;
-  const box = document.getElementById(`anl-bdoc-box-${caseId}`); if (!box) return;
+  const box = document.getElementById(`anl-bdoc-box-${party}-${caseId}`); if (!box) return;
   const docs = caseDocs(c);
-  const idx = docs.findIndex(d => /baptism/i.test(d.name) && !/respondent/i.test(d.name));
+  const idx = party === 'resp'
+    ? docs.findIndex(d => /baptism/i.test(d.name) && /respondent/i.test(d.name))
+    : docs.findIndex(d => /baptism/i.test(d.name) && !/respondent/i.test(d.name));
   if (idx < 0) return;
-  const filled = ['petitioner_baptism_church', 'petitioner_baptism_city', 'petitioner_baptism_state', 'petitioner_baptism_country']
-    .every(k => String(c[k] || '').trim());
+  const filled = _bapLocColList(party).every(k => String(c[k] || '').trim());
   if (filled) {
     box.setAttribute('onclick', `toggleCaseDoc('${caseId}',${idx})`);
     box.style.cursor = 'pointer'; box.style.opacity = '1'; box.removeAttribute('title');
@@ -279,7 +339,7 @@ function _anlSyncBaptismLock(caseId) {
     box.removeAttribute('onclick');
     box.style.cursor = 'not-allowed'; box.style.opacity = '0.45'; box.setAttribute('title', BAPTISM_LOCK_TIP);
   }
-  const note = document.getElementById(`anl-bdoc-note-${caseId}`);
+  const note = document.getElementById(`anl-bdoc-note-${party}-${caseId}`);
   if (note) note.style.display = filled ? 'none' : 'block';
 }
 
@@ -305,7 +365,7 @@ async function anlAddTimelineEntry(caseId) {
   const created_at = (date === todayCST()) ? nowIso() : `${date}T12:00:00.000Z`;
   const tl = _rawTimeline(c);
   tl.push({ type: 'progress', text, created_at, created_by: _curUserId() });
-  if (await _anlPatch(caseId, { timeline: tl })) refreshActivePanel();
+  if (await _anlPatch(caseId, { timeline: tl })) window.flashSavedThen(() => refreshActivePanel());
 }
 // Manual deletion of ANY timeline entry (including auto milestones) — for
 // correcting a mistaken flag. Operates on the raw timeline array by index.
@@ -338,7 +398,7 @@ async function anlAddNote(caseId) {
   if (!text) return;
   const list = parseCaseNotes(c);
   list.push({ text, created_at: nowIso(), created_by: _curUserId() });
-  if (await _anlPatch(caseId, { notes: JSON.stringify(list) })) refreshActivePanel();
+  if (await _anlPatch(caseId, { notes: JSON.stringify(list) })) window.flashSavedThen(() => refreshActivePanel());
 }
 async function anlDeleteNote(caseId, idx) {
   const c = allCases.find(x => x.id === caseId); if (!c) return;
@@ -419,11 +479,32 @@ function _input(id, label, val = '', type = 'text') { return `<label>${label}</l
 function _stateSelect(id, val) { return `<label>State</label><select id="${id}"><option value="">—</option>${US_STATES.map(s => `<option${s === val ? ' selected' : ''}>${s}</option>`).join('')}</select>`; }
 function _toggle(id, label, on, onchange = '') { return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:.75rem;"><input type="checkbox" id="${id}" ${on ? 'checked' : ''} ${onchange ? `onchange="${onchange}"` : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />${label}</label>`; }
 function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cardinal);margin:1.4rem 0 .5rem;border-bottom:.5px solid var(--stone);padding-bottom:4px;">${t}</div>`; }
+function _subLabel(t) { return `<div style="font-size:11px;font-weight:600;color:#6B7280;margin-top:.75rem;">${t}</div>`; }
+// The six baptismal-status checkboxes for a party (prefix 'pet' | 'resp'). Each box's
+// onchange runs the shared exclusion + downstream logic. Greying is applied post-render.
+function _bapStatusToggles(prefix, c) {
+  return BAP_STATUS.map(o => `<label id="am-${prefix}-bap${o.n}-lbl" style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:.5rem;">
+      <input type="checkbox" id="am-${prefix}-bap${o.n}" ${c?.[`${prefix}_bap_${o.suffix}`] ? 'checked' : ''} onchange="anlBapStatusChange('${prefix}')" style="width:15px;height:15px;accent-color:var(--cardinal);flex-shrink:0;" />${o.label}</label>`).join('');
+}
+// Baptism-location fields for a party (church / city / state(50) / country + affidavit).
+// The country dropdown hides + clears the state for a non-US country (the one exception
+// to "keep data"). prefix 'pet' | 'resp'; column source via BAP_LOC_COLS.
+function _bapLocationFields(prefix, c) {
+  const m = BAP_LOC_COLS[prefix];
+  const country = c?.[m.country] || 'United States of America';
+  const usa = country === 'United States of America';
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <div style="flex:2;min-width:140px;">${_input(`am-${prefix}-bchurch`, 'Church of Baptism', c?.[m.church] || '')}</div>
+      <div style="flex:1;min-width:110px;">${_input(`am-${prefix}-bcity`, 'Baptism City', c?.[m.city] || '')}</div>
+      <div id="am-${prefix}-bstate-wrap" style="flex:1;min-width:110px;display:${usa ? 'block' : 'none'};">${_stateSelect(`am-${prefix}-bstate`, c?.[m.state] || '')}</div>
+      <div style="flex:1;min-width:120px;"><label>Country</label><select id="am-${prefix}-bcountry" onchange="anlOnBapCountryChange('${prefix}')">${COUNTRIES.map(co => `<option${country === co ? ' selected' : ''}>${co}</option>`).join('')}</select></div>
+    </div>
+    ${_toggle(`am-${prefix}-baffidavit`, 'Baptism by Affidavit', !!c?.[m.affidavit])}`;
+}
 
 function buildCaseModalHtml(c, opts = {}) {
   const inline = !!opts.inline;
   const isEdit = _M.isEdit;
-  const sec = typeSections(_M.type);
   const advOpts = advocatePersonnel().map(p => `<option value="${p.id}"${c?.advocate_id === p.id ? ' selected' : ''}>${_esc(p.name)}</option>`).join('');
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Annulment Case' : 'New Annulment Case'}</div>`;
@@ -453,19 +534,28 @@ function buildCaseModalHtml(c, opts = {}) {
   h += _row(_input('am-pet-city', 'City', c?.petitioner_city || ''), _stateSelect('am-pet-state', c?.petitioner_state || ''), _input('am-pet-zip', 'ZIP', c?.petitioner_zip || ''));
   h += _row(_input('am-pet-cell', 'Cell Phone', c?.petitioner_cell || c?.contact_phone || '', 'tel'), _input('am-pet-email', 'Email', c?.petitioner_email || c?.contact_email || ''));
   h += _input('am-pet-dob', 'Date of Birth', c?.petitioner_dob && /^\d{4}-\d{2}-\d{2}/.test(c.petitioner_dob) ? c.petitioner_dob.slice(0, 10) : '', 'date');
-  // Petitioner baptism location — PLAIN, always-editable fields (not type-gated):
-  // Church, City, State, Country (Country defaulted). Always part of the petitioner
-  // section; the doc-state-dependent behavior lives only in the viewer.
-  h += _row(_input('am-pet-bchurch', 'Church of Baptism', c?.petitioner_baptism_church || ''), _input('am-pet-bcity', 'Baptism City', c?.petitioner_baptism_city || ''), _stateSelect('am-pet-bstate', c?.petitioner_baptism_state || ''), `<label>Country</label><select id="am-pet-bcountry">${COUNTRIES.map(co => `<option${(c?.petitioner_baptism_country || 'United States of America') === co ? ' selected' : ''}>${co}</option>`).join('')}</select>`);
-  h += _toggle('am-pet-baffidavit', 'Baptism by Affidavit', !!c?.petitioner_baptism_by_affidavit);
+  // Petitioner baptismal status — six booleans with symmetric mutual-exclusion. When
+  // (5) Never or (6) Non-Religious is checked, the baptism-location fields below grey
+  // out and the petitioner Baptismal Document drops from Required Documents (the
+  // respondent baptism section then surfaces — see anlBapStatusChange).
+  h += _subLabel('Baptismal Status');
+  h += _bapStatusToggles('pet', c);
+  // Petitioner baptism location — PLAIN, always-shown petitioner fields (greyed when
+  // 5/6). Church, City, State, Country + by-affidavit. Viewer adds the doc lock-gate.
+  h += _bapLocationFields('pet', c);
 
   // Section 4 — Respondent
   h += _sectionHead('Respondent');
   h += _row(_input('am-resp-first', 'First Name', c?.respondent_first || ''), _input('am-resp-middle', 'Middle', c?.respondent_middle || ''), _input('am-resp-last', 'Last Name', c?.respondent_last || ''), _input('am-resp-maiden', 'Maiden', c?.respondent_maiden || ''));
-  // Respondent baptismal-status toggles share the type-conditional baptism gate.
-  h += `<div id="am-resp-status-wrap" style="display:${sec.baptism ? 'block' : 'none'};">`;
-  h += _toggle('am-resp-baptized', 'Baptized?', !!c?.respondent_baptized);
-  h += _toggle('am-resp-catholic', 'Catholic?', !!c?.respondent_catholic);
+  // Respondent baptism section — appears ONLY when the PETITIONER is unbaptized
+  // (pet 5/6). Hidden-but-kept otherwise (data preserved; reappears unchanged). Mirrors
+  // the petitioner's six booleans + baptism location; when the RESPONDENT'S OWN 5/6 is
+  // checked, the respondent baptism fields grey + the respondent doc drops (two-layer).
+  const respBapShow = !!(c?.pet_bap_never || c?.pet_bap_nonreligious);
+  h += `<div id="am-resp-bap-section" style="display:${respBapShow ? 'block' : 'none'};">`;
+  h += _subLabel('Baptismal Status');
+  h += _bapStatusToggles('resp', c);
+  h += _bapLocationFields('resp', c);
   h += `</div>`;
 
   // Section 5 — Marriage. Order: church (relabeled, top) + Non-Church toggle that
@@ -492,14 +582,14 @@ function buildCaseModalHtml(c, opts = {}) {
   h += _toggle('am-prev-toggle', 'Previous Annulment?', _M.prev.length > 0, 'anlOnPrevToggle()');
   h += `<div id="am-prev-wrap" style="display:${_M.prev.length > 0 ? 'block' : 'none'};margin-top:.5rem;"></div>`;
 
-  // Section 8 — Briefer (formal only). briefer_process is a boolean ON a Formal
-  // case (not a separate type). When on, the respondent joins as co-petitioner, so
-  // the co_petitioner field is surfaced.
+  // Section 8 — Briefer (formal only). briefer_process is a boolean ON a Formal case
+  // (not a separate type). When on, the RESPONDENT becomes the co-petitioner BY
+  // DEFINITION — there is no separate co-petitioner input; it is derived from the
+  // respondent's name (stored in sync + displayed derived in the viewer).
   h += `<div id="am-briefer-section" style="display:${_M.type === 'formal' ? 'block' : 'none'};">`;
   h += _sectionHead('Briefer Process');
   h += _toggle('am-briefer', 'Briefer Process', !!c?.briefer_process, 'anlOnBrieferToggle()');
-  h += `<div id="am-briefer-info" style="display:${c?.briefer_process ? 'block' : 'none'};" class="anl-info-box">⚠️ The Briefer Process (Processus Brevior) requires:<br>• Both parties must jointly sign the petition<br>• The case is decided by the Bishop, not a collegiate tribunal<br>• Grounds must be evident from the facts</div>`;
-  h += `<div id="am-copet-wrap" style="display:${c?.briefer_process ? 'block' : 'none'};">${_input('am-copetitioner', 'Co-petitioner (the respondent joins the petition)', c?.co_petitioner || '')}</div>`;
+  h += `<div id="am-briefer-info" style="display:${c?.briefer_process ? 'block' : 'none'};" class="anl-info-box">⚠️ The Briefer Process (Processus Brevior) requires:<br>• Both parties must jointly sign the petition (the respondent joins as co-petitioner)<br>• The case is decided by the Bishop, not a collegiate tribunal<br>• Grounds must be evident from the facts</div>`;
   h += `</div>`;
 
   // Section 9 — Documents
@@ -551,18 +641,32 @@ function buildCaseModalHtml(c, opts = {}) {
 
 // Post-render hydration helpers (called after _anlOpen sets innerHTML)
 function _hydrateModal() {
-  renderModalDocs(); renderModalPrev();
+  // Apply baptismal-status exclusion + downstream + cross-party visibility from the
+  // stored values, then sync docs (which renders the checklist).
+  anlApplyBapExclusion('pet'); anlApplyBapExclusion('resp');
+  anlSyncRespBaptismVisibility();
+  anlApplyBaptismDownstream('pet'); anlApplyBaptismDownstream('resp');
+  _syncBaptismDocs();
+  renderModalPrev();
   if (_M.isEdit) { renderLinkedChip('marriage'); renderLinkedChip('ocia'); }
 }
 
 function renderModalDocs() {
   const el = document.getElementById('am-docs'); if (!el) return;
-  el.innerHTML = _M.docs.map((d, i) => `
+  // Petitioner 5/6 → hide the petitioner Baptismal Document (kept in _M.docs so data
+  // is preserved; it reappears if 5/6 is unchecked). Index is preserved for handlers.
+  const hidePetBap = _partyNoBaptism('pet');
+  const petBapIdx = _M.docs.findIndex(d => /baptism/i.test(d.name) && !/respondent/i.test(d.name));
+  const rows = _M.docs.map((d, i) => {
+    if (hidePetBap && i === petBapIdx) return '';
+    return `
     <div style="display:flex;align-items:center;gap:8px;padding:3px 0;">
       <input type="checkbox" ${d.received ? 'checked' : ''} onchange="anlDocReceived(${i},this.checked)" style="width:15px;height:15px;accent-color:var(--cardinal);" />
       <span style="flex:1;font-size:13px;color:var(--navy);">${_esc(d.name)}</span>
       ${d.deletable ? `<button onclick="anlRemoveDoc(${i})" title="Remove" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">×</button>` : `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>`}
-    </div>`).join('') || `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No documents.</div>`;
+    </div>`;
+  }).join('');
+  el.innerHTML = rows.trim() ? rows : `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No documents.</div>`;
 }
 
 function renderModalPrev() {
@@ -588,10 +692,8 @@ function anlOnTypeChange(val) {
   _M.type = val;
   // Briefer is a Formal-only flag; gate its section to Formal.
   const briefer = document.getElementById('am-briefer-section'); if (briefer) briefer.style.display = val === 'formal' ? 'block' : 'none';
-  // Respondent baptismal-status toggles remain type-conditional. (Petitioner baptism
-  // location fields are now always shown — they are plain petitioner-section fields.)
-  const sec = typeSections(val);
-  const respS = document.getElementById('am-resp-status-wrap'); if (respS) respS.style.display = sec.baptism ? 'block' : 'none';
+  // (Baptismal-status visibility is cross-party, not type-driven: the respondent
+  // baptism section is governed by the petitioner's 5/6 status — see anlBapStatusChange.)
   // Document checklist reconciliation with the new type's template.
   if (!_M.isEdit) {
     // New case: just reseed from the template.
@@ -623,7 +725,63 @@ function anlOnStatusChange(val) {
 window.anlOnBrieferToggle = () => {
   const on = document.getElementById('am-briefer').checked;
   document.getElementById('am-briefer-info').style.display = on ? 'block' : 'none';
-  const cp = document.getElementById('am-copet-wrap'); if (cp) cp.style.display = on ? 'block' : 'none';
+};
+
+// ── Baptismal-status interactions (shared by both parties) ────────────────────
+// Symmetric mutual-exclusion: a box is disabled (greyed) iff some OTHER checked box
+// excludes it (BAP_EXCL is symmetric, so this is order-independent + both-directions).
+// A checked box is never disabled (so it can always be unchecked to re-enable others).
+function anlApplyBapExclusion(prefix) {
+  const checked = [];
+  for (let n = 1; n <= 6; n++) if (_bapChecked(prefix, n)) checked.push(n);
+  for (let j = 1; j <= 6; j++) {
+    const el = document.getElementById(`am-${prefix}-bap${j}`); if (!el) continue;
+    const disable = !el.checked && checked.some(i => i !== j && BAP_EXCL[i].includes(j));
+    el.disabled = disable;
+    const lbl = document.getElementById(`am-${prefix}-bap${j}-lbl`);
+    if (lbl) { lbl.style.opacity = disable ? '0.45' : ''; lbl.style.cursor = disable ? 'not-allowed' : 'pointer'; }
+  }
+}
+// Downstream of a party's OWN 5/6: grey (disable, keep data) that party's baptism
+// location fields + by-affidavit. Document removal is handled in _syncBaptismDocs.
+function anlApplyBaptismDownstream(prefix) {
+  const off = _partyNoBaptism(prefix);
+  ['bchurch', 'bcity', 'bstate', 'bcountry', 'baffidavit'].forEach(suf => {
+    const el = document.getElementById(`am-${prefix}-${suf}`); if (!el) return;
+    el.disabled = off;
+    el.style.opacity = off ? '0.45' : '';
+    const lbl = el.closest('label'); if (lbl) lbl.style.opacity = off ? '0.45' : '';
+  });
+}
+// Cross-party: the respondent baptism section appears ONLY when the PETITIONER is
+// unbaptized (pet 5/6). Hidden-but-kept otherwise (display:none preserves field data).
+function anlSyncRespBaptismVisibility() {
+  const sec = document.getElementById('am-resp-bap-section');
+  if (sec) sec.style.display = _partyNoBaptism('pet') ? 'block' : 'none';
+}
+// Add/remove the dynamic baptism docs in _M.docs (then re-render the checklist):
+//  • Petitioner baptism doc — a template doc; HIDDEN at render when pet 5/6 (kept in data).
+//  • Respondent baptism doc — present only when pet 5/6 AND respondent NOT 5/6.
+function _syncBaptismDocs() {
+  const wantResp = _partyNoBaptism('pet') && !_partyNoBaptism('resp');
+  const idx = _M.docs.findIndex(d => /baptism/i.test(d.name) && /respondent/i.test(d.name));
+  if (wantResp && idx < 0) _M.docs.push({ name: RESP_BAPTISM_DOC, received: false, deletable: true });
+  else if (!wantResp && idx >= 0) _M.docs.splice(idx, 1);
+  renderModalDocs();
+}
+// Single entry point wired to every status checkbox's onchange.
+window.anlBapStatusChange = (prefix) => {
+  anlApplyBapExclusion(prefix);
+  anlSyncRespBaptismVisibility();        // petitioner 5/6 governs the respondent section
+  anlApplyBaptismDownstream('pet');
+  anlApplyBaptismDownstream('resp');
+  _syncBaptismDocs();                     // re-renders the checklist (also hides pet baptism doc)
+};
+// Baptism country dropdown (per party): non-US hides + clears the 50-state dropdown.
+window.anlOnBapCountryChange = (prefix) => {
+  const usa = document.getElementById(`am-${prefix}-bcountry`)?.value === 'United States of America';
+  const w = document.getElementById(`am-${prefix}-bstate-wrap`); if (w) w.style.display = usa ? 'block' : 'none';
+  const sel = document.getElementById(`am-${prefix}-bstate`); if (sel && !usa) sel.value = '';
 };
 window.anlOnVetitumToggle = () => { const on = document.getElementById('am-vetitum').checked; document.getElementById('am-vetitum-notes-wrap').style.display = on ? 'block' : 'none'; };
 // Non-Church Wedding hides the parish/church field (a civil wedding has no parish).
@@ -701,11 +859,14 @@ function _anlReadPayload() {
   _syncPrevFromDom(); _syncDocsReceivedFromDom();
   const type = _M.type;
   const advSel = document.getElementById('am-advocate')?.value || '';
+  const respFull = `${_v('am-resp-first')} ${_v('am-resp-last')}`.trim() || null;
   const payload = {
     annulment_type: type,
     briefer_process: type === 'formal' ? _chk('am-briefer') : false,
-    // Co-petitioner only applies to a Briefer (Formal) case; cleared otherwise.
-    co_petitioner: (type === 'formal' && _chk('am-briefer')) ? (_v('am-copetitioner') || null) : null,
+    // Briefer: the RESPONDENT is the co-petitioner by definition — no separate input.
+    // Keep the legacy co_petitioner column in sync (derived from the respondent name);
+    // null when not a Briefer. The viewer displays it derived from the respondent.
+    co_petitioner: (type === 'formal' && _chk('am-briefer')) ? respFull : null,
     // Advocate stores to its own columns: FK id for a directory pick, free-text
     // override for "Other". (The dead `preparer` column is never written here.)
     advocate_id: advSel && advSel !== '__other' ? advSel : null,
@@ -716,11 +877,22 @@ function _anlReadPayload() {
     petitioner_state: _v('am-pet-state') || null, petitioner_zip: _v('am-pet-zip') || null,
     petitioner_cell: normalizePhone(_v('am-pet-cell')) || null, petitioner_email: _v('am-pet-email') || null,
     petitioner_dob: _v('am-pet-dob') || null,
-    petitioner_baptism_church: _v('am-pet-bchurch') || null, petitioner_baptism_city: _v('am-pet-bcity') || null, petitioner_baptism_state: _v('am-pet-bstate') || null, petitioner_baptism_country: _v('am-pet-bcountry') || null,
+    petitioner_baptism_church: _v('am-pet-bchurch') || null, petitioner_baptism_city: _v('am-pet-bcity') || null,
+    petitioner_baptism_state: (_v('am-pet-bcountry') === 'United States of America') ? (_v('am-pet-bstate') || null) : null,
+    petitioner_baptism_country: _v('am-pet-bcountry') || null,
     petitioner_baptism_by_affidavit: _chk('am-pet-baffidavit'),
     respondent_first: _v('am-resp-first') || null, respondent_middle: _v('am-resp-middle') || null,
     respondent_last: _v('am-resp-last') || null, respondent_maiden: _v('am-resp-maiden') || null,
-    respondent_baptized: _chk('am-resp-baptized'), respondent_catholic: _chk('am-resp-catholic'),
+    // Respondent baptism location (mirrors petitioner; non-US clears state).
+    respondent_baptism_church: _v('am-resp-bchurch') || null, respondent_baptism_city: _v('am-resp-bcity') || null,
+    respondent_baptism_state: (_v('am-resp-bcountry') === 'United States of America') ? (_v('am-resp-bstate') || null) : null,
+    respondent_baptism_country: _v('am-resp-bcountry') || null,
+    respondent_baptism_by_affidavit: _chk('am-resp-baffidavit'),
+    // Six baptismal-status booleans per party (pet_bap_* / resp_bap_*).
+    ...Object.fromEntries(BAP_STATUS.flatMap(o => [
+      [`pet_bap_${o.suffix}`, _chk(`am-pet-bap${o.n}`)],
+      [`resp_bap_${o.suffix}`, _chk(`am-resp-bap${o.n}`)],
+    ])),
     // Marriage location (restructured): church only when NOT a non-church wedding;
     // State only when Country is USA (cleared otherwise). marriage_state_country and
     // marriage_ceremony_type are no longer written (dead columns).
@@ -779,7 +951,7 @@ async function anlSaveCase() {
   const { payload } = r;
   if (_M.isEdit) {   // safety: the modal is create-only now, but keep edit correct
     const res = await anlSaveEdit(_M.id);
-    if (res.ok) { anlCloseModal(); refreshActivePanel(); }
+    if (res.ok) { window.flashSavedThen(() => { anlCloseModal(); refreshActivePanel(); }); }
     return;
   }
   payload.status_code = 'prep';
@@ -789,7 +961,7 @@ async function anlSaveCase() {
   const { error } = await withWriteRetry(() => sb.from('annulment_cases').insert(payload), { kind: 'insert' });
   if (error) { reportWriteError('annulment insert', error); return; }
   await logActivity({ action: 'opened annulment case', entityType: 'annulments', entityName: payload.petitioner || 'New case', contextType: 'annulments' });
-  anlCloseModal(); await loadCasesData(); refreshActivePanel();
+  window.flashSavedThen(async () => { anlCloseModal(); await loadCasesData(); refreshActivePanel(); });
 }
 
 // ── Shell config hooks (inline edit form + save/delete) ──────────────────────
@@ -880,8 +1052,7 @@ async function anlTplSave() {
   const { error } = await sb.from('annulment_templates').upsert({ annulment_type: _tplActive, documents: docs, updated_at: nowIso() }, { onConflict: 'annulment_type' });
   if (error) { alert('Save failed: ' + error.message); return; }
   _templates[_tplActive] = docs;
-  const btn = document.querySelector('#anl-overlay .modal-actions .btn-primary');
-  if (btn) { btn.textContent = 'Saved ✓'; btn.style.background = '#2D6A4F'; setTimeout(() => { btn.textContent = 'Save Template'; btn.style.background = ''; }, 1600); }
+  window.flashSaved();   // shared green "Saved ✓" confirmation
 }
 
 Object.assign(window, {

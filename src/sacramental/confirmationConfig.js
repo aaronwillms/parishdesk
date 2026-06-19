@@ -122,7 +122,7 @@ export const confirmationConfig = {
   canManage: () => confCanManage(),
   canManageTemplate: () => isSacramentCoordinator('confirmation'),
   openTemplate: () => window.openConfTemplates?.(),
-  openManageCohorts: () => window.openCohortManager?.(),
+  openManageCohorts: () => window.openCohortManager?.('confirmation'),
   openCreate: () => window.openConfCreate?.(),
 
   fetchRecords: async () => getConfRecords(),

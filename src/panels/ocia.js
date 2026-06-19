@@ -6,6 +6,8 @@ import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
+import { inheritCohortFormation } from '../sacramental/churchLocation.js';
+import { registerCohortManager } from '../sacramental/cohortManager.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 
 const OCIA_STATUS = {
@@ -113,6 +115,7 @@ export async function loadOciaData() {
   allOcia = data || [];
   store.allOcia = allOcia;
   updateOciaStats();
+  renderOciaAlerts();
   return allOcia;
 }
 // Nav loader — fetch then mount the master-detail shell into #ocia-root.
@@ -133,6 +136,81 @@ export function ociaLastName(p) { return lastNameOf(p); }
 export function ociaStatusOf(p) { return p?.status_code || 'inquirer'; }
 export function candTypeOf(p) { return candType(p); }
 export function ociaNotesOf(p) { return notesOf(p); }
+export function ociaIsMinor(p) { return isMinor(p); }
+
+// ── Viewer-editable autosave (notes + minor permission) ─────────────────────
+// Serialize per-record so rapid edits don't overlap; retry transport failures.
+async function _ociaPatch(id, patch) {
+  const p = allOcia.find(x => x.id === id); if (!p) return null;
+  const { error } = await serializeWrite(`ocia:${id}`, () =>
+    withWriteRetry(() => sb.from('sacramental_ocia').update({ ...patch, updated_at: nowIso() }).eq('id', id), { kind: 'update' }));
+  if (error) { reportWriteError('ocia update', error); return null; }
+  Object.assign(p, patch); return p;
+}
+// Notes (notes_log jsonb) — add/delete from the viewer, write-retry wrapped.
+async function ociaAddNote(id) {
+  const p = allOcia.find(x => x.id === id); if (!p) return;
+  const inp = document.getElementById(`ocia-note-input-${id}`); const note = (inp?.value || '').trim();
+  if (!note) return;
+  const log = Array.isArray(p.notes_log) ? JSON.parse(JSON.stringify(p.notes_log)) : [];
+  log.push({ note, by: _curUserName(), created_at: nowIso() });
+  if (await _ociaPatch(id, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
+}
+async function ociaDeleteNote(id, idx) {
+  const p = allOcia.find(x => x.id === id); if (!p) return;
+  const log = Array.isArray(p.notes_log) ? JSON.parse(JSON.stringify(p.notes_log)) : [];
+  if (idx < 0 || idx >= log.length) return;
+  log.splice(idx, 1);
+  if (await _ociaPatch(id, { notes_log: log })) refreshActivePanel();
+}
+
+// ── Minor parent/guardian permission (viewer inline + lock-gate) ────────────
+const PERM_LOCK_TIP = 'Enter the parent/guardian name and the date before marking permission granted.';
+// Inline name/date edit (shown when permission not yet granted). No re-render, so
+// focus/tab is preserved; re-sync the gate after each save.
+async function ociaSavePermField(id, field, el) {
+  const col = field === 'name' ? 'minor_guardian_name' : 'minor_permission_date';
+  await _ociaPatch(id, { [col]: (el?.value || '').trim() || null });
+  _ociaSyncPermLock(id);
+}
+// Toggle "permission granted" → mirror name/date into the consent_* columns and
+// re-render so the section collapses to its read-only display.
+async function ociaTogglePermission(id, checked) {
+  const p = allOcia.find(x => x.id === id); if (!p) return;
+  const patch = { parental_consent: !!checked };
+  if (checked) { patch.consent_parent_name = p.minor_guardian_name || null; patch.consent_date = p.minor_permission_date || null; }
+  if (await _ociaPatch(id, patch)) refreshActivePanel();
+}
+// Enable/disable the granted checkbox in place as name+date fill (forward-only).
+function _ociaSyncPermLock(id) {
+  const p = allOcia.find(x => x.id === id); if (!p) return;
+  const box = document.getElementById(`ocia-perm-box-${id}`); if (!box) return;
+  const filled = String(p.minor_guardian_name || '').trim() && String(p.minor_permission_date || '').trim();
+  if (filled) {
+    box.setAttribute('onclick', `ociaTogglePermission('${id}',true)`);
+    box.style.cursor = 'pointer'; box.style.opacity = '1'; box.removeAttribute('title');
+  } else {
+    box.removeAttribute('onclick');
+    box.style.cursor = 'not-allowed'; box.style.opacity = '0.45'; box.setAttribute('title', PERM_LOCK_TIP);
+  }
+  const note = document.getElementById(`ocia-perm-note-${id}`);
+  if (note) note.style.display = filled ? 'none' : 'block';
+}
+
+// ── Priority Actions banner — minors missing parent/guardian permission ─────
+export function ociaAlertItems(p) {
+  return (isMinor(p) && !p.parental_consent && !p.archived) ? ['Parent/Guardian Permission Needed'] : [];
+}
+function renderOciaAlerts() {
+  const el = document.getElementById('ocia-alerts'); if (!el) return;
+  const blocks = allOcia.map(p => ({ p, items: ociaAlertItems(p) })).filter(b => b.items.length);
+  if (!blocks.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="alert-strip" style="margin-bottom:1rem;flex-direction:column;align-items:flex-start;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><i class="ti ti-alert-triangle" style="color:var(--gold);font-size:15px;"></i><strong style="font-size:13px;">Priority actions</strong></div>
+    ${blocks.map(b => `<div style="font-size:13px;color:var(--navy);margin-bottom:4px;"><strong>${_esc(b.p.name || '—')}</strong>: ${b.items.map(_esc).join(', ')}</div>`).join('')}
+  </div>`;
+}
+
 function updateOciaStats() {
   const active = allOcia.filter(p => !p.archived && p.status_code !== 'inactive');
   const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
@@ -206,15 +284,9 @@ function buildModalHtml(p, opts = {}) {
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit OCIA File' : 'New OCIA Candidate'}</div>`;
 
-  // Section 1 — Candidate Type toggle buttons
-  h += _sectionHead('Candidate Type');
-  h += `<div style="display:flex;gap:10px;">
-    <button type="button" id="ot-catechumen" class="ocia-type-btn${_M.type === 'catechumen' ? ' active' : ''}" onclick="ociaSetType('catechumen')" style="flex:1;">Catechumen<br><span style="font-size:11px;font-weight:400;opacity:.8;">unbaptized</span></button>
-    <button type="button" id="ot-candidate" class="ocia-type-btn${_M.type === 'candidate' ? ' active' : ''}" onclick="ociaSetType('candidate')" style="flex:1;">Candidate<br><span style="font-size:11px;font-weight:400;opacity:.8;">already baptized</span></button>
-  </div>`;
-
-  // Section 2 — Cohort (SELECT an existing cohort; creation lives in Manage Cohorts).
-  // Picking a cohort defaults the reception church (editable) — see ociaCohortPick.
+  // Section 1 — Cohort FIRST (SELECT an existing cohort; creation lives in Manage
+  // Cohorts). Picking it first defaults BOTH the reception church and the formation
+  // person (editable) — see ociaCohortPick.
   h += _sectionHead('Cohort');
   if (_cohorts.length) {
     const cohOpts = _cohorts.map(c => `<option value="${c.id}"${p?.cohort_id === c.id ? ' selected' : ''}>${cohortLabel(c.cohort_date)}</option>`).join('');
@@ -223,6 +295,23 @@ function buildModalHtml(p, opts = {}) {
     h += `<label>Cohort</label><select id="of-cohort" disabled style="color:#9CA3AF;"><option value="">No cohorts yet</option></select>
       <div style="font-size:11.5px;color:#9CA3AF;margin-top:4px;">Create a cohort first via <strong>Manage Cohorts</strong>.</div>`;
   }
+
+  // Person Responsible for Formation — shared Clergy + Coordinator + Other helper
+  // (labeled "OCIA Prep" in the viewer). Stored in `preparer`.
+  h += _sectionHead('Person Responsible for Formation');
+  h += buildPreparerField('of-preparer', p?.preparer || '', { coordinatorNames: _ociaCoordinatorNames, label: 'Person Responsible for Formation' });
+
+  // Status (shown in BOTH create + edit; defaults to Inquirer). The reception
+  // sub-section + sacraments + archive remain edit-only below.
+  h += _sectionHead('Status');
+  h += `<label>Status</label><select id="of-status" onchange="ociaStatusChange(this.value)">${Object.entries(OCIA_STATUS).map(([k, v]) => `<option value="${k}"${(p?.status_code || 'inquirer') === k ? ' selected' : ''}>${v.label}</option>`).join('')}</select>`;
+
+  // Candidate Type toggle buttons
+  h += _sectionHead('Candidate Type');
+  h += `<div style="display:flex;gap:10px;">
+    <button type="button" id="ot-catechumen" class="ocia-type-btn${_M.type === 'catechumen' ? ' active' : ''}" onclick="ociaSetType('catechumen')" style="flex:1;">Catechumen<br><span style="font-size:11px;font-weight:400;opacity:.8;">unbaptized</span></button>
+    <button type="button" id="ot-candidate" class="ocia-type-btn${_M.type === 'candidate' ? ' active' : ''}" onclick="ociaSetType('candidate')" style="flex:1;">Candidate<br><span style="font-size:11px;font-weight:400;opacity:.8;">already baptized</span></button>
+  </div>`;
 
   // Section 3 — Candidate info
   h += _sectionHead('Candidate Information');
@@ -264,8 +353,7 @@ function buildModalHtml(p, opts = {}) {
 
   // Edit-only
   if (isEdit) {
-    h += _sectionHead('Status & Reception');
-    h += `<label>Status</label><select id="of-status" onchange="ociaStatusChange(this.value)">${Object.entries(OCIA_STATUS).map(([k, v]) => `<option value="${k}"${(p?.status_code || 'inquirer') === k ? ' selected' : ''}>${v.label}</option>`).join('')}</select>`;
+    h += _sectionHead('Reception');
     const showRec = p?.status_code === 'received' || p?.status_code === 'complete';
     const easter = nextEaster(); const easterVal = easter.toISOString().slice(0, 10);
     h += `<div id="of-rec-wrap" style="display:${showRec ? 'block' : 'none'};" data-easter="${easterVal}">
@@ -340,12 +428,14 @@ function ociaSetType(t) {
 }
 function ociaDobChange() { const age = ociaAge(document.getElementById('of-dob').value); document.getElementById('of-minor-wrap').style.display = (age !== null && age <= 17) ? 'block' : 'none'; }
 function ociaStatusChange(v) { const w = document.getElementById('of-rec-wrap'); if (w) w.style.display = (v === 'received' || v === 'complete') ? 'block' : 'none'; }
-// Cohort → reception church inheritance: default (editable) the reception church to
-// the cohort's church when not already set. Reception church stores the church NAME.
+// Cohort → reception church + formation inheritance: default (editable) the reception
+// church and the formation person to the cohort's. Reception church stores the church NAME.
 function ociaCohortPick(v) {
   const coh = _cohorts.find(c => c.id === v);
+  if (!coh) return;
+  inheritCohortFormation(coh, 'of-preparer');  // default (editable) the formation person
   const rc = document.getElementById('of-rec-church');
-  if (!coh || !rc || rc.value) return;
+  if (!rc || rc.value) return;                 // reception church only when its section is shown + empty
   const name = coh.church_institution_id
     ? ((store.institutions || []).find(i => i.id === coh.church_institution_id)?.name || '')
     : (coh.church_override || '');
@@ -409,6 +499,7 @@ function _ociaReadPayload() {
 
   const payload = {
     name, candidate_type: type, baptismal_status: type === 'candidate' ? 'baptized' : 'unbaptized',
+    preparer: readPreparerValue('of-preparer'),
     cohort_id: cohortSel || null, cohort_date: coh?.cohort_date || null,
     phone: normalizePhone(_v('of-phone')) || null, email: _v('of-email') || null, dob: _v('of-dob') || null,
     parental_consent: minor ? _chk('of-consent') : false,
@@ -429,8 +520,8 @@ function _ociaReadPayload() {
   return { ok: true, payload, familyGroupId, linkTargetToUpdate };
 }
 
-// Apply edit-only fields (status / reception / sacraments / archive) + the auto
-// "Received" timeline milestone. Mutates `payload`.
+// Apply edit-only fields (status / reception / sacraments / archive). OCIA carries
+// no timeline (removed) — no auto-stamping here.
 function _ociaApplyEditFields(payload, prior) {
   const type = _M.type;
   const newStatus = document.getElementById('of-status')?.value || prior?.status_code || 'inquirer';
@@ -445,20 +536,16 @@ function _ociaApplyEditFields(payload, prior) {
     payload.reception_church = churchSel && churchSel !== '__other' ? churchSel : (churchSel === '__other' ? prior?.reception_church || null : null);
     payload.sacraments_received = { baptism: type === 'catechumen' ? _chk('of-sac-baptism') : false, confirmation: _chk('of-sac-confirmation'), eucharist: _chk('of-sac-eucharist') };
   }
-  const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
-  if (prior && prior.status_code !== 'received' && newStatus === 'received') tl.push({ type: 'auto', text: 'Received', created_at: nowIso() });
-  payload.timeline = tl;
 }
 
 // Create flow (modal).
 async function ociaSave() {
   const r = _ociaReadPayload();
   if (!r.ok) { alert('Candidate name is required.'); return; }
-  if (_M.isEdit) { const res = await ociaSaveEdit(_M.id); if (res.ok) { ociaCloseModal(); refreshActivePanel(); } return; }
+  if (_M.isEdit) { const res = await ociaSaveEdit(_M.id); if (res.ok) { window.flashSavedThen(() => { ociaCloseModal(); refreshActivePanel(); }); } return; }
   const { payload, familyGroupId, linkTargetToUpdate } = r;
-  payload.status_code = 'inquirer';
+  payload.status_code = document.getElementById('of-status')?.value || 'inquirer';
   payload.archived = false;
-  payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
   const { error } = await withWriteRetry(() => sb.from('sacramental_ocia').insert(payload), { kind: 'insert' });
   if (error) { reportWriteError('ocia insert', error); return; }
   if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);
@@ -466,7 +553,7 @@ async function ociaSave() {
   const { data: { user } } = await sb.auth.getUser();
   const uids = await getUserIdsForSacrament('ocia');
   notifyUsers(uids, user?.id, `New OCIA candidate added: ${payload.name}`, 'info', 'ocia');
-  ociaCloseModal(); await loadOciaData(); refreshActivePanel();
+  window.flashSavedThen(async () => { ociaCloseModal(); await loadOciaData(); refreshActivePanel(); });
 }
 
 // ── Shell config hooks (inline edit form + save/delete) ──────────────────────
@@ -502,6 +589,16 @@ async function ociaDeletePerson(id) {   // modal Delete button
   if (res.ok) { ociaCloseModal(); refreshActivePanel(); }
 }
 
+// ── Cohort manager — shared module (src/sacramental/cohortManager.js) ─────────
+registerCohortManager({
+  panel: 'ocia', idPrefix: 'ocoh', dateLabel: 'Reception Date', stateLabel: 'State/Province',
+  noun: 'person', pluralNoun: 'people', deleteNote: 'People keep their data but lose the cohort link.',
+  coordinatorNames: () => _ociaCoordinatorNames,
+  getCohorts: () => _cohorts, getRecords: () => allOcia,
+  open: (html) => _ociaOpen(html), close: () => ociaCloseModal(),
+  reloadCohorts: () => loadCohorts(), refresh: () => refreshActivePanel(),
+});
+
 // ── Templates ────────────────────────────────────────────────────────────────
 let _tplState = null, _tplActive = 'catechumen';
 function openOciaTemplates() { _tplState = JSON.parse(JSON.stringify(_templates)); _tplActive = 'catechumen'; _ociaOpen(buildTplHtml()); renderTplDocs(); }
@@ -528,8 +625,7 @@ async function ociaTplSave() {
   const { error } = await sb.from('ocia_templates').upsert({ candidate_type: _tplActive, documents: docs, updated_at: nowIso() }, { onConflict: 'candidate_type' });
   if (error) { alert('Save failed: ' + error.message); return; }
   _templates[_tplActive] = docs;
-  const btn = document.querySelector('#ocia-overlay .modal-actions .btn-primary');
-  if (btn) { btn.textContent = 'Saved ✓'; btn.style.background = '#2D6A4F'; setTimeout(() => { btn.textContent = 'Save Template'; btn.style.background = ''; }, 1600); }
+  window.flashSaved();   // shared green "Saved ✓" confirmation
 }
 
 Object.assign(window, {
@@ -540,5 +636,7 @@ Object.assign(window, {
   ociaDocReceived, ociaRemoveDoc, ociaAddDoc,
   ociaFamilySearch, ociaRemoveFamily, ociaAnnulSearch, ociaRemoveAnnul,
   ociaSave, ociaDeletePerson,
+  // Viewer-editable notes + minor permission (write-retry wrapped).
+  ociaAddNote, ociaDeleteNote, ociaSavePermField, ociaTogglePermission,
   ociaTplTab, ociaTplAdd, ociaTplRemove, ociaTplSave,
 });

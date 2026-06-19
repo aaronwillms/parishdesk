@@ -124,6 +124,9 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 .btn-secondary{background:#FFFFFF;color:var(--navy);border:.5px solid var(--stone);border-radius:var(--radius-sm);padding:.45rem 1.1rem;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;}
 .btn-delete{background:#FFFFFF;color:#A32D2D;border:.5px solid #E8CECE;border-radius:var(--radius-sm);padding:.45rem 1.1rem;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;transition:background .13s;}
 .btn-delete:hover{background:#FCEBEB;}
+/* Shared save-confirmation state (src/ui/saveButton.js) — green "Saved ✓" on success. */
+.btn-saved{background:#2D6A4F !important;color:#FFFFFF !important;border:none !important;border-color:#2D6A4F !important;cursor:default !important;opacity:1 !important;}
+.btn-saved:hover{opacity:1 !important;}
 .pulse{display:inline-block;width:80px;height:11px;background:var(--stone);border-radius:4px;animation:shimmer 1.4s ease-in-out infinite;}
 @keyframes shimmer{0%,100%{opacity:.5;}50%{opacity:1;}}
 .event-now-dot{width:8px;height:8px;border-radius:50%;background:#2E7D32;animation:event-now-pulse 2s infinite;flex-shrink:0;}
@@ -262,6 +265,8 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
   body.dark-mode .stat-card{background:#1A2634 !important;border-color:#2D3F50 !important;}
   body.dark-mode .stat-num{color:#F8F7F4 !important;}
   body.dark-mode .stat-label{color:#9CA3AF !important;}
+  /* Save-confirmation: brighter green + dark text so it pops on the dark UI */
+  body.dark-mode .btn-saved{background:#2ECC71 !important;color:#0F1923 !important;border-color:#2ECC71 !important;}
   /* Cards — generic + catch-all */
   body.dark-mode .card{background:#1A2634 !important;border-color:#2D3F50 !important;}
   body.dark-mode .card *{color:#F8F7F4 !important;}

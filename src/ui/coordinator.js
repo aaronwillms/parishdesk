@@ -121,7 +121,7 @@ async function saveCoord(prog) {
   if (!coordData[prog]) coordData[prog] = {};
   coordData[prog].coordinator_ids = coordinator_ids;
   renderCoordCard(prog);
-  closeModal();
+  window.flashSavedThen(() => closeModal());
 }
 
 // ── Schedule modal ─────────────────────────────────────────────────────────────
@@ -187,7 +187,7 @@ async function saveScheduleEntries(prog) {
   const { error } = await sb.from('program_schedule').insert(rows);
   if (error) { alert('Save failed: ' + error.message); return; }
   await loadCoordData(prog);
-  openScheduleModal(prog);
+  window.flashSavedThen(() => openScheduleModal(prog));
 }
 
 async function deleteScheduleEntry(prog, id) {

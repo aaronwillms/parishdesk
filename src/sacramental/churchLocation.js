@@ -74,3 +74,21 @@ export function inheritCohortChurch(coh, prefix) {
     if (se) se.value = coh.church_state || '';
   }
 }
+
+// COHORT → FILE formation inheritance: default the file's "Person Responsible for
+// Formation" dropdown to the cohort's preparer (default-but-editable, the same model
+// as inheritCohortChurch). `preparerId` is the file form's preparer field id
+// ('ff-preparer' | 'cf-preparer' | 'of-preparer'). A preparer not in the option list
+// falls back to the "Other…" free-entry input, mirroring buildPreparerField.
+export function inheritCohortFormation(coh, preparerId) {
+  if (!coh || !coh.preparer) return;
+  const sel = document.getElementById(preparerId); if (!sel) return;
+  const name = coh.preparer;
+  if ([...sel.options].some(o => o.value === name)) {
+    sel.value = name;
+  } else {
+    sel.value = '__other';
+    const other = document.getElementById(`${preparerId}-other`); if (other) other.value = name;
+  }
+  if (typeof window !== 'undefined' && window._preparerToggleOther) window._preparerToggleOther(preparerId);
+}

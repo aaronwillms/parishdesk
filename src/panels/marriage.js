@@ -309,7 +309,7 @@ async function addCoupleNoteLog(coupleId) {
   const c = allCouples.find(x => x.id === coupleId); if (!c) return;
   const log = Array.isArray(c.notes_log) ? JSON.parse(JSON.stringify(c.notes_log)) : [];
   log.push({ note, by: _curUserName(), created_at: nowIso() });
-  if (await _patch(coupleId, { notes_log: log })) refreshActivePanel();
+  if (await _patch(coupleId, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
 }
 
 // ── Big modal scaffolding (own overlay) ──────────────────────────────────────
@@ -826,7 +826,7 @@ async function _marWriteEdit(id) {
 async function marSaveCouple() {
   const r = _marReadPayload();
   if (!r.ok) { alert('At least one spouse name is required.'); return; }
-  if (_M.isEdit) { const res = await _marWriteEdit(_M.id); if (res.ok) { marCloseModal(); refreshActivePanel(); } return; }
+  if (_M.isEdit) { const res = await _marWriteEdit(_M.id); if (res.ok) { window.flashSavedThen(() => { marCloseModal(); refreshActivePanel(); }); } return; }
   const { payload } = r;
   let st = document.getElementById('mf-status')?.value || 'inprogress';
   if (st === 'external') st = 'inprogress';
@@ -835,7 +835,7 @@ async function marSaveCouple() {
   const { error } = await withWriteRetry(() => sb.from('couples').insert(payload), { kind: 'insert' });
   if (error) { reportWriteError('couples insert', error); return; }
   logActivity({ action: 'created marriage prep record', entityType: 'marriage', entityName: `${payload.groom} & ${payload.bride}`, contextType: 'couple' });
-  marCloseModal(); await loadCouplesData(); refreshActivePanel();
+  window.flashSavedThen(async () => { marCloseModal(); await loadCouplesData(); refreshActivePanel(); });
 }
 
 // ── Shell config hooks (inline edit form + save/delete/bulk) ─────────────────
@@ -923,8 +923,7 @@ async function marTplSave() {
   const { error } = await sb.from('marriage_templates').upsert({ marriage_type: _tplActive, documents: t.documents, steps: t.steps, fees_enabled: t.fees_enabled !== false, fees: t.fees, updated_at: nowIso() }, { onConflict: 'marriage_type' });
   if (error) { alert('Save failed: ' + error.message); return; }
   _templates[_tplActive] = JSON.parse(JSON.stringify(t));
-  const btn = document.querySelector('#mar-overlay .modal-actions .btn-primary');
-  if (btn) { btn.textContent = 'Saved ✓'; btn.style.background = '#2D6A4F'; setTimeout(() => { btn.textContent = 'Save Template'; btn.style.background = ''; }, 1600); }
+  window.flashSaved();   // shared green "Saved ✓" confirmation
 }
 
 Object.assign(window, {

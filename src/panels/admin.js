@@ -542,6 +542,7 @@ async function _saveUser(userId) {
   }
 
   statusEl.textContent = 'Saved.';
+  window.flashSaved();
   setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
   await _loadUsers();
 }
@@ -757,6 +758,7 @@ async function _renderCalendarsTab() {
     if (error) { statusEl.textContent = 'Failed.'; statusEl.style.color = '#E74C3C'; return; }
     store.parishSettings = { ...store.parishSettings, ...payload };
     statusEl.textContent = 'Saved.'; statusEl.style.color = '#2D6A4F';
+    window.flashSaved();
     setTimeout(() => { statusEl.textContent = ''; }, 2500);
   });
 
@@ -826,8 +828,7 @@ async function _saveCalendar(id) {
     ? await sb.from('calendars').update(payload).eq('id', id)
     : await sb.from('calendars').insert(payload);
   if (error) { alert('Save failed: ' + error.message); return; }
-  closeModal();
-  await _renderCalendarsTab();
+  window.flashSavedThen(async () => { closeModal(); await _renderCalendarsTab(); });
 }
 
 // ── Parish Settings tab ────────────────────────────────────────────────────
@@ -1006,6 +1007,7 @@ async function _renderSettingsTab() {
     store.parishSettings = { ...store.parishSettings, ...payload };
     applyParishName(name);
     statusEl.textContent = 'Saved.';
+    window.flashSaved();
     setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
   });
 }

@@ -279,6 +279,7 @@ function _bindEvents() {
     store.currentUserProfile = _profile;
     statusEl.textContent = 'Saved.';
     statusEl.style.color = '#2D6A4F';
+    window.flashSaved();
     setTimeout(() => { statusEl.textContent = ''; }, 2000);
   });
 }
@@ -357,6 +358,7 @@ async function _saveContactInfo() {
 
     statusEl.style.color = '#166534';
     statusEl.textContent = 'Saved successfully.';
+    window.flashSaved();
     setTimeout(() => { if (statusEl) { statusEl.textContent = ''; statusEl.style.color = '#6B7280'; } }, 3000);
   } catch (err) {
     statusEl.style.color = '#8B1A2F';
