@@ -183,11 +183,24 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 .anl-link-opt:hover{background:var(--parch);}
 .anl-tpl-tab{padding:5px 12px;border-radius:7px;border:.5px solid var(--stone);background:#fff;color:#6B7280;font-size:12.5px;cursor:pointer;font-family:'Inter',sans-serif;}
 .anl-tpl-tab.active{background:var(--navy);color:var(--gold);border-color:var(--navy);}
-/* Annulment timeline entry — faint X reveals on hover for manual deletion */
-.anl-tl-entry{display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-bottom:.5px solid var(--stone);}
-.anl-tl-x{opacity:0;transition:opacity .12s,color .12s;cursor:pointer;color:#C9C2B6;background:none;border:none;font-size:14px;line-height:1;padding:0 2px;flex-shrink:0;}
-.anl-tl-entry:hover .anl-tl-x{opacity:1;}
-.anl-tl-x:hover{color:#E74C3C;}
+/* Shared sacramental timeline / notes list — gold vertical line + uniform gold
+   bullets, label with a small timestamp beneath, and a hover-X revealed immediately
+   to the right of the label (not the panel edge). Panel-agnostic (sac-tl-*) so the
+   same pattern + hover-X alignment carries across panels. */
+.sac-tl{position:relative;}
+.sac-tl-entry{position:relative;padding:0 0 14px 22px;}
+.sac-tl-entry::before{content:'';position:absolute;left:4px;top:8px;height:100%;width:2px;background:#C9A84C;}
+.sac-tl-entry:last-child::before{display:none;}
+.sac-tl-entry::after{content:'';position:absolute;left:0;top:3px;width:11px;height:11px;border-radius:50%;background:#C9A84C;}
+.sac-tl-row{display:flex;align-items:center;gap:6px;}
+.sac-tl-text{font-size:13px;color:var(--navy);}
+.sac-tl-time{font-size:11px;color:#9CA3AF;margin-top:2px;}
+.sac-tl-x{opacity:0;transition:opacity .12s,color .12s;cursor:pointer;color:#C9C2B6;background:none;border:none;font-size:14px;line-height:1;padding:0;flex-shrink:0;}
+.sac-tl-entry:hover .sac-tl-x{opacity:1;}
+.sac-tl-x:hover{color:#E74C3C;}
+/* Add-Event / Add-Note control block (below the file), with a small heading */
+.sac-add-block{margin-top:12px;border-top:.5px solid var(--stone);padding-top:10px;}
+.sac-add-head{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--cardinal);margin-bottom:6px;}
 /* Large type-toggle buttons (OCIA / Confirmation create modals) */
 .ocia-type-btn,.sac-type-btn{padding:.7rem;border:1px solid var(--stone);border-radius:10px;background:#fff;color:var(--navy);font-size:14px;font-weight:600;font-family:'Inter',sans-serif;cursor:pointer;text-align:center;line-height:1.3;transition:border-color .12s,background .12s,color .12s;}
 .ocia-type-btn:hover,.sac-type-btn:hover{border-color:var(--gold);}
@@ -230,6 +243,8 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
   /* Inline navy text → parchment (literal hex OR the --navy variable) */
   body.dark-mode [style*="color:#1C2B3A"],body.dark-mode [style*="color: #1C2B3A"],
   body.dark-mode [style*="color:var(--navy)"],body.dark-mode [style*="color: var(--navy)"]{color:#F8F7F4 !important;}
+  /* Priority-actions strip → dark warm panel (its cream bg would hide the now-light text) */
+  body.dark-mode .alert-strip{background:#2A2516 !important;border-color:rgba(201,168,76,.4) !important;}
   /* Inline white/light backgrounds → dark card */
   body.dark-mode [style*="background:#fff"],body.dark-mode [style*="background: #fff"],
   body.dark-mode [style*="background:#FFFFFF"],body.dark-mode [style*="background: #FFFFFF"],

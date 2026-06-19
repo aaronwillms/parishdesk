@@ -26,9 +26,13 @@ function dateActiveCompare(a, b, field) {
   if (ra === 2) return db.localeCompare(da);            // past: most recent first
   return 0;                                             // both no-date → caller tiebreak
 }
-function archivedDivider() {
-  return `<div style="display:flex;align-items:center;gap:8px;margin:14px 0 6px;font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#9CA3AF;">
-    <div style="flex:1;height:1px;background:var(--stone);"></div>Archived<div style="flex:1;height:1px;background:var(--stone);"></div></div>`;
+// Clickable Archived divider for the flat panels (Baptism/Marriage). Toggles the
+// shared '__archived' collapse key, mirroring the grouped panels' Archived group.
+function archivedDivider(collapsed) {
+  return `<div data-act="toggle-group" data-key="__archived" style="display:flex;align-items:center;gap:8px;margin:14px 0 6px;font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#9CA3AF;cursor:pointer;">
+    <div style="flex:1;height:1px;background:var(--stone);"></div>
+    <i class="fa-solid fa-chevron-${collapsed ? 'right' : 'down'}" style="font-size:9px;"></i>Archived
+    <div style="flex:1;height:1px;background:var(--stone);"></div></div>`;
 }
 
 // Map a chip/flag tone to an existing badge token class (dark-mode handled in CSS).
@@ -171,7 +175,13 @@ function listBodyHtml() {
       archived.sort((a, b) => ((b[cfg.sortByDate] || '').localeCompare(a[cfg.sortByDate] || '')) || (cfg.compare ? cfg.compare(a, b) : 0));
     }
     let html = active.map(itemHtml).join('');
-    if (archived.length) html += archivedDivider() + archived.map(itemHtml).join('');
+    if (archived.length) {
+      // Default: Archived collapsed (set once per mount); user can toggle. Active
+      // search force-expands so matches in archived records aren't hidden.
+      if (!s.groupInit) { s.groupsCollapsed.add('__archived'); s.groupInit = true; }
+      const collapsed = !s.search.trim() && s.groupsCollapsed.has('__archived');
+      html += archivedDivider(collapsed) + (collapsed ? '' : archived.map(itemHtml).join(''));
+    }
     return html;
   }
 
@@ -184,9 +194,9 @@ function listBodyHtml() {
     return cfg.groupCompare ? cfg.groupCompare(a, b) : 0;
   });
 
-  // Initial collapse (once per mount, UI-only): most-recent expanded, older
-  // collapsed. The user's manual toggles thereafter are respected.
-  if (!s.groupInit) { s.groupsCollapsed = new Set(keys.slice(1)); s.groupInit = true; }
+  // Initial collapse (once per mount, UI-only): ALL groups open EXCEPT the Archived
+  // group ('__archived'). The user's manual toggles thereafter are respected.
+  if (!s.groupInit) { s.groupsCollapsed = new Set(keys.filter(k => k === '__archived')); s.groupInit = true; }
 
   const searching = !!s.search.trim();   // active search force-expands all groups
   const label = (k) => k === '__none' ? (cfg.noneLabel || 'Unassigned') : (cfg.groupLabel ? cfg.groupLabel(k) : k);

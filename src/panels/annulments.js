@@ -280,6 +280,37 @@ async function anlDeleteTimelineEntry(caseId, idx) {
   if (await _anlPatch(caseId, { timeline: tl })) refreshActivePanel();
 }
 
+// ── Notes (stored as a JSON array in the `notes` TEXT column) ─────────────────
+// annulment_cases has no notes_log jsonb (unlike couples), and `notes` is a plain
+// text column. We persist the notes LIST as JSON-encoded text and read it back
+// here, tolerating a legacy single plain-string note (seeded prose) as one entry.
+function _normNote(n) { return { text: n.text || n.note || '', created_at: n.created_at || null, created_by: n.created_by || null }; }
+export function parseCaseNotes(c) {
+  const raw = c?.notes;
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map(_normNote);
+  const s = String(raw).trim();
+  if (!s) return [];
+  if (s[0] === '[') { try { const arr = JSON.parse(s); if (Array.isArray(arr)) return arr.map(_normNote); } catch (_) { /* fall through to legacy */ } }
+  return [{ text: s, created_at: null, created_by: null }];   // legacy single note
+}
+async function anlAddNote(caseId) {
+  const c = allCases.find(x => x.id === caseId); if (!c) return;
+  const inp = document.getElementById(`anl-note-input-${caseId}`);
+  const text = (inp?.value || '').trim();
+  if (!text) return;
+  const list = parseCaseNotes(c);
+  list.push({ text, created_at: nowIso(), created_by: _curUserId() });
+  if (await _anlPatch(caseId, { notes: JSON.stringify(list) })) refreshActivePanel();
+}
+async function anlDeleteNote(caseId, idx) {
+  const c = allCases.find(x => x.id === caseId); if (!c) return;
+  const list = parseCaseNotes(c);
+  if (idx < 0 || idx >= list.length) return;
+  list.splice(idx, 1);
+  if (await _anlPatch(caseId, { notes: list.length ? JSON.stringify(list) : null })) refreshActivePanel();
+}
+
 
 // ── Notifications on status change ───────────────────────────────────────────
 async function notifyStatusChange(c, newCode) {
@@ -795,7 +826,8 @@ Object.assign(window, {
   anlAddPrev, anlRemovePrev, anlDocReceived, anlRemoveDoc, anlAddDoc,
   anlLinkSearch, anlSelectLinked, anlRemoveLinked,
   anlTplTab, anlTplAddDoc, anlTplRemove, anlTplSave,
-  // Phase 2 — viewer-editable documents + timeline (write-retry wrapped).
+  // Phase 2 — viewer-editable documents + timeline + notes (write-retry wrapped).
   toggleCaseDoc, anlAddTimelineEntry, anlDeleteTimelineEntry, anlTlSelChange,
+  anlAddNote, anlDeleteNote,
   expandCase,
 });
