@@ -9,12 +9,13 @@
 // pulls a case into the bottom "Archived" group regardless of its status.
 // judgement_finalized ('yes'/'no') drives the pending-vs-final judgement chip.
 
-import { formatDateDisplay, fmtDate } from '../utils.js';
+import { formatDateDisplay, fmtDate, todayCST } from '../utils.js';
 import { formatPhone } from '../utils/phone.js';
-import { store } from '../store.js';
+import { isSacramentCoordinator } from '../roles.js';
 import {
   getCaseRecords, getCaseRecord, anlCanManage, CASE_STATUS, TYPE_BADGE,
-  caseType, petName, respName, petLast, respLast, advocateName, caseDocs, caseTimeline,
+  caseType, petName, respName, petLast, respLast, advocateName, caseDocs,
+  buildAnlEditForm, anlSaveEdit, anlDeleteRec, TIMELINE_EVENTS,
 } from '../panels/annulments.js';
 
 const esc = (s) => String(s == null ? '' : s)
@@ -65,10 +66,10 @@ function docsCompleteChip(c) {
 function row(label, val) {
   return val ? `<div style="display:flex;gap:10px;font-size:13px;padding:3px 0;"><span style="color:#6B7280;min-width:140px;">${esc(label)}</span><span style="flex:1;color:var(--navy);">${val}</span></div>` : '';
 }
-function personResponsible(c) {
-  if (c.preparation_responsible_id) return (store.personnel || []).find(p => p.id === c.preparation_responsible_id)?.name || '';
-  return c.preparation_responsible_override || '';
-}
+// Person Responsible for Formation — the single `preparer` string column
+// (consolidation standard). The legacy preparation_responsible_* fallback was
+// removed after those columns were dropped from annulment_cases.
+function personResponsible(c) { return c.preparer || ''; }
 function statusLabel(c) {
   const code = c.status_code || 'prep';
   if (code === 'affirm' || code === 'negative') {
@@ -96,39 +97,61 @@ function caseDetails(c) {
     row('Person responsible', personResponsible(c) ? esc(personResponsible(c)) : ''),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
 }
-// Read-only checklist (editing is Phase 2).
+// Checklist driven by the case's type template; checkboxes are viewer-editable and
+// route through the write-retry wrapper (toggleCaseDoc).
 function documents(c) {
+  const canManage = anlCanManage();
   const docs = caseDocs(c);
   if (!docs.length) return '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No documents.</div>';
-  return docs.map(d => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;">
-    <span style="font-size:15px;">${d.received ? '✅' : '⬜'}</span>
-    <span style="flex:1;color:${d.received ? '#2D6A4F' : 'var(--navy)'};">${esc(d.name)}</span>
+  return docs.map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;">
+    <span style="font-size:15px;${canManage ? 'cursor:pointer;' : ''}" ${canManage ? `onclick="toggleCaseDoc('${c.id}',${i})"` : ''}>${d.received ? '✅' : '⬜'}</span>
+    <span style="flex:1;${canManage ? 'cursor:pointer;' : ''}color:${d.received ? '#2D6A4F' : 'var(--navy)'};" ${canManage ? `onclick="toggleCaseDoc('${c.id}',${i})"` : ''}>${esc(d.name)}</span>
     ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : ''}
   </div>`).join('');
 }
-// Read-only timeline — event label with a small timestamp beneath.
+// Full timeline. Entries render label + small timestamp beneath, with a faint X on
+// hover for manual deletion (any entry, incl. auto milestones). Below the list, an
+// add-control: a dropdown of preseeded procedural events + "Other…" free-text, and
+// an editable date picker (prefilled today; an earlier date backdates the entry).
+// Writes route through anlAddTimelineEntry / anlDeleteTimelineEntry (write-retry).
 function timeline(c) {
-  const tl = caseTimeline(c);
-  if (!tl.length) return '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No timeline entries yet.</div>';
-  return tl.map(e => {
-    const icon = e.type === 'auto' ? '⚙️' : e.type === 'progress' ? '📋' : '📝';
-    const when = e.created_at ? fmtDate(String(e.created_at).slice(0, 10)) : '';
-    const who = e.by ? ` · ${esc(e.by)}` : '';
-    return `<div style="padding:5px 0;border-bottom:.5px solid var(--stone);">
-      <div style="font-size:13px;color:var(--navy);">${icon} ${esc(e.text)}</div>
-      ${(when || who) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:2px;">${when}${who}</div>` : ''}
+  const canManage = anlCanManage();
+  const raw = Array.isArray(c.timeline) ? c.timeline : [];
+  const iconFor = (e) => e.type === 'auto' ? '⚙️' : e.type === 'progress' ? '📋' : '📝';
+  let body = raw.map((e, i) => {
+    const text = e.text || e.event || '';
+    const when = (e.created_at || e.date) ? fmtDate(String(e.created_at || e.date).slice(0, 10)) : '';
+    return `<div class="anl-tl-entry">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;color:var(--navy);">${iconFor(e)} ${esc(text)}</div>
+        ${when ? `<div style="font-size:11px;color:#9CA3AF;margin-top:2px;">${when}</div>` : ''}
+      </div>
+      ${canManage ? `<button class="anl-tl-x" title="Delete entry" onclick="anlDeleteTimelineEntry('${c.id}',${i})">×</button>` : ''}
     </div>`;
   }).join('');
-}
+  // Legacy single-notes field → a non-deletable trailing display line.
+  if (c.notes && c.notes.trim()) {
+    body += `<div class="anl-tl-entry"><div style="flex:1;min-width:0;"><div style="font-size:13px;color:var(--navy);">📝 ${esc(c.notes.trim())}</div></div></div>`;
+  }
+  if (!body) body = '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No timeline entries yet.</div>';
 
-// Phase-1 placeholder — the type-driven editable form is Phase 2. The legacy modal
-// (window.openCaseEdit) remains available as the interim editor.
-function editPlaceholder(c) {
-  return `<div style="font-size:13px;color:#6B7280;padding:.5rem 0;line-height:1.6;">
-    The full type-driven case editor moves onto this pane in <strong>Phase 2</strong>.
-    For now, open the existing editor:
-    <div style="margin-top:10px;"><button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="window.openCaseEdit('${c.id}')"><i class="fa-solid fa-pencil"></i> Open case editor</button></div>
-  </div>`;
+  let add = '';
+  if (canManage) {
+    const opts = TIMELINE_EVENTS.map(ev => `<option value="${esc(ev)}">${esc(ev)}</option>`).join('');
+    add = `<div style="margin-top:10px;border-top:.5px solid var(--stone);padding-top:10px;">
+      <select id="anl-tl-sel-${c.id}" onchange="anlTlSelChange('${c.id}')" style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;">
+        ${opts}<option value="__other">Other…</option>
+      </select>
+      <div id="anl-tl-other-${c.id}" style="display:none;margin-top:6px;">
+        <input type="text" id="anl-tl-other-input-${c.id}" placeholder="Event description…" style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" />
+      </div>
+      <div style="display:flex;gap:6px;margin-top:6px;align-items:center;">
+        <input type="date" id="anl-tl-date-${c.id}" value="${esc(todayCST())}" style="flex:1;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" />
+        <button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;white-space:nowrap;" onclick="anlAddTimelineEntry('${c.id}')">+ Add event</button>
+      </div>
+    </div>`;
+  }
+  return body + add;
 }
 
 // ── Config object ────────────────────────────────────────────────────────────
@@ -144,6 +167,9 @@ export const annulmentConfig = {
 
   canManage: () => anlCanManage(),
   openCreate: () => window.openCaseCreate?.(),
+  // Settings gear → per-type document templates (coordinator-gated, like Marriage).
+  canManageTemplate: () => isSacramentCoordinator('annulments'),
+  openTemplate: () => window.openTemplateSettings?.(),
 
   fetchRecords: async () => getCaseRecords(),
   fetchRecord: (id) => getCaseRecord(id),
@@ -182,8 +208,10 @@ export const annulmentConfig = {
     { title: 'Timeline',     render: timeline },
   ],
 
-  // Phase 1: read-first. Edit opens the existing legacy editor (interim); the
-  // inline type-driven form + save is Phase 2.
-  editForm: (c) => editPlaceholder(c),
-  saveRecord: async () => ({ ok: true }),
+  // Phase 2: inline type-driven edit form rendered into the shell's detail pane;
+  // the shell supplies Save / Cancel / Delete. Save + delete route through the
+  // write-retry wrapper inside panels/annulments.js.
+  editForm: (c) => buildAnlEditForm(c),
+  saveRecord: (id) => anlSaveEdit(id),
+  deleteRecord: (id) => anlDeleteRec(id),
 };

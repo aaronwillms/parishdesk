@@ -1,9 +1,10 @@
-import { sb, withWriteRetry } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite } from '../supabase.js';
 import { notifyUsers } from '../notifications.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { normalizePhone } from '../utils/phone.js';
+import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 
 // ── Status (legacy codes preserved for backward compatibility) ───────────────
@@ -30,6 +31,27 @@ export const TYPE_BADGE = Object.fromEntries(ANNULMENT_TYPES.map(t => [t.v, t.ba
 const CEREMONY_TYPES = ['Catholic Church', 'Civil Ceremony', 'Non-Catholic Religious Ceremony', 'Other'];
 const COUNTRIES = ['United States of America', 'Mexico', 'Philippines', 'Vietnam', 'Nigeria', 'India', 'Other'];
 const PROGRESS_OPTIONS = ['Submitted to Tribunal', 'Received by Tribunal', 'Witnesses Cited', 'Acts Published', 'Other'];
+// Preseeded procedural events offered in the timeline dropdown. The four
+// auto-generated milestones (Case Opened / Affirmative Judgement / Negative
+// Judgement / Case Closed) are added by the system and are NOT in this list — the
+// dropdown shows these procedural steps plus a "+ Other…" free-text option.
+export const TIMELINE_EVENTS = ['Submitted to Tribunal', 'Received by Tribunal', 'Witnesses Cited', 'Acts Published'];
+
+// Type-conditional form sections. The petitioner-baptism + respondent
+// baptism/Catholic-status blocks are surfaced for the privilege and ratum cases
+// (where prior bond / baptismal status is at issue) and for Formal cases. They are
+// trimmed for Lack of Form, where the defect of canonical form — not baptismal
+// detail — is decisive. Marriage info, previous annulments, tribunal and document
+// sections stay visible for every type. Adjustable in one place if canon dictates.
+const TYPE_SECTIONS = {
+  formal:       { baptism: true },
+  lack_of_form: { baptism: false },
+  petrine:      { baptism: true },
+  pauline:      { baptism: true },
+  ligamen:      { baptism: true },
+  ratum:        { baptism: true },
+};
+function typeSections(type) { return TYPE_SECTIONS[type] || TYPE_SECTIONS.formal; }
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
 
 const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
@@ -48,6 +70,7 @@ const FALLBACK_TEMPLATES = {
 let allCases = [];
 let _templates = {};   // annulment_type → [{name, deletable}]
 let _M = null;         // working state for the open create/edit modal
+let _anlCoordinatorNames = [];   // annulment coordinator display names (preparer source)
 
 // ── Access helpers ───────────────────────────────────────────────────────────
 function fullAccess()  { return isAdmin() || canAccessSacrament('annulments'); }
@@ -114,9 +137,18 @@ async function loadTemplates() {
   ANNULMENT_TYPES.forEach(t => { if (!_templates[t.v]) _templates[t.v] = FALLBACK_TEMPLATES[t.v].slice(); });
 }
 
+// Person-Responsible-for-Formation source — the annulment program's coordinator
+// display names (the shared preparer field merges these with parish clergy + Other).
+async function loadAnnulmentCoordinator() {
+  try {
+    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'annulments').maybeSingle();
+    _anlCoordinatorNames = (data?.coordinator_ids || []).map(pid => (store.personnel || []).find(p => p.id === pid)?.name).filter(Boolean);
+  } catch (_) { _anlCoordinatorNames = []; }
+}
+
 // Data-only fetch (no render) — used by the shell's fetchRecords + autosave refresh.
 export async function loadCasesData() {
-  await loadTemplates();
+  await Promise.all([loadTemplates(), loadAnnulmentCoordinator()]);
   const { data, error } = await sb.from('annulment_cases').select('*');
   if (error) { console.error('[annulments]', error); return []; }
   let rows = data || [];
@@ -124,6 +156,7 @@ export async function loadCasesData() {
   rows.sort((a, b) => petLast(a).toLowerCase().localeCompare(petLast(b).toLowerCase()));
   allCases = rows;
   store.allCases = allCases;
+  renderAnnulmentAlerts();
   return allCases;
 }
 
@@ -139,7 +172,9 @@ export async function loadCases() {
     <div class="confid-notice">
       <i class="fa-solid fa-lock" style="margin-right:7px;"></i>Annulment records are strictly confidential. Access is limited to assigned advocates and authorized personnel only.${advNote}
     </div>
+    <div id="annulments-alerts"></div>
     <div id="annulments-shell"></div>`;
+  renderAnnulmentAlerts();
   const { annulmentConfig } = await import('../sacramental/annulmentConfig.js');
   renderSacramentalPanel(document.getElementById('annulments-shell'), annulmentConfig);
 }
@@ -149,6 +184,33 @@ export function getCaseRecords() { return allCases; }
 export function getCaseRecord(id) { return allCases.find(x => x.id === id) || null; }
 export { fullAccess as anlCanManage };   // CASE_STATUS / TYPE_BADGE already exported above
 export { caseType, petName, respName, petLast, respLast, advocateName, caseDocs, caseTimeline };
+
+// ── Priority Actions banner ──────────────────────────────────────────────────
+// Missing documents for PREPARING cases only. Every non-Preparing status (In
+// Tribunal / Judgement / Inactive) and every archived case is excluded — only
+// active prep work surfaces here. Steps are not a concept for annulments; this is
+// documents-only. One line per case: "PetLast vs RespLast: doc, doc, …" (maiden
+// overrides last, matching the card title).
+function _caseTitle(c) { return `${petLast(c) || '—'} vs ${respLast(c) || '—'}`; }
+export function annulmentAlertItems(c) {
+  if (c.archived || (c.status_code || 'prep') !== 'prep') return [];
+  return caseDocs(c).filter(d => !d.received).map(d => d.name);
+}
+function renderAnnulmentAlerts() {
+  const el = document.getElementById('annulments-alerts'); if (!el) return;
+  const blocks = [];
+  for (const c of allCases) {
+    const missing = annulmentAlertItems(c);
+    if (missing.length) blocks.push({ c, missing });
+  }
+  if (!blocks.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="alert-strip" style="margin-bottom:1rem;flex-direction:column;align-items:flex-start;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><i class="ti ti-alert-triangle" style="color:var(--gold);font-size:15px;"></i><strong style="font-size:13px;">Priority actions</strong></div>
+    ${blocks.map(b => `<div style="font-size:13px;color:var(--navy);margin-bottom:4px;">
+      <strong>${_esc(_caseTitle(b.c))}</strong>: ${b.missing.map(_esc).join(', ')}
+    </div>`).join('')}
+  </div>`;
+}
 
 // ── Panel chrome ─────────────────────────────────────────────────────────────
 // Cross-link entry — open a specific case in the shell (deep-link), called from
@@ -161,6 +223,62 @@ export async function expandCase(id) {
 // ── Timeline writes ──────────────────────────────────────────────────────────
 function nowIso() { return new Date().toISOString(); }
 function _rawTimeline(c) { return JSON.parse(JSON.stringify(c.timeline || [])); }
+
+// ── Viewer-editable autosave (documents + timeline) ──────────────────────────
+// Serialize per-case so rapid checkbox/timeline edits don't overlap; retry
+// transport failures (mirrors the Marriage viewer's _patch path).
+async function _anlPatch(caseId, patch) {
+  const c = allCases.find(x => x.id === caseId); if (!c) return null;
+  const { error } = await serializeWrite(`anlcase:${caseId}`, () =>
+    withWriteRetry(() => sb.from('annulment_cases').update({ ...patch, updated_at: nowIso() }).eq('id', caseId), { kind: 'update' }));
+  if (error) { reportWriteError('annulment update', error); return null; }
+  Object.assign(c, patch);
+  return c;
+}
+
+// Document checkbox in the read view (write-retry wrapped).
+async function toggleCaseDoc(caseId, i) {
+  const c = allCases.find(x => x.id === caseId); if (!c) return;
+  const docs = caseDocs(c).map(d => ({ name: d.name, received: d.received, deletable: d.deletable }));
+  if (!docs[i]) return;
+  docs[i].received = !docs[i].received;
+  if (await _anlPatch(caseId, { documents: docs })) { refreshActivePanel(); renderAnnulmentAlerts(); }
+}
+
+// Timeline: show/hide the free-text "Other" input when the dropdown changes.
+function anlTlSelChange(caseId) {
+  const sel = document.getElementById(`anl-tl-sel-${caseId}`);
+  const wrap = document.getElementById(`anl-tl-other-${caseId}`);
+  if (sel && wrap) wrap.style.display = sel.value === '__other' ? 'block' : 'none';
+}
+// Add a MANUAL timeline entry from the dropdown (+ Other free-text) and the
+// editable date picker (prefilled today; any earlier date backdates the entry).
+async function anlAddTimelineEntry(caseId) {
+  const c = allCases.find(x => x.id === caseId); if (!c) return;
+  const sel = document.getElementById(`anl-tl-sel-${caseId}`);
+  const dateEl = document.getElementById(`anl-tl-date-${caseId}`);
+  if (!sel) return;
+  let text = sel.value;
+  if (text === '__other') text = (document.getElementById(`anl-tl-other-input-${caseId}`)?.value || '').trim();
+  if (!text) return;
+  const date = (dateEl?.value || '').trim() || todayCST();
+  // Backdated entries are stamped at midday of the chosen day; a today entry keeps
+  // the full timestamp so same-day entries stay in insertion order.
+  const created_at = (date === todayCST()) ? nowIso() : `${date}T12:00:00.000Z`;
+  const tl = _rawTimeline(c);
+  tl.push({ type: 'progress', text, created_at, created_by: _curUserId() });
+  if (await _anlPatch(caseId, { timeline: tl })) refreshActivePanel();
+}
+// Manual deletion of ANY timeline entry (including auto milestones) — for
+// correcting a mistaken flag. Operates on the raw timeline array by index.
+async function anlDeleteTimelineEntry(caseId, idx) {
+  const c = allCases.find(x => x.id === caseId); if (!c) return;
+  const tl = _rawTimeline(c);
+  if (idx < 0 || idx >= tl.length) return;
+  tl.splice(idx, 1);
+  if (await _anlPatch(caseId, { timeline: tl })) refreshActivePanel();
+}
+
 
 // ── Notifications on status change ───────────────────────────────────────────
 async function notifyStatusChange(c, newCode) {
@@ -228,19 +346,22 @@ function _stateSelect(id, val) { return `<label>State</label><select id="${id}">
 function _toggle(id, label, on, onchange = '') { return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:.75rem;"><input type="checkbox" id="${id}" ${on ? 'checked' : ''} ${onchange ? `onchange="${onchange}"` : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />${label}</label>`; }
 function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cardinal);margin:1.4rem 0 .5rem;border-bottom:.5px solid var(--stone);padding-bottom:4px;">${t}</div>`; }
 
-function buildCaseModalHtml(c) {
+function buildCaseModalHtml(c, opts = {}) {
+  const inline = !!opts.inline;
   const isEdit = _M.isEdit;
+  const sec = typeSections(_M.type);
   const advOpts = clergyPersonnel().map(p => `<option value="${p.id}"${c?.advocate_id === p.id ? ' selected' : ''}>${_esc(p.name)}</option>`).join('');
 
-  let h = `<div class="modal-title">${isEdit ? 'Edit Annulment Case' : 'New Annulment Case'}</div>`;
+  let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Annulment Case' : 'New Annulment Case'}</div>`;
 
-  // Section 1 — Type
+  // Section 1 — Type. The selected type drives which sections surface (see
+  // typeSections / anlOnTypeChange) and seeds the document checklist.
   h += `<label>Annulment Type</label>
     <select id="am-type" onchange="anlOnTypeChange(this.value)">
       ${ANNULMENT_TYPES.map(t => `<option value="${t.v}"${_M.type === t.v ? ' selected' : ''}>${t.label}</option>`).join('')}
     </select>`;
 
-  // Section 2 — Advocate
+  // Section 2 — Advocate (directory-linked via advocate_id; Other = name override)
   h += _sectionHead('Advocate');
   h += `<label>Advocate</label>
     <select id="am-advocate" onchange="anlOnAdvocateChange(this.value)">
@@ -251,6 +372,10 @@ function buildCaseModalHtml(c) {
       <label>Advocate name</label><input type="text" id="am-advocate-other" value="${_esc(c?.advocate_name_override || '')}" placeholder="Name (no directory entry created)" />
     </div>`;
 
+  // Person Responsible for Formation — shared Clergy + Coordinator + Other helper.
+  // Stored in the `preparer` string column (consolidation standard).
+  h += buildPreparerField('am-preparer', c?.preparer || '', { coordinatorNames: _anlCoordinatorNames, label: 'Person Responsible for Formation' });
+
   // Section 3 — Petitioner
   h += _sectionHead('Petitioner');
   h += _row(_input('am-pet-first', 'First Name', c?.petitioner_first || ''), _input('am-pet-middle', 'Middle', c?.petitioner_middle || ''), _input('am-pet-last', 'Last Name', c?.petitioner_last || ''), _input('am-pet-maiden', 'Maiden', c?.petitioner_maiden || ''));
@@ -258,13 +383,20 @@ function buildCaseModalHtml(c) {
   h += _row(_input('am-pet-city', 'City', c?.petitioner_city || ''), _stateSelect('am-pet-state', c?.petitioner_state || ''), _input('am-pet-zip', 'ZIP', c?.petitioner_zip || ''));
   h += _row(_input('am-pet-cell', 'Cell Phone', c?.petitioner_cell || c?.contact_phone || '', 'tel'), _input('am-pet-email', 'Email', c?.petitioner_email || c?.contact_email || ''));
   h += _input('am-pet-dob', 'Date of Birth', c?.petitioner_dob && /^\d{4}-\d{2}-\d{2}/.test(c.petitioner_dob) ? c.petitioner_dob.slice(0, 10) : '', 'date');
+  // Petitioner baptism block — surfaced for privilege/ratum/formal cases (prior
+  // bond + baptismal status); trimmed for Lack of Form. Toggled live on type change.
+  h += `<div id="am-pet-baptism-wrap" style="display:${sec.baptism ? 'block' : 'none'};">`;
   h += _row(_input('am-pet-bchurch', 'Church of Baptism', c?.petitioner_baptism_church || ''), _input('am-pet-bcity', 'Baptism City', c?.petitioner_baptism_city || ''), _stateSelect('am-pet-bstate', c?.petitioner_baptism_state || ''), `<label>Country</label><select id="am-pet-bcountry">${COUNTRIES.map(co => `<option${(c?.petitioner_baptism_country || 'United States of America') === co ? ' selected' : ''}>${co}</option>`).join('')}</select>`);
+  h += `</div>`;
 
   // Section 4 — Respondent
   h += _sectionHead('Respondent');
   h += _row(_input('am-resp-first', 'First Name', c?.respondent_first || ''), _input('am-resp-middle', 'Middle', c?.respondent_middle || ''), _input('am-resp-last', 'Last Name', c?.respondent_last || ''), _input('am-resp-maiden', 'Maiden', c?.respondent_maiden || ''));
+  // Respondent baptismal-status toggles share the type-conditional baptism gate.
+  h += `<div id="am-resp-status-wrap" style="display:${sec.baptism ? 'block' : 'none'};">`;
   h += _toggle('am-resp-baptized', 'Baptized?', !!c?.respondent_baptized);
   h += _toggle('am-resp-catholic', 'Catholic?', !!c?.respondent_catholic);
+  h += `</div>`;
 
   // Section 5 — Marriage
   h += _sectionHead('Marriage Information');
@@ -322,14 +454,17 @@ function buildCaseModalHtml(c) {
       <div id="am-link-ocia-chip" style="margin-top:6px;"></div>`;
   }
 
-  // Actions
-  h += `<div class="modal-actions" style="justify-content:space-between;">
-    ${isEdit ? `<button class="btn-delete" onclick="anlDeleteCase('${_M.id}')">Delete</button>` : '<span></span>'}
-    <div style="display:flex;gap:8px;">
-      <button class="btn-secondary" onclick="anlCloseModal()">Cancel</button>
-      <button class="btn-primary" onclick="anlSaveCase()">${isEdit ? 'Save' : 'Create File'}</button>
-    </div>
-  </div>`;
+  // Actions — only for the create MODAL. The inline edit form lives in the shell's
+  // detail pane, which supplies its own Save / Cancel / Delete buttons.
+  if (!inline) {
+    h += `<div class="modal-actions" style="justify-content:space-between;">
+      ${isEdit ? `<button class="btn-delete" onclick="anlDeleteCase('${_M.id}')">Delete</button>` : '<span></span>'}
+      <div style="display:flex;gap:8px;">
+        <button class="btn-secondary" onclick="anlCloseModal()">Cancel</button>
+        <button class="btn-primary" onclick="anlSaveCase()">${isEdit ? 'Save' : 'Create File'}</button>
+      </div>
+    </div>`;
+  }
   return h;
 }
 
@@ -370,8 +505,31 @@ function _syncPrevFromDom() {
 function anlOnTypeChange(val) {
   _syncPrevFromDom();
   _M.type = val;
-  document.getElementById('am-briefer-section').style.display = val === 'formal' ? 'block' : 'none';
-  if (!_M.isEdit) { _M.docs = (_templates[val] || []).map(d => ({ name: d.name, received: false, deletable: d.deletable ?? true })); renderModalDocs(); }
+  // Briefer is a Formal-only flag; gate its section to Formal.
+  const briefer = document.getElementById('am-briefer-section'); if (briefer) briefer.style.display = val === 'formal' ? 'block' : 'none';
+  // Type-conditional baptism / respondent-status blocks.
+  const sec = typeSections(val);
+  const petB = document.getElementById('am-pet-baptism-wrap'); if (petB) petB.style.display = sec.baptism ? 'block' : 'none';
+  const respS = document.getElementById('am-resp-status-wrap'); if (respS) respS.style.display = sec.baptism ? 'block' : 'none';
+  // Document checklist reconciliation with the new type's template.
+  if (!_M.isEdit) {
+    // New case: just reseed from the template.
+    _M.docs = (_templates[val] || []).map(d => ({ name: d.name, received: false, deletable: d.deletable ?? true }));
+  } else {
+    // Editing: MERGE — preserve every existing doc (checked state, custom adds, and
+    // the old type's docs), and APPEND the new type's template docs that aren't
+    // already present (by name). Nothing already on the file is removed.
+    _syncDocsReceivedFromDom();
+    const have = new Set(_M.docs.map(d => d.name));
+    (_templates[val] || []).forEach(d => { if (!have.has(d.name)) _M.docs.push({ name: d.name, received: false, deletable: d.deletable ?? true }); });
+  }
+  renderModalDocs();
+}
+// Capture current checkbox state from the DOM before re-rendering the doc list (so
+// a merge/re-render never loses a just-toggled box).
+function _syncDocsReceivedFromDom() {
+  const boxes = document.querySelectorAll('#am-docs input[type=checkbox]');
+  boxes.forEach((b, i) => { if (_M.docs[i]) _M.docs[i].received = b.checked; });
 }
 function anlOnAdvocateChange(val) {
   _M.advocateOther = val === '__other';
@@ -441,8 +599,9 @@ function renderLinkedChip(kind) {
 function _v(id) { const e = document.getElementById(id); return e ? e.value.trim() : ''; }
 function _chk(id) { return !!document.getElementById(id)?.checked; }
 
-async function anlSaveCase() {
-  _syncPrevFromDom();
+// Build the common case payload from the open form (create modal OR inline edit).
+function _anlReadPayload() {
+  _syncPrevFromDom(); _syncDocsReceivedFromDom();
   const type = _M.type;
   const advSel = document.getElementById('am-advocate')?.value || '';
   const payload = {
@@ -450,6 +609,9 @@ async function anlSaveCase() {
     briefer_process: type === 'formal' ? _chk('am-briefer') : false,
     advocate_id: advSel && advSel !== '__other' ? advSel : null,
     advocate_name_override: advSel === '__other' ? (_v('am-advocate-other') || null) : null,
+    // Person Responsible for Formation — shared helper stores a display-name string
+    // in `preparer` (consistent with every other sacrament panel post-consolidation).
+    preparer: readPreparerValue('am-preparer'),
     petitioner_first: _v('am-pet-first') || null, petitioner_middle: _v('am-pet-middle') || null,
     petitioner_last: _v('am-pet-last') || null, petitioner_maiden: _v('am-pet-maiden') || null,
     petitioner_street: _v('am-pet-street') || null, petitioner_city: _v('am-pet-city') || null,
@@ -471,52 +633,104 @@ async function anlSaveCase() {
     respondent: `${_v('am-resp-first')} ${_v('am-resp-last')}`.trim() || null,
     updated_at: nowIso(),
   };
-  if (!payload.petitioner_last && !payload.petitioner_first) { alert('Petitioner name is required.'); return; }
+  return { ok: !!(payload.petitioner_last || payload.petitioner_first), payload };
+}
 
-  if (_M.isEdit) {
-    const prior = allCases.find(c => c.id === _M.id);
-    const newStatus = document.getElementById('am-status')?.value || prior?.status_code || 'prep';
-    payload.status_code = newStatus;
-    payload.judgement_finalized = (newStatus === 'affirm' || newStatus === 'negative') ? (_chk('am-jf') ? 'yes' : 'no') : prior?.judgement_finalized || null;
-    payload.vetitum = newStatus === 'affirm' ? _chk('am-vetitum') : false;
-    payload.vetitum_notes = payload.vetitum ? (_v('am-vetitum-notes') || null) : null;
-    payload.archived = _chk('am-archive');
-    payload.linked_marriage_prep_id = _M.linkedMarriage?.id || null;
-    payload.linked_ocia_id = _M.linkedOcia?.id || null;
+// Apply edit-only fields (status / judgement / vetitum / archive / links) and the
+// AUTO timeline milestones. Mutates `payload`; returns { newStatus, statusChanged }.
+function _anlApplyEditFields(payload, prior) {
+  const newStatus = document.getElementById('am-status')?.value || prior?.status_code || 'prep';
+  payload.status_code = newStatus;
+  const finalizedNow = (newStatus === 'affirm' || newStatus === 'negative') ? (_chk('am-jf') ? 'yes' : 'no') : (prior?.judgement_finalized || null);
+  payload.judgement_finalized = finalizedNow;
+  payload.vetitum = newStatus === 'affirm' ? _chk('am-vetitum') : false;
+  payload.vetitum_notes = payload.vetitum ? (_v('am-vetitum-notes') || null) : null;
+  payload.archived = _chk('am-archive');
+  payload.linked_marriage_prep_id = _M.linkedMarriage?.id || null;
+  payload.linked_ocia_id = _M.linkedOcia?.id || null;
 
-    // Auto-timeline for status / archive transitions
-    const tl = _rawTimeline(prior);
-    const statusChanged = prior && prior.status_code !== newStatus;
-    if (statusChanged && newStatus === 'affirm') tl.push({ type: 'auto', text: 'Affirmative Decision Received', created_at: nowIso(), created_by: _curUserId() });
-    if (statusChanged && newStatus === 'negative') tl.push({ type: 'auto', text: 'Negative Decision Received', created_at: nowIso(), created_by: _curUserId() });
-    const justArchived = payload.archived && !prior?.archived && (newStatus === 'affirm' || newStatus === 'negative');
-    if (justArchived) tl.push({ type: 'auto', text: 'Case Closed', created_at: nowIso(), created_by: _curUserId() });
-    payload.timeline = tl;
+  // Auto-generated timeline milestones (added by the system, never user-chosen):
+  //   • Affirmative Judgement / Negative Judgement — on status change into that state
+  //   • Case Closed — when judgement_finalized transitions no → yes
+  // No auto-REMOVAL when a flag reverts (deliberate — the user deletes by hand).
+  const tl = _rawTimeline(prior);
+  const stamp = (text) => tl.push({ type: 'auto', text, created_at: nowIso(), created_by: _curUserId() });
+  const statusChanged = prior && prior.status_code !== newStatus;
+  if (statusChanged && newStatus === 'affirm') stamp('Affirmative Judgement');
+  if (statusChanged && newStatus === 'negative') stamp('Negative Judgement');
+  const justFinalized = finalizedNow === 'yes' && (prior?.judgement_finalized !== 'yes' && prior?.judgement_finalized !== true);
+  if (justFinalized) stamp('Case Closed');
+  payload.timeline = tl;
+  return { newStatus, statusChanged };
+}
 
-    const { error } = await withWriteRetry(() => sb.from('annulment_cases').update(payload).eq('id', _M.id), { kind: 'update' });
-    if (error) { reportWriteError('annulment update', error); return; }
-    Object.assign(prior, payload);
-    if (statusChanged) await notifyStatusChange(prior, newStatus);
-    anlCloseModal(); await loadCasesData(); refreshActivePanel();
-  } else {
-    payload.status_code = 'prep';
-    payload.judgement_finalized = null;
-    payload.archived = false;
-    payload.timeline = [{ type: 'auto', text: 'Case opened', created_at: nowIso(), created_by: _curUserId() }];
-    const { data: { user } } = await sb.auth.getUser();
-    if (user?.id) payload.created_by = user.id;
-    const { error } = await withWriteRetry(() => sb.from('annulment_cases').insert(payload), { kind: 'insert' });
-    if (error) { reportWriteError('annulment insert', error); return; }
-    await logActivity({ action: 'opened annulment case', entityType: 'annulments', entityName: payload.petitioner || 'New case', contextType: 'annulments' });
-    anlCloseModal(); await loadCasesData(); refreshActivePanel();
+// Create flow (modal).
+async function anlSaveCase() {
+  const r = _anlReadPayload();
+  if (!r.ok) { alert('Petitioner name is required.'); return; }
+  const { payload } = r;
+  if (_M.isEdit) {   // safety: the modal is create-only now, but keep edit correct
+    const res = await anlSaveEdit(_M.id);
+    if (res.ok) { anlCloseModal(); refreshActivePanel(); }
+    return;
   }
+  payload.status_code = 'prep';
+  payload.judgement_finalized = null;
+  payload.archived = false;
+  payload.timeline = [{ type: 'auto', text: 'Case Opened', created_at: nowIso(), created_by: _curUserId() }];
+  const { data: { user } } = await sb.auth.getUser();
+  if (user?.id) payload.created_by = user.id;
+  const { error } = await withWriteRetry(() => sb.from('annulment_cases').insert(payload), { kind: 'insert' });
+  if (error) { reportWriteError('annulment insert', error); return; }
+  await logActivity({ action: 'opened annulment case', entityType: 'annulments', entityName: payload.petitioner || 'New case', contextType: 'annulments' });
+  anlCloseModal(); await loadCasesData(); refreshActivePanel();
+}
+
+// ── Shell config hooks (inline edit form + save/delete) ──────────────────────
+export function buildAnlEditForm(c) {
+  _M = {
+    id: c.id, isEdit: true, type: caseType(c),
+    advocateOther: !c.advocate_id && !!c.advocate_name_override,
+    docs: caseDocs(c),
+    prev: Array.isArray(c.previous_annulments) ? JSON.parse(JSON.stringify(c.previous_annulments)) : [],
+    linkedMarriage: c.linked_marriage_prep_id ? { id: c.linked_marriage_prep_id, label: _coupleLabel(c.linked_marriage_prep_id) } : null,
+    linkedOcia: c.linked_ocia_id ? { id: c.linked_ocia_id, label: _ociaLabel(c.linked_ocia_id) } : null,
+    priorStatus: c.status_code || 'prep',
+  };
+  const html = buildCaseModalHtml(c, { inline: true });
+  setTimeout(() => _hydrateModal(), 0);
+  return html;
+}
+
+export async function anlSaveEdit(id) {
+  const r = _anlReadPayload();
+  if (!r.ok) { alert('Petitioner name is required.'); return { ok: false }; }
+  const { payload } = r;
+  const prior = allCases.find(c => c.id === id);
+  const { newStatus, statusChanged } = _anlApplyEditFields(payload, prior);
+  const { error } = await withWriteRetry(() => sb.from('annulment_cases').update(payload).eq('id', id), { kind: 'update' });
+  if (error) { reportWriteError('annulment update', error); return { ok: false }; }
+  if (prior) Object.assign(prior, payload);
+  await logActivity({ action: 'updated annulment case', entityType: 'annulments', entityName: payload.petitioner || 'Case', contextType: 'annulments', contextId: id });
+  if (statusChanged && prior) await notifyStatusChange(prior, newStatus);
+  await loadCasesData();
+  return { ok: true };
+}
+
+export async function anlDeleteRec(id) {
+  if (!confirm('Permanently delete this case? This cannot be undone.')) return { ok: false };
+  const { error } = await sb.from('annulment_cases').delete().eq('id', id);
+  if (error) { reportWriteError('annulment delete', error); return { ok: false }; }
+  allCases = allCases.filter(x => x.id !== id);
+  store.allCases = allCases;
+  await logActivity({ action: 'deleted annulment case', entityType: 'annulments', entityName: id, contextType: 'annulments' });
+  renderAnnulmentAlerts();
+  return { ok: true };
 }
 
 async function anlDeleteCase(id) {
-  if (!confirm('Permanently delete this case? This cannot be undone.')) return;
-  const { error } = await sb.from('annulment_cases').delete().eq('id', id);
-  if (error) { alert('Delete failed: ' + error.message); return; }
-  anlCloseModal(); await loadCasesData(); refreshActivePanel();
+  const res = await anlDeleteRec(id);
+  if (res.ok) { anlCloseModal(); refreshActivePanel(); }
 }
 
 // ── Template settings ────────────────────────────────────────────────────────
@@ -571,5 +785,7 @@ Object.assign(window, {
   anlAddPrev, anlRemovePrev, anlDocReceived, anlRemoveDoc, anlAddDoc,
   anlLinkSearch, anlSelectLinked, anlRemoveLinked,
   anlTplTab, anlTplAddDoc, anlTplRemove, anlTplSave,
+  // Phase 2 — viewer-editable documents + timeline (write-retry wrapped).
+  toggleCaseDoc, anlAddTimelineEntry, anlDeleteTimelineEntry, anlTlSelChange,
   expandCase,
 });

@@ -23,7 +23,15 @@ Adds `couples.notes_log (jsonb not null default '[]')`.
 'notes_log' column"). Every other sacrament table already has it.
 - Verify: `select column_name from information_schema.columns where table_name='couples' and column_name='notes_log';` → 1 row.
 
-### 3. `migrations/20260618_drop_preparation_responsible.sql`  🧹 cleanup
+### 3. `migrations/20260618_annulments_preparer.sql`  ⚠️ BLOCKING
+Adds `annulment_cases.preparer (text)`.
+**Why it's urgent:** the Annulments Phase-2 edit form's "Person Responsible for
+Formation" field writes `preparer` (shared helper, consolidation standard); the
+column is missing, so **an annulment case Save fails** until this runs. The read
+view falls back to the legacy `preparation_responsible_id` FK for pre-existing rows.
+- Verify: `select column_name from information_schema.columns where table_name='annulment_cases' and column_name='preparer';` → 1 row.
+
+### 4. `migrations/20260618_drop_preparation_responsible.sql`  🧹 cleanup
 Drops the now-dead `preparation_responsible_id` + `preparation_responsible_override`
 on `couples`, `sacramental_baptism`, `sacramental_firstcomm`,
 `sacramental_confirmation`, `sacramental_ocia`. The app no longer reads or writes
