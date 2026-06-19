@@ -4,6 +4,7 @@ import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { normalizePhone } from '../utils/phone.js';
+import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 
 // ── Status (legacy codes preserved for backward compatibility) ───────────────
 export const CASE_STATUS = {
@@ -24,7 +25,7 @@ const ANNULMENT_TYPES = [
   { v: 'ligamen',      label: 'Ligamen',                    badge: 'Ligamen' },
   { v: 'ratum',        label: 'Ratum et non Consummatum',   badge: 'Ratum' },
 ];
-const TYPE_BADGE = Object.fromEntries(ANNULMENT_TYPES.map(t => [t.v, t.badge]));
+export const TYPE_BADGE = Object.fromEntries(ANNULMENT_TYPES.map(t => [t.v, t.badge]));
 
 const CEREMONY_TYPES = ['Catholic Church', 'Civil Ceremony', 'Non-Catholic Religious Ceremony', 'Other'];
 const COUNTRIES = ['United States of America', 'Mexico', 'Philippines', 'Vietnam', 'Nigeria', 'India', 'Other'];
@@ -44,7 +45,7 @@ const FALLBACK_TEMPLATES = {
   ratum:        [{ name: 'Completed Petition', deletable: false }, { name: 'Personal Testimony', deletable: true }, { name: 'Petitioner Baptismal Certificate or Affidavit', deletable: true }, { name: 'Marriage Certificate', deletable: false }, { name: 'Proof of Non-Consummation', deletable: true }],
 };
 
-let allCases = [], caseFilter = 'all', expandedCaseId = null;
+let allCases = [];
 let _templates = {};   // annulment_type → [{name, deletable}]
 let _M = null;         // working state for the open create/edit modal
 
@@ -113,241 +114,53 @@ async function loadTemplates() {
   ANNULMENT_TYPES.forEach(t => { if (!_templates[t.v]) _templates[t.v] = FALLBACK_TEMPLATES[t.v].slice(); });
 }
 
-export async function loadCases() {
+// Data-only fetch (no render) — used by the shell's fetchRecords + autosave refresh.
+export async function loadCasesData() {
   await loadTemplates();
   const { data, error } = await sb.from('annulment_cases').select('*');
-  if (error) { console.error('[annulments]', error); return; }
+  if (error) { console.error('[annulments]', error); return []; }
   let rows = data || [];
   if (advocateOnly()) { const ids = advocateIds(); rows = rows.filter(c => ids.includes(c.id)); }
   rows.sort((a, b) => petLast(a).toLowerCase().localeCompare(petLast(b).toLowerCase()));
   allCases = rows;
   store.allCases = allCases;
-  renderAll();
+  return allCases;
 }
 
-// ── Panel chrome ─────────────────────────────────────────────────────────────
-function renderAll() {
+// Nav loader — fetch, then mount the master-detail shell (with the confidentiality
+// notice preserved above it) into #annulments-root.
+export async function loadCases() {
+  await loadCasesData();
   const root = document.getElementById('annulments-root');
   if (!root) return;
-  const manage = fullAccess();
   const advNote = advocateOnly()
     ? `<div style="margin-top:6px;font-size:12px;color:#6B7280;">You are viewing cases where you are assigned as advocate.</div>` : '';
-
-  const filters = [
-    ['all', 'All'], ['prep', 'Preparing'], ['tribunal', 'In Tribunal'],
-    ['affirm', 'Affirmative Judgement'], ['negative', 'Negative Judgement'], ['archived', 'Inactive'],
-  ].map(([k, l]) => `<button class="cf-btn${caseFilter === k ? ' active' : ''}" onclick="setCaseFilter('${k}',this)">${l}</button>`).join('');
-
-  const nPrep = allCases.filter(c => c.status_code === 'prep' && !c.archived).length;
-  const nTrib = allCases.filter(c => c.status_code === 'tribunal' && !c.archived).length;
-  const nJudg = allCases.filter(c => ['affirm', 'negative'].includes(c.status_code) && !c.archived).length;
-
   root.innerHTML = `
-    <div class="stat-row">
-      <div class="stat-card" style="border-left:3px solid #1B4F72;"><div class="stat-num">${nPrep}</div><div class="stat-label">Preparing</div></div>
-      <div class="stat-card" style="border-left:3px solid #D4AC0D;"><div class="stat-num">${nTrib}</div><div class="stat-label">In Tribunal</div></div>
-      <div class="stat-card" style="border-left:3px solid #2D6A4F;"><div class="stat-num">${nJudg}</div><div class="stat-label">Judgement</div></div>
-    </div>
     <div class="confid-notice">
       <i class="fa-solid fa-lock" style="margin-right:7px;"></i>Annulment records are strictly confidential. Access is limited to assigned advocates and authorized personnel only.${advNote}
     </div>
-    <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-bottom:1rem;flex-wrap:wrap;">
-      ${isSacramentCoordinator('annulments') ? `<button class="anl-icon-btn" title="Document templates" onclick="openTemplateSettings()"><i class="fa-solid fa-gear"></i></button>` : ''}
-      ${manage ? `<button class="btn-primary" onclick="openCaseCreate()">+ Add Case</button>` : ''}
-    </div>
-    <div style="position:relative;max-width:320px;margin-bottom:.75rem;">
-      <i class="fa-solid fa-magnifying-glass" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:#9CA3AF;font-size:11px;pointer-events:none;"></i>
-      <input type="text" id="case-search" placeholder="Search by petitioner or respondent…" style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem .4rem 2rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
-    </div>
-    <div style="display:flex;gap:6px;margin-bottom:1rem;flex-wrap:wrap;">${filters}</div>
-    <div id="cases-list"></div>`;
-
-  root.querySelector('#case-search')?.addEventListener('input', renderList);
-  renderList();
+    <div id="annulments-shell"></div>`;
+  const { annulmentConfig } = await import('../sacramental/annulmentConfig.js');
+  renderSacramentalPanel(document.getElementById('annulments-shell'), annulmentConfig);
 }
 
-function setCaseFilter(f, el) {
-  caseFilter = f;
-  document.querySelectorAll('#panel-annulments .cf-btn').forEach(b => b.classList.remove('active'));
-  el?.classList.add('active');
-  renderList();
-}
+// ── Shell accessors (consumed by annulmentConfig) ───────────────────────────
+export function getCaseRecords() { return allCases; }
+export function getCaseRecord(id) { return allCases.find(x => x.id === id) || null; }
+export { fullAccess as anlCanManage };   // CASE_STATUS / TYPE_BADGE already exported above
+export { caseType, petName, respName, petLast, respLast, advocateName, caseDocs, caseTimeline };
 
-function renderList() {
-  const el = document.getElementById('cases-list');
-  if (!el) return;
-  const q = (document.getElementById('case-search')?.value || '').toLowerCase();
-  const items = allCases.filter(c => {
-    const mf = caseFilter === 'all' ? true
-      : caseFilter === 'archived' ? (c.status_code === 'archived' || c.archived)
-      : c.status_code === caseFilter;
-    if (!mf) return false;
-    if (!q) return true;
-    return petName(c).toLowerCase().includes(q) || respName(c).toLowerCase().includes(q);
-  });
-  if (!items.length) { el.innerHTML = '<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No cases match.</div>'; return; }
-  const active = items.filter(c => !c.archived);
-  const arch   = items.filter(c => c.archived);
-  let html = active.map(renderCaseCard).join('');
-  if (arch.length) {
-    html += `<div style="display:flex;align-items:center;gap:10px;margin:18px 0 10px;"><div style="flex:1;height:.5px;background:var(--stone);"></div><span style="font-size:11px;color:#6B7280;letter-spacing:.07em;text-transform:uppercase;font-weight:500;">Archived</span><div style="flex:1;height:.5px;background:var(--stone);"></div></div>`;
-    html += arch.map(renderCaseCard).join('');
-  }
-  el.innerHTML = html;
-}
-
-// ── Card ─────────────────────────────────────────────────────────────────────
-function renderCaseCard(c) {
-  const sm = CASE_STATUS[c.status_code] || CASE_STATUS.prep;
-  const docs = caseDocs(c);
-  const docsDone = docs.filter(d => d.received).length;
-  const progress = docs.length ? Math.round((docsDone / docs.length) * 100) : null;
-  const exp = expandedCaseId === c.id;
-  const adv = advocateName(c);
-  const pet = petLast(c) || '(Unnamed)', resp = respLast(c);
-
-  let h = `<div id="case-card-${c.id}" class="couple-card" style="border-left:4px solid ${sm.dot};">
-    <div class="couple-header" onclick="toggleCase('${c.id}')">
-      <div style="flex:1;min-width:0;">
-        <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;">
-          <span class="couple-name">${_esc(pet)}</span>
-          ${resp ? `<span style="font-size:12px;color:#888;">vs</span><span style="font-size:13px;color:#555;">${_esc(resp)}</span>` : ''}
-        </div>
-        ${adv ? `<div style="font-size:12px;color:#6B7280;margin-top:2px;">Advocate: ${_esc(adv)}</div>` : ''}
-        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center;">
-          <span style="background:${sm.bg};color:${sm.color};border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;letter-spacing:.04em;display:inline-flex;align-items:center;gap:5px;border:1px solid ${sm.color}33;"><span style="width:7px;height:7px;border-radius:50%;background:${sm.dot};display:inline-block;"></span>${sm.label}</span>
-          <span style="font-size:11px;color:#5B4636;background:#F3ECE0;border-radius:20px;padding:2px 8px;">${TYPE_BADGE[caseType(c)] || 'Type'}</span>
-          ${c.briefer_process ? `<span style="font-size:11px;color:#7A5C00;background:#FBF1D3;border:1px solid #C9A84C;border-radius:20px;padding:2px 8px;font-weight:600;">Briefer Process</span>` : ''}
-          ${c.vetitum ? `<span style="font-size:11px;color:#922B21;background:#FDEDEC;border-radius:20px;padding:2px 8px;font-weight:600;">⚠️ Vetitum</span>` : ''}
-          ${progress !== null ? (progress === 100 ? `<span style="font-size:11px;color:#2D6A4F;">✅ docs complete</span>` : `<span style="font-size:11px;color:#922B21;">${docsDone}/${docs.length} docs</span>`) : ''}
-        </div>
-      </div>
-      <span style="font-size:16px;color:#B0A090;margin-top:2px;">${exp ? '▲' : '▼'}</span>
-    </div>`;
-
-  if (exp) h += renderCaseBody(c, docs, progress, docsDone);
-  h += `</div>`;
-  return h;
-}
-
-function renderCaseBody(c, docs, progress, docsDone) {
-  let h = `<div class="couple-body">`;
-
-  // Documents
-  h += `<div class="couple-section-label" style="margin-top:8px;">Document checklist</div>`;
-  if (progress !== null) {
-    h += `<div class="prog-bar-wrap"><div class="prog-bar-fill" style="width:${progress}%;background:${progress === 100 ? '#2D6A4F' : 'var(--gold)'};"></div></div>`;
-    h += `<div style="font-size:11px;color:#888;margin-bottom:6px;">${docsDone}/${docs.length} received</div>`;
-  }
-  h += docs.map((d, i) => `
-    <div class="doc-item" style="padding:4px 6px;display:flex;align-items:center;gap:8px;">
-      <span style="font-size:15px;cursor:pointer;" onclick="toggleCaseDoc('${c.id}',${i})">${d.received ? '✅' : '⬜'}</span>
-      <span style="flex:1;color:${d.received ? '#2D6A4F' : 'var(--navy)'};cursor:pointer;" onclick="toggleCaseDoc('${c.id}',${i})">${_esc(d.name)}</span>
-      ${!d.deletable ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : ''}
-    </div>`).join('') || `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No documents.</div>`;
-
-  // Progress notes + general notes
-  h += `<div class="couple-section-label" style="margin-top:12px;">Add progress note</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
-      <select id="pn-type-${c.id}" onchange="onProgressTypeChange('${c.id}')" style="flex:1;min-width:170px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;">
-        ${PROGRESS_OPTIONS.map(o => `<option value="${o}">${o}</option>`).join('')}
-      </select>
-      <button class="btn-primary" style="padding:.35rem .9rem;font-size:12px;" onclick="addProgressNote('${c.id}')">Add</button>
-    </div>
-    <input type="text" id="pn-other-${c.id}" placeholder="Describe…" style="display:none;width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;margin-bottom:8px;" />
-    <div style="display:flex;gap:6px;margin-bottom:8px;">
-      <input type="text" id="gn-${c.id}" placeholder="Add a general note…" style="flex:1;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" onkeydown="if(event.key==='Enter'){event.preventDefault();addGeneralNote('${c.id}');}" />
-      <button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="addGeneralNote('${c.id}')">Add note</button>
-    </div>`;
-
-  // Timeline
-  const tl = caseTimeline(c);
-  if (tl.length) {
-    h += `<div class="tl-wrap">` + tl.map(e => {
-      const icon = e.type === 'auto' ? '⚙️' : e.type === 'progress' ? '📋' : '📝';
-      const when = e.created_at ? fmtDate(String(e.created_at).slice(0, 10)) : '';
-      const who = e.by ? ` · ${_esc(e.by)}` : '';
-      return `<div class="tl-item"><div class="tl-dot"></div>
-        ${when ? `<div class="tl-date">${when}${who}</div>` : (who ? `<div class="tl-date">${who.replace(' · ', '')}</div>` : '')}
-        <div class="tl-event">${icon} ${_esc(e.text)}</div></div>`;
-    }).join('') + `</div>`;
-  } else {
-    h += `<div style="font-size:13px;color:#9CA3AF;font-style:italic;padding:.25rem 0;">No notes yet.</div>`;
-  }
-
-  h += `<div style="margin-top:12px;text-align:right;"><button class="anl-icon-btn" title="Edit case" onclick="openCaseEdit('${c.id}')"><i class="fa-solid fa-pencil"></i></button></div>`;
-  h += `</div>`;
-  return h;
-}
-
-function toggleCase(id) { expandedCaseId = expandedCaseId === id ? null : id; renderList(); }
-
-// Navigate to & expand a specific case (called from other panels / message links)
+// ── Panel chrome ─────────────────────────────────────────────────────────────
+// Cross-link entry — open a specific case in the shell (deep-link), called from
+// other panels / message links.
 export async function expandCase(id) {
-  expandedCaseId = id;
+  openSacramentalRecord('annulments', id);   // set the hash first so the shell opens it on mount
   window.switchPanel('annulments');
-  await loadCases();
-  document.getElementById('case-card-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-function onProgressTypeChange(caseId) {
-  const sel = document.getElementById('pn-type-' + caseId);
-  const other = document.getElementById('pn-other-' + caseId);
-  if (sel && other) other.style.display = sel.value === 'Other' ? 'block' : 'none';
 }
 
 // ── Timeline writes ──────────────────────────────────────────────────────────
 function nowIso() { return new Date().toISOString(); }
 function _rawTimeline(c) { return JSON.parse(JSON.stringify(c.timeline || [])); }
-
-async function _pushTimeline(caseId, entry) {
-  const c = allCases.find(x => x.id === caseId);
-  if (!c) return;
-  const tl = _rawTimeline(c);
-  tl.push(entry);
-  const { error } = await withWriteRetry(() => sb.from('annulment_cases').update({ timeline: tl, updated_at: nowIso() }).eq('id', caseId), { kind: 'update' });
-  if (error) { alert('Save failed: ' + error.message); return; }
-  c.timeline = tl;
-}
-
-async function addProgressNote(caseId) {
-  const sel = document.getElementById('pn-type-' + caseId);
-  if (!sel) return;
-  let text = sel.value;
-  if (text === 'Other') {
-    const o = (document.getElementById('pn-other-' + caseId)?.value || '').trim();
-    if (!o) { alert('Please describe the update.'); return; }
-    text = o;
-  }
-  await _pushTimeline(caseId, { type: 'progress', text, created_at: nowIso(), created_by: _curUserId(), by: _curUserName() });
-  renderList();
-}
-
-async function addGeneralNote(caseId) {
-  const inp = document.getElementById('gn-' + caseId);
-  const text = (inp?.value || '').trim();
-  if (!text) { alert('Please enter a note.'); return; }
-  await _pushTimeline(caseId, { type: 'note', text, created_at: nowIso(), created_by: _curUserId(), by: _curUserName() });
-  renderList();
-}
-
-async function toggleCaseDoc(caseId, idx) {
-  const c = allCases.find(x => x.id === caseId);
-  if (!c) return;
-  const docs = (c.documents || []).map(d => ({ name: d.name, received: d.received ?? d.done ?? false, deletable: d.deletable ?? true }));
-  docs[idx].received = !docs[idx].received;
-  const wasAllDone = false;
-  const allDone = docs.length > 0 && docs.every(d => d.received);
-  const prevAllDone = (c.documents || []).length > 0 && (c.documents || []).every(d => (d.received ?? d.done));
-  const update = { documents: docs, updated_at: nowIso() };
-  let tl = _rawTimeline(c);
-  if (allDone && !prevAllDone) { tl.push({ type: 'auto', text: 'Documents Collected', created_at: nowIso(), created_by: _curUserId() }); update.timeline = tl; }
-  const { error } = await withWriteRetry(() => sb.from('annulment_cases').update(update).eq('id', caseId), { kind: 'update' });
-  if (error) { console.error(error); return; }
-  c.documents = docs;
-  if (update.timeline) c.timeline = tl;
-  renderList();
-}
 
 // ── Notifications on status change ───────────────────────────────────────────
 async function notifyStatusChange(c, newCode) {
@@ -684,7 +497,7 @@ async function anlSaveCase() {
     if (error) { reportWriteError('annulment update', error); return; }
     Object.assign(prior, payload);
     if (statusChanged) await notifyStatusChange(prior, newStatus);
-    anlCloseModal(); await loadCases();
+    anlCloseModal(); await loadCasesData(); refreshActivePanel();
   } else {
     payload.status_code = 'prep';
     payload.judgement_finalized = null;
@@ -695,7 +508,7 @@ async function anlSaveCase() {
     const { error } = await withWriteRetry(() => sb.from('annulment_cases').insert(payload), { kind: 'insert' });
     if (error) { reportWriteError('annulment insert', error); return; }
     await logActivity({ action: 'opened annulment case', entityType: 'annulments', entityName: payload.petitioner || 'New case', contextType: 'annulments' });
-    anlCloseModal(); await loadCases();
+    anlCloseModal(); await loadCasesData(); refreshActivePanel();
   }
 }
 
@@ -703,7 +516,7 @@ async function anlDeleteCase(id) {
   if (!confirm('Permanently delete this case? This cannot be undone.')) return;
   const { error } = await sb.from('annulment_cases').delete().eq('id', id);
   if (error) { alert('Delete failed: ' + error.message); return; }
-  anlCloseModal(); await loadCases();
+  anlCloseModal(); await loadCasesData(); refreshActivePanel();
 }
 
 // ── Template settings ────────────────────────────────────────────────────────
@@ -752,8 +565,7 @@ async function anlTplSave() {
 }
 
 Object.assign(window, {
-  setCaseFilter, toggleCase, openCaseCreate, openCaseEdit, openTemplateSettings,
-  toggleCaseDoc, addProgressNote, addGeneralNote, onProgressTypeChange,
+  openCaseCreate, openCaseEdit, openTemplateSettings,
   anlCloseModal, anlSaveCase, anlDeleteCase,
   anlOnTypeChange, anlOnAdvocateChange, anlOnStatusChange,
   anlAddPrev, anlRemovePrev, anlDocReceived, anlRemoveDoc, anlAddDoc,
