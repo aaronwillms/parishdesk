@@ -27,6 +27,37 @@ const ANNULMENT_TYPES = [
 ];
 export const TYPE_BADGE = Object.fromEntries(ANNULMENT_TYPES.map(t => [t.v, t.badge]));
 
+// Static reference content for the "Requirements for Annulment Types" help window
+// (the "?" next to the type selector). Order MATCHES the type dropdown. Display-only;
+// not stored in the DB.
+const ANNULMENT_TYPE_HELP = [
+  { title: 'Formal Case', paras: [
+    'A formal case is the term used for an annulment petition based on grounds that fall into the following categories:',
+    '1. Catholic married to a Catholic: When a Catholic who was previously married to another Catholic in the Church seeks a declaration of nullity for their marriage.',
+    '2. Baptized non-Catholic married to a baptized non-Catholic: When a validly baptized non-Catholic who was married to another validly baptized non-Catholic in a non-Catholic church or before a justice of the peace petitions for the nullity of the marriage.',
+    '3. Catholic married to a non-Catholic: When a Catholic who married a non-Catholic, baptized or unbaptized, in a Catholic Church or in a non-Catholic religious ceremony with proper permission from the bishop of the Catholic party petitions for an annulment.',
+    '4. Other cases: Any marriage annulment case that does not meet the requirements for it to be processed as a lack of form, prior bond, Pauline Privilege, or Petrine Privilege case.',
+  ] },
+  { title: 'Lack of Form', paras: [
+    'Lack of canonical form, or, for short, "lack of form," occurs when a Catholic contracts a marriage before a justice of the peace, a civil magistrate, or a non-Catholic religious minister without a dispensation or authorization from the bishop. Thus, only those Catholic marriages contracted before a properly delegated Catholic bishop, priest, or deacon and in the presence of two witnesses are valid.',
+  ] },
+  { title: 'Petrine Privilege', paras: [
+    'Petrine Privilege occurs when a man and a woman, at least one of whom was unbaptized prior to the marriage, contract marriage, and at least one of the parties remains unbaptized subsequent to the marriage. After the breakup of the marriage, one of the parties wishes to marry another person in the Church. In such a case, the Church may grant the Petrine Privilege, provided that the party who wishes to marry in the Church was not the principal cause of the breakup of the previous marriage, and provided that the person he or she wishes to marry is free to marry in the Catholic Church.',
+  ] },
+  { title: 'Pauline Privilege', paras: [
+    'Pauline Privilege occurs when an unbaptized man and an unbaptized woman enter into marriage and, subsequent to the marriage, one of them becomes validly baptized or wishes to be baptized in the Catholic Church. After the couple has divorced, the convert or converting party wishes to marry another person in the Church. In such a case, the Pauline Privilege may be granted, provided that the convert or converting party was not the principal cause of the breakup of his or her marriage with the unbaptized party.',
+  ] },
+  { title: 'Ligamen (Prior Bond)', paras: [
+    'A person who has been previously married cannot enter into a valid marriage in the Catholic Church, unless the prior marriage has been declared null by the Catholic Church. This law applies to both Catholics and non-Catholics, baptized and unbaptized. Even if the prior marriage is believed invalid or dissolved for any reason, it is not, on that account, permitted to contract another before the nullity or dissolution of the prior marriage has been established legitimately and certainly by the Tribunal. (c. 1085, §§1-2).',
+    'Prior bond is always on the part of the other party or respondent. If the petitioner was the one who previously married, an investigation of the first marriage must first be conducted. If it is found to be null, the validity of the second marriage is presumed. If, after investigation, the second marriage is proven null, the validity of the third marriage is presumed. Therefore, the Tribunal does not declare the marriages of a petitioner subsequent to the first null by reason of prior bond and then proceeds to declare the first marriage null by a formal trial.',
+    'Thus, prior bond is always on the part of the respondent. It is when a petitioner married a respondent whose prior marriage was not annulled or dissolved by the Catholic Church, either before or after the marriage of the petitioner and the respondent.',
+    'In such a case, the marriage of the petitioner and the respondent may be considered invalid on the ground of prior bond—namely, that the petitioner married a respondent who was bound by a previous marriage that had neither been annulled nor dissolved by the Catholic Church, either before or after their marriage.',
+  ] },
+  { title: 'Ratum et Non Consummatum', paras: [
+    'In canon law, a ratum et non consummatum (ratified and not consummated) marriage refers to a valid union between two baptized persons who have exchanged legal consent but have not yet engaged in sexual intercourse. While the Catholic Church views a validly contracted and consummated sacramental marriage as absolutely indissoluble by any human power, an unconsummated union holds a distinct juridical status. Under Canon 1141, a ratum et non consummatum marriage can be dissolved by the Pope for a just reason through an administrative dispensation rather than a standard judicial annulment.',
+  ] },
+];
+
 const COUNTRIES = ['United States of America', 'Mexico', 'Philippines', 'Vietnam', 'Nigeria', 'India', 'Other'];
 const PROGRESS_OPTIONS = ['Submitted to Tribunal', 'Received by Tribunal', 'Witnesses Cited', 'Acts Published', 'Other'];
 // Preseeded procedural events offered in the timeline dropdown. The five
@@ -226,7 +257,7 @@ function updateAnnulmentStats() {
 export function getCaseRecords() { return allCases; }
 export function getCaseRecord(id) { return allCases.find(x => x.id === id) || null; }
 export { fullAccess as anlCanManage };   // CASE_STATUS / TYPE_BADGE already exported above
-export { caseType, petName, respName, petLast, respLast, advocateName, caseDocs, caseTimeline };
+export { caseType, petName, respName, petLast, respLast, advocateName, caseDocs, caseTimeline, BAP_STATUS };
 
 // ── Priority Actions banner ──────────────────────────────────────────────────
 // Missing documents for PREPARING cases only. Every non-Preparing status (In
@@ -435,6 +466,47 @@ function _anlOverlay() {
 function _anlOpen(html) { _anlOverlay(); document.getElementById('anl-modal-content').innerHTML = html; document.getElementById('anl-overlay').classList.add('open'); }
 function anlCloseModal() { document.getElementById('anl-overlay')?.classList.remove('open'); _M = null; }
 
+// ── "Requirements for Annulment Types" help window ───────────────────────────
+// A small dismissable window (its own overlay so it stacks ABOVE the case modal it's
+// opened from). Dismiss via X, outside-click, or Escape. Static content from
+// ANNULMENT_TYPE_HELP; reuses the shared .modal-overlay/.modal pattern (incl. its
+// max-height + overflow-y scroll and dark-mode styling).
+function _anlHelpContentHtml() {
+  return ANNULMENT_TYPE_HELP.map(t => `
+    <div style="margin-bottom:1.2rem;">
+      <div style="font-family:'Cormorant Garamond',serif;font-size:16px;font-weight:600;color:var(--cardinal);margin-bottom:.4rem;">${_esc(t.title)}</div>
+      ${t.paras.map(p => `<p style="font-size:13px;line-height:1.55;color:var(--navy);margin:0 0 .55rem;">${_esc(p)}</p>`).join('')}
+    </div>`).join('');
+}
+function _anlHelpOverlay() {
+  let ov = document.getElementById('anl-help-overlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'anl-help-overlay';
+    ov.className = 'modal-overlay';
+    ov.style.zIndex = '1100';   // above the case modal (.modal-overlay = 1000)
+    ov.innerHTML = `<div class="modal" style="width:560px;max-width:94vw;">
+      <button class="modal-close" onclick="anlCloseTypeHelp()" aria-label="Close">×</button>
+      <div class="modal-title">Requirements for Annulment Types</div>
+      <div id="anl-help-content"></div>
+    </div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener('click', e => { if (e.target === ov) anlCloseTypeHelp(); });   // outside-click
+  }
+  return ov;
+}
+function _anlHelpEsc(e) { if (e.key === 'Escape') { e.stopPropagation(); anlCloseTypeHelp(); } }
+window.anlOpenTypeHelp = () => {
+  const ov = _anlHelpOverlay();
+  document.getElementById('anl-help-content').innerHTML = _anlHelpContentHtml();
+  ov.classList.add('open');
+  document.addEventListener('keydown', _anlHelpEsc);   // Escape
+};
+window.anlCloseTypeHelp = () => {
+  document.getElementById('anl-help-overlay')?.classList.remove('open');
+  document.removeEventListener('keydown', _anlHelpEsc);
+};
+
 // ── Create / Edit modal ──────────────────────────────────────────────────────
 function openCaseCreate() {
   const type = 'formal';
@@ -510,8 +582,10 @@ function buildCaseModalHtml(c, opts = {}) {
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Annulment Case' : 'New Annulment Case'}</div>`;
 
   // Section 1 — Type. The selected type drives which sections surface (see
-  // typeSections / anlOnTypeChange) and seeds the document checklist.
-  h += `<label>Annulment Type</label>
+  // typeSections / anlOnTypeChange) and seeds the document checklist. The "?" opens the
+  // static "Requirements for Annulment Types" reference window (anlOpenTypeHelp).
+  h += `<label style="display:flex;align-items:center;gap:6px;">Annulment Type
+      <button type="button" onclick="anlOpenTypeHelp()" title="Requirements for Annulment Types" aria-label="Requirements for Annulment Types" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;border:1px solid var(--cardinal);color:var(--cardinal);background:none;font-size:11px;font-weight:700;line-height:1;cursor:pointer;font-family:'Inter',sans-serif;padding:0;flex-shrink:0;">?</button></label>
     <select id="am-type" onchange="anlOnTypeChange(this.value)">
       ${ANNULMENT_TYPES.map(t => `<option value="${t.v}"${_M.type === t.v ? ' selected' : ''}>${t.label}</option>`).join('')}
     </select>`;

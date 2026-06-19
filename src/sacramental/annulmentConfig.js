@@ -15,7 +15,7 @@ import { isSacramentCoordinator } from '../roles.js';
 import {
   getCaseRecords, getCaseRecord, anlCanManage, CASE_STATUS, TYPE_BADGE,
   caseType, petName, respName, petLast, respLast, advocateName, caseDocs,
-  buildAnlEditForm, anlSaveEdit, anlDeleteRec, TIMELINE_EVENTS, parseCaseNotes,
+  buildAnlEditForm, anlSaveEdit, anlDeleteRec, TIMELINE_EVENTS, parseCaseNotes, BAP_STATUS,
 } from '../panels/annulments.js';
 
 const esc = (s) => String(s == null ? '' : s)
@@ -209,22 +209,54 @@ function baptismDocBlock(c, d, i, party, canManage) {
   const extra = d.received ? baptismReadonly(c, party) : (canManage ? baptismEditable(c, party, locked) : baptismReadonly(c, party));
   return line + extra;
 }
+// Readable list of the party's CHECKED baptismal statuses (human labels, semicolon-
+// separated). Empty string when none are checked. party = 'pet' | 'resp'.
+function baptismStatusList(c, party) {
+  const prefix = party === 'resp' ? 'resp' : 'pet';
+  return BAP_STATUS.filter(o => c[`${prefix}_bap_${o.suffix}`]).map(o => o.label).join('; ');
+}
+// One labeled, small/secondary status line ("Petitioner/Respondent Baptismal Status:
+// …"). Empty when no statuses are checked (so the none-checked case shows nothing).
+// `indent` aligns it under a baptism record's location block (23px) vs. the top
+// (documents-heading) placement, which sits flush above the first document.
+function baptismStatusLine(c, party, indent) {
+  const list = baptismStatusList(c, party);
+  if (!list) return '';
+  const who = party === 'resp' ? 'Respondent' : 'Petitioner';
+  return `<div style="${indent ? 'margin:1px 0 8px 23px;' : 'margin:0 0 10px;'}font-size:11.5px;color:#6B7280;line-height:1.4;">
+    <span style="font-weight:600;color:var(--navy);">${who} Baptismal Status:</span> ${esc(list)}</div>`;
+}
 function documents(c) {
   const canManage = anlCanManage();
   const docs = caseDocs(c);
-  if (!docs.length) return '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No documents.</div>';
   const petIdx = baptismDocIdx(docs, 'pet');
   const respIdx = baptismDocIdx(docs, 'resp');
-  const petNoBap = partyNoBaptism(c, 'pet');
-  const respNoBap = partyNoBaptism(c, 'resp');
-  return docs.map((d, i) => {
-    // Petitioner baptism doc: hidden (kept in data) when the petitioner is 5/6.
-    if (i === petIdx) return petNoBap ? '' : baptismDocBlock(c, d, i, 'pet', canManage);
+  const petNoBap = partyNoBaptism(c, 'pet');     // petitioner 5/6 → record cleared
+  const respNoBap = partyNoBaptism(c, 'resp');   // respondent 5/6 → record cleared
+  const showRespSection = petNoBap;              // respondent status shown only when section shown
+
+  // A party's status sits UNDER its baptism record when that record is present (party
+  // not 5/6) AND a baptism doc exists to anchor it; otherwise it sits in the top block
+  // (under the Documents heading, above the first doc) — same flag as the grey-out.
+  const petUnderRecord = !petNoBap && petIdx >= 0;
+  const respUnderRecord = showRespSection && !respNoBap && respIdx >= 0;
+
+  let top = '';
+  if (!petUnderRecord) top += baptismStatusLine(c, 'pet', false);                 // petitioner: always
+  if (showRespSection && !respUnderRecord) top += baptismStatusLine(c, 'resp', false);
+
+  if (!docs.length) return (top || '') + '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No documents.</div>';
+
+  const body = docs.map((d, i) => {
+    // Petitioner baptism doc: hidden (kept in data) when the petitioner is 5/6; when
+    // present, its checked-status list renders directly under the record.
+    if (i === petIdx) return petNoBap ? '' : (baptismDocBlock(c, d, i, 'pet', canManage) + baptismStatusLine(c, 'pet', true));
     // Respondent baptism doc: shown only when the PETITIONER is 5/6 (cross-party) AND
-    // the respondent is NOT 5/6 (two-layer); otherwise hidden (kept in data).
-    if (i === respIdx) return (!petNoBap || respNoBap) ? '' : baptismDocBlock(c, d, i, 'resp', canManage);
+    // the respondent is NOT 5/6 (two-layer); status renders under the record when present.
+    if (i === respIdx) return (!showRespSection || respNoBap) ? '' : (baptismDocBlock(c, d, i, 'resp', canManage) + baptismStatusLine(c, 'resp', true));
     return docLine(c, d, i);
   }).join('');
+  return top + body;
 }
 // Shared timeline/notes list entry: a gold bullet on a gold vertical line, the text
 // label with a small timestamp beneath, and a hover-X (revealed on row hover) sitting
