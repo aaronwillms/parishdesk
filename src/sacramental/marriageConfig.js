@@ -89,16 +89,19 @@ function officiantCell(c) {
     <span style="font-size:12px;color:${on ? '#2D6A4F' : '#854F0B'};">${on ? 'Delegation given' : 'Delegation not given — send letter'}</span>
   </span>`;
 }
-// "Marriage File Placed in Parish Records" — viewer-editable, non-removable
-// checkbox, shown only when the file's real status is Complete (independent of
-// archived, so an archived-complete file can still be resolved here).
-function recordsPlacedRow(c) {
+// Completion chain (viewer-editable, non-removable, retry-wrapped): when status is
+// Complete show "Wedding Complete"; once it's checked, the nested "Marriage File
+// Placed in Parish Records" toggle appears beneath it.
+function completionRows(c) {
   if (c.status_code !== 'complete') return '';
-  const on = !!c.records_placed;
-  return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;" onclick="toggleCoupleRecordsPlaced('${c.id}')" >
+  const wc = !!c.wedding_complete;
+  const chk = (on, label, handler, indent) => `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;${indent ? 'margin-left:1.5rem;' : ''}" onclick="${handler}('${c.id}')">
     <span style="font-size:15px;cursor:pointer;">${on ? '✅' : '⬜'}</span>
-    <span style="flex:1;cursor:pointer;color:${on ? '#2D6A4F' : 'var(--navy)'};">Marriage File Placed in Parish Records</span>
+    <span style="flex:1;cursor:pointer;color:${on ? '#2D6A4F' : 'var(--navy)'};">${label}</span>
   </div>`;
+  let h = chk(wc, 'Wedding Complete', 'toggleCoupleWeddingComplete', false);
+  if (wc) h += chk(!!c.records_placed, 'Marriage File Placed in Parish Records', 'toggleCoupleRecordsPlaced', true);
+  return h;
 }
 function priorList(prior) {
   return (prior || []).map(pm => {
@@ -122,14 +125,18 @@ function spouseDetail(c, n) {
     inOcia ? `In OCIA${ociaName ? ` (${esc(ociaName)})` : ''}` : null,
   ].filter(Boolean);
   const prior = c[`spouse${n}_prior_marriages`] || [];
+  // External files hide the per-party PREP fields (DOB, baptism place, prior
+  // marriages) in the viewer too, mirroring the form — so a field hidden at entry
+  // isn't orphaned here. Name/contact/status still show.
+  const ext = !!c.is_external;
   const out = [
     row('Name', fullName ? esc(fullName) : ''),
-    row('Date of birth', dob ? esc(formatDateDisplay(dob)) : ''),
+    (!ext && dob) ? row('Date of birth', esc(formatDateDisplay(dob))) : '',
     row('Phone', phone ? esc(formatPhone(phone)) : ''),
     row('Email', email ? esc(email) : ''),
     statusBits.length ? row('Status', statusBits.join(' · ')) : '',
-    baptism ? row('Baptism', baptism) : '',
-    prior.length ? row('Prior marriages', priorList(prior)) : '',
+    (!ext && baptism) ? row('Baptism', baptism) : '',
+    (!ext && prior.length) ? row('Prior marriages', priorList(prior)) : '',
   ].filter(Boolean).join('');
   return out || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details.</div>';
 }
@@ -148,7 +155,7 @@ function fileDetails(c) {
     row('Location', loc.name ? esc(loc.name) : (c.non_church_wedding ? 'Non-church wedding' : '')),
     row('Address', loc.lines.length ? esc(loc.lines.join(', ')) : ''),
     row('Officiant', officiantCell(c)),                 // includes inline editable delegation toggle
-    recordsPlacedRow(c),                                // editable, Complete-only
+    completionRows(c),                                  // Wedding Complete → records placed (Complete-only)
     row('Marriage Prep', preparerOf(c) ? esc(preparerOf(c)) : ''),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
 }

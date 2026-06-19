@@ -52,12 +52,18 @@ export function fmtDate(iso) {
 }
 
 // Display an ISO date (YYYY-MM-DD) as DD/MM/YYYY. Storage stays ISO; only display changes.
-export function formatDateDisplay(isoDate) {
+// Shared numeric date display — MM/DD/YYYY (US order; the parish is US-based and all
+// inputs are MM/DD). This is the ONE place numeric dates are formatted, so every card
+// and file-viewer routes through it and the order can't drift per-site. Previously
+// emitted DD/MM/YYYY, which mis-displayed every date app-wide.
+export function formatDateMDY(isoDate) {
   if (!isoDate) return '';
   const [y, m, d] = String(isoDate).slice(0, 10).split('-');
   if (!y || !m || !d) return '';
-  return `${d}/${m}/${y}`;
+  return `${m}/${d}/${y}`;
 }
+// Back-compat name kept so existing call sites (31 of them) need no churn.
+export const formatDateDisplay = formatDateMDY;
 
 // Parse a DD/MM/YYYY string back to ISO (YYYY-MM-DD) for storage. Returns null if blank/invalid.
 export function parseDateInput(displayDate) {

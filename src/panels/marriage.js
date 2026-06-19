@@ -207,17 +207,17 @@ function updateCoupleStats() {
 //   • ACTIVE files (not archived AND status_code !== 'inactive') surface, per file:
 //       - Missing DOCUMENTS (names; NOT steps)
 //       - Delegation not given (visiting/external officiant + delegation unchecked)
-//       - Records not placed (status Complete + records-placement unchecked)
-//   • ARCHIVED or INACTIVE files surface ONLY "Records not placed" (status Complete
-//     + unchecked) — the sole banner item that applies to archived files. This is an
-//     intentional exception to the general archived/inactive exclusion.
+//       - Records not placed (Wedding Complete checked + records-placement unchecked)
+//   • ARCHIVED or INACTIVE files surface ONLY "Records not placed" (Wedding Complete
+//     + records unchecked) — the sole banner item that applies to archived files. An
+//     archived file where Wedding Complete was never checked stays silent.
 // Pure per-file banner items (exported for testability + single source of truth).
-// Returns an array of already-escaped strings (may be empty). State rule:
-//   • archived/inactive → ONLY the records-placement item (Complete + unchecked).
-//   • active            → missing documents + delegation + records-placement.
+// Records-placement now keys on wedding_complete=true AND records_placed=false
+// (supersedes the prior status=Complete keying). "Wedding Complete" is NOT a banner
+// item itself.
 export function marriageAlertItems(c) {
   const archivedOrInactive = !!c.archived || c.status_code === 'inactive';
-  const recordsNotPlaced = c.status_code === 'complete' && !c.records_placed;
+  const recordsNotPlaced = !!c.wedding_complete && !c.records_placed;
   const items = [];
   if (archivedOrInactive) {
     if (recordsNotPlaced) items.push('Marriage file not yet placed in parish records');
@@ -289,8 +289,16 @@ async function toggleCoupleDelegation(coupleId) {
   const c = allCouples.find(x => x.id === coupleId); if (!c) return;
   if (await _patch(coupleId, { delegation_given: !c.delegation_given })) refreshActivePanel();
 }
+// "Wedding Complete" toggle — viewer-editable, non-removable, shown when status is
+// Complete; gates records-placement. Unchecking it clears records_placed (gated).
+async function toggleCoupleWeddingComplete(coupleId) {
+  const c = allCouples.find(x => x.id === coupleId); if (!c) return;
+  const next = !c.wedding_complete;
+  const patch = next ? { wedding_complete: true } : { wedding_complete: false, records_placed: false };
+  if (await _patch(coupleId, patch)) refreshActivePanel();
+}
 // "Marriage File Placed in Parish Records" toggle — viewer-editable, non-removable,
-// shown when status is Complete. Same retry-wrapped write path.
+// shown only once Wedding Complete is checked. Same retry-wrapped write path.
 async function toggleCoupleRecordsPlaced(coupleId) {
   const c = allCouples.find(x => x.id === coupleId); if (!c) return;
   if (await _patch(coupleId, { records_placed: !c.records_placed })) refreshActivePanel();
@@ -450,8 +458,15 @@ function buildCoupleModalHtml(c, opts = {}) {
   const curStatus = (c?.status_code && c.status_code !== 'external') ? c.status_code : 'inprogress';
   h += _sectionHead('Status');
   h += `<label>Status</label><select id="mf-status" onchange="marOnStatusChange()">${Object.entries(COUPLE_STATUS).filter(([k]) => k !== 'external').map(([k, v]) => `<option value="${k}"${curStatus === k ? ' selected' : ''}>${v.label}</option>`).join('')}</select>`;
-  // "Marriage File Placed in Parish Records" — visible only when status is Complete.
-  h += `<div id="mf-records-wrap" style="display:${curStatus === 'complete' ? 'block' : 'none'};">${_toggle('mf-records-placed', 'Marriage File Placed in Parish Records', !!c?.records_placed)}</div>`;
+  // Completion chain: status Complete → "Wedding Complete" → (when checked) the
+  // "Marriage File Placed in Parish Records" toggle nests under it.
+  const isComplete = curStatus === 'complete';
+  h += `<div id="mf-weddingcomplete-wrap" style="display:${isComplete ? 'block' : 'none'};">
+    ${_toggle('mf-wedding-complete', 'Wedding Complete', !!c?.wedding_complete, 'marOnWeddingCompleteToggle()')}
+    <div id="mf-records-wrap" style="display:${(isComplete && c?.wedding_complete) ? 'block' : 'none'};margin-left:1.5rem;">
+      ${_toggle('mf-records-placed', 'Marriage File Placed in Parish Records', !!c?.records_placed)}
+    </div>
+  </div>`;
   if (isEdit) h += _toggle('mf-archive', 'Archive this file', !!c?.archived);
 
   if (!inline) {
@@ -469,7 +484,10 @@ function renderSpouseSection(c, n) {
   let h = _sectionHead(n === 1 ? 'Groom' : 'Bride');
   h += _row(_input(`mf-${p}-first`, 'First Name', c?.[`spouse${n}_first`] || ''), _input(`mf-${p}-middle`, 'Middle', c?.[`spouse${n}_middle`] || ''), _input(`mf-${p}-last`, 'Last Name', c?.[`spouse${n}_last`] || ''));
   h += _row(_input(`mf-${p}-cell`, 'Cell Phone', c?.[`${n === 1 ? 'groom' : 'bride'}_phone`] || '', 'tel'), _input(`mf-${p}-email`, 'Email', c?.[`${n === 1 ? 'groom' : 'bride'}_email`] || ''));
-  h += _input(`mf-${p}-dob`, 'Date of Birth', c?.[`spouse${n}_dob`] || '', 'date');
+  // Per-party PREP fields (DOB, baptism place, prior marriages) are hidden when the
+  // file is External — preparation handled elsewhere. Same is_external gating as the
+  // delegation field; data is preserved (display-only), never cleared.
+  h += `<div id="mf-${p}-dob-wrap" style="display:${_M.external ? 'none' : 'block'};">${_input(`mf-${p}-dob`, 'Date of Birth', c?.[`spouse${n}_dob`] || '', 'date')}</div>`;
   h += _toggle(`mf-${p}-unbap`, 'Unbaptized?', s.unbaptized, `marSpouseToggle(${n})`);
   h += `<div id="mf-${p}-noncath-wrap" style="display:${s.unbaptized ? 'none' : 'block'};">${_toggle(`mf-${p}-noncath`, 'Non-Catholic?', s.nonCatholic, `marSpouseToggle(${n})`)}</div>`;
   h += `<div id="mf-${p}-ocia-wrap" style="display:${(s.unbaptized || s.nonCatholic) ? 'block' : 'none'};">
@@ -480,9 +498,9 @@ function renderSpouseSection(c, n) {
       <div id="mf-${p}-ocia-chip" style="margin-top:6px;"></div>
     </div>
   </div>`;
-  h += `<div id="mf-${p}-baptism-wrap" style="display:${s.unbaptized ? 'none' : 'block'};">${_row(_input(`mf-${p}-bchurch`, 'Church of Baptism', c?.[`spouse${n}_baptism_church`] || ''), _input(`mf-${p}-bcity`, 'City', c?.[`spouse${n}_baptism_city`] || ''), _input(`mf-${p}-bstate`, 'State/Country', c?.[`spouse${n}_baptism_state`] || ''))}</div>`;
-  // Prior marriages
-  h += `<div style="margin-top:.75rem;">${_toggle(`mf-${p}-priortoggle`, 'Prior Marriage?', _M[`${p}Prior`].length > 0, `marPriorToggle(${n})`)}
+  h += `<div id="mf-${p}-baptism-wrap" style="display:${(_M.external || s.unbaptized) ? 'none' : 'block'};">${_row(_input(`mf-${p}-bchurch`, 'Church of Baptism', c?.[`spouse${n}_baptism_church`] || ''), _input(`mf-${p}-bcity`, 'City', c?.[`spouse${n}_baptism_city`] || ''), _input(`mf-${p}-bstate`, 'State/Country', c?.[`spouse${n}_baptism_state`] || ''))}</div>`;
+  // Prior marriages (hidden for External)
+  h += `<div id="mf-${p}-prior-block" style="display:${_M.external ? 'none' : 'block'};margin-top:.75rem;">${_toggle(`mf-${p}-priortoggle`, 'Prior Marriage?', _M[`${p}Prior`].length > 0, `marPriorToggle(${n})`)}
     <div id="mf-${p}-prior-wrap" style="display:${_M[`${p}Prior`].length > 0 ? 'block' : 'none'};margin-top:.5rem;"></div></div>`;
   return h;
 }
@@ -577,8 +595,16 @@ function renderOciaChip(n) {
 // ── Modal handlers ───────────────────────────────────────────────────────────
 function marOnExternalToggle() {
   _M.external = document.getElementById('mf-external').checked;
-  // External only removes Documents + Steps of Preparation; Type, Wedding Details, Fees stay.
+  // External removes Documents + Steps of Preparation AND the per-party prep fields
+  // (DOB, baptism place, prior marriages); Type, Wedding Details, Fees stay.
   ['mf-docs-section', 'mf-steps-section'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = _M.external ? 'none' : 'block'; });
+  [1, 2].forEach(n => {
+    const p = n === 1 ? 's1' : 's2';
+    const s = _M[`s${n}`];
+    const dob = document.getElementById(`mf-${p}-dob-wrap`); if (dob) dob.style.display = _M.external ? 'none' : 'block';
+    const prior = document.getElementById(`mf-${p}-prior-block`); if (prior) prior.style.display = _M.external ? 'none' : 'block';
+    const bap = document.getElementById(`mf-${p}-baptism-wrap`); if (bap) bap.style.display = (_M.external || s.unbaptized) ? 'none' : 'block';
+  });
 }
 function marOnTypeChange(v) {
   _M.type = v;
@@ -624,7 +650,18 @@ function _instAddrBlock(instId) {
 }
 // Show the Delegation toggle only when the officiant is a free-text "Other".
 function marOnOfficiantOtherToggle() { const w = document.getElementById('mf-delegation-wrap'); if (w) w.style.display = officiantIsOther('mf-officiant') ? 'block' : 'none'; }
-function marOnStatusChange() { const v = document.getElementById('mf-status')?.value; const w = document.getElementById('mf-records-wrap'); if (w) w.style.display = v === 'complete' ? 'block' : 'none'; }
+function marOnStatusChange() {
+  const v = document.getElementById('mf-status')?.value;
+  const wc = document.getElementById('mf-weddingcomplete-wrap'); if (wc) wc.style.display = v === 'complete' ? 'block' : 'none';
+  _syncRecordsWrap();
+}
+function marOnWeddingCompleteToggle() { _syncRecordsWrap(); }
+function _syncRecordsWrap() {
+  const complete = document.getElementById('mf-status')?.value === 'complete';
+  const weddingDone = !!document.getElementById('mf-wedding-complete')?.checked;
+  const rw = document.getElementById('mf-records-wrap');
+  if (rw) rw.style.display = (complete && weddingDone) ? 'block' : 'none';
+}
 
 function marSpouseToggle(n) {
   const p = n === 1 ? 's1' : 's2';
@@ -633,7 +670,7 @@ function marSpouseToggle(n) {
   s.nonCatholic = document.getElementById(`mf-${p}-noncath`)?.checked || false;
   s.inOcia = document.getElementById(`mf-${p}-inocia`)?.checked || false;
   document.getElementById(`mf-${p}-noncath-wrap`).style.display = s.unbaptized ? 'none' : 'block';
-  document.getElementById(`mf-${p}-baptism-wrap`).style.display = s.unbaptized ? 'none' : 'block';
+  document.getElementById(`mf-${p}-baptism-wrap`).style.display = (_M.external || s.unbaptized) ? 'none' : 'block';
   document.getElementById(`mf-${p}-ocia-wrap`).style.display = (s.unbaptized || s.nonCatholic) ? 'block' : 'none';
   document.getElementById(`mf-${p}-ociasearch-wrap`).style.display = s.inOcia ? 'block' : 'none';
   renderModalDocs();
@@ -750,9 +787,11 @@ function _marReadPayload() {
     // Officiant + preparer via the shared clergy helpers (name strings).
     officiant: readOfficiantValue('mf-officiant'),
     delegation_given: officiantIsOther('mf-officiant') ? _chk('mf-delegation') : false,
-    // Records-placement applies to any COMPLETE file (external or not); reset
-    // otherwise so it can't linger when a file moves out of Complete.
-    records_placed: (document.getElementById('mf-status')?.value === 'complete') ? _chk('mf-records-placed') : false,
+    // Completion chain: Wedding Complete only when status is Complete; records-
+    // placement only when Wedding Complete. Reset downstream flags otherwise so they
+    // can't linger when a file moves back up the chain.
+    wedding_complete: (document.getElementById('mf-status')?.value === 'complete') ? _chk('mf-wedding-complete') : false,
+    records_placed: (document.getElementById('mf-status')?.value === 'complete' && _chk('mf-wedding-complete')) ? _chk('mf-records-placed') : false,
     preparer: readPreparerValue('mf-preparer'),
     documents: finalDocs,
     steps: external ? [] : _M.steps,
@@ -890,9 +929,9 @@ async function marTplSave() {
 
 Object.assign(window, {
   openCoupleAdd, openCoupleEdit,
-  toggleCoupleDoc, toggleCoupleStep, toggleCoupleFee, toggleCoupleDelegation, toggleCoupleRecordsPlaced, addCoupleNoteLog,
+  toggleCoupleDoc, toggleCoupleStep, toggleCoupleFee, toggleCoupleDelegation, toggleCoupleWeddingComplete, toggleCoupleRecordsPlaced, addCoupleNoteLog,
   marCloseModal, marSaveCouple, marDeleteCouple,
-  marOnExternalToggle, marOnTypeChange, marOnNonChurchToggle, marOnInstitutionChange, marOnOfficiantOtherToggle, marOnStatusChange,
+  marOnExternalToggle, marOnTypeChange, marOnNonChurchToggle, marOnInstitutionChange, marOnOfficiantOtherToggle, marOnStatusChange, marOnWeddingCompleteToggle,
   marSpouseToggle, marPriorToggle, marAddPrior, marRemovePrior, marPriorEndedChange,
   marOciaSearch, marRemoveOcia, marAnnulSearch, marRemoveAnnul,
   marDocReceived, marRemoveDoc, marAddDoc, marAddStep, marRemoveStep, marStepDragStart, marStepDrop, marAddFee, marRemoveFee, marFeePaid,
