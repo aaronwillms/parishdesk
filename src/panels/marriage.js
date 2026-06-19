@@ -2,7 +2,7 @@ import { sb, withWriteRetry, serializeWrite } from '../supabase.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { store } from '../store.js';
 import { expandCase } from './annulments.js';
-import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
+import { isAdmin, canAccessSacrament } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
@@ -23,7 +23,7 @@ const MARRIAGE_TYPES = [
   { v:'convalidation', label:'Convalidation',         badge:'Convalidation' },
   { v:'sanatio',       label:'Sanatio in Radice',     badge:'Sanatio' },
 ];
-const MTYPE_BADGE = { nuptial_mass:'Nuptial Mass', outside_mass:'Outside Mass', convalidation:'Convalidation', sanatio:'Sanatio', external:'External' };
+const MTYPE_BADGE = { nuptial_mass:'Nuptial Mass', outside_mass:'Outside Mass', convalidation:'Convalidation', sanatio:'Sanatio in Radice', external:'External' };
 // Required documents auto-added to new files based on each couple's situation (see autoDocList).
 // Shown read-only/locked in template editors so admins see the full picture of what will appear.
 const MARRIAGE_AUTO_DOCS = [
@@ -156,8 +156,8 @@ export async function loadCouplesData() {
 // Nav loader — fetch then mount the master-detail shell into #couples-list.
 export async function loadCouples() {
   await loadCouplesData();
-  const gear = document.getElementById('marriage-gear');
-  if (gear) gear.style.display = isSacramentCoordinator('marriage') ? '' : 'none';
+  // (The standalone #marriage-gear button was removed with the old chrome; the
+  // shell now renders the settings gear via marriageConfig.canManageTemplate.)
   const root = document.getElementById('couples-list');
   if (!root) return;
   const { marriageConfig } = await import('../sacramental/marriageConfig.js');

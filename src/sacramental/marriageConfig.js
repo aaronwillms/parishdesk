@@ -7,6 +7,7 @@
 import { fmtDate, formatDateDisplay } from '../utils.js';
 import { formatPhone } from '../utils/phone.js';
 import { store } from '../store.js';
+import { isSacramentCoordinator } from '../roles.js';
 import {
   getCouples, getCouple, marCanManage, COUPLE_STATUS, MTYPE_BADGE,
   marTypeReal, isVisitingOfficiant, coupleLabel, s1Name, s2Name, normDocs, normSteps, normFees, notesOf,
@@ -180,13 +181,17 @@ function emailCouple(c) {
 // ── Config object ───────────────────────────────────────────────────────────
 export const marriageConfig = {
   panelKey: 'marriage',
-  title: 'Marriage Prep',
+  title: 'Marriage Files',
   newLabel: '+ New File',
   groupBy: null,            // flat list
   sortByDate: 'wedding_date',   // shell handles upcoming-first + archived-last
 
   canManage: () => marCanManage(),
   openCreate: () => window.openCoupleAdd?.(),
+  // Settings gear in the shell toolbar → marriage document/step/fee templates
+  // (this replaced the old chrome's standalone gear button removed from index.html).
+  canManageTemplate: () => isSacramentCoordinator('marriage'),
+  openTemplate: () => window.openMarriageTemplates?.(),
 
   fetchRecords: async () => getCouples(),
   fetchRecord: (id) => getCouple(id),
@@ -223,7 +228,7 @@ export const marriageConfig = {
     { title: 'Bride',                render: (c) => spouseDetail(c, 2) },
     { title: 'Fees',                 render: fees },                                  // shown for external too
     { title: 'Documents & Steps',    render: documentsSteps, when: (c) => !c.is_external },  // omitted for external
-    { title: 'Activity',             render: activity },
+    { title: 'Notes',                render: activity },
   ],
 
   editForm: (c) => buildMarEditForm(c),

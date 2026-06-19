@@ -169,21 +169,6 @@
           <div class="stat-card"><div class="stat-num" id="stat-needs-attention">—</div><div class="stat-label">Needs attention</div></div>
         </div>
         <div id="marriage-alerts"></div>
-        <div class="card" style="padding:.875rem 1.25rem;">
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <input type="text" id="couple-search" placeholder="Search by name…" oninput="renderCouples()" style="flex:1;min-width:140px;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .75rem;font-size:13px;font-family:'Inter',sans-serif;background:#FFFFFF;outline:none;" />
-            <button id="marriage-gear" class="anl-icon-btn" title="Document templates" style="display:none;" onclick="openMarriageTemplates()"><i class="fa-solid fa-gear"></i></button>
-            <button class="btn-primary" style="white-space:nowrap;" onclick="openModal('couple')">+ Add couple</button>
-          </div>
-          <div style="display:flex;gap:6px;margin-top:.75rem;flex-wrap:wrap;" id="couple-filters">
-            <button class="cf-btn active" data-filter="all" onclick="setCoupleFilter('all',this)">All</button>
-            <button class="cf-btn" data-filter="active" onclick="setCoupleFilter('active',this)">Active</button>
-            <button class="cf-btn" data-filter="inprogress" onclick="setCoupleFilter('inprogress',this)">In progress</button>
-            <button class="cf-btn" data-filter="complete" onclick="setCoupleFilter('complete',this)">Complete</button>
-            <button class="cf-btn" data-filter="external" onclick="setCoupleFilter('external',this)">External</button>
-            <button class="cf-btn" data-filter="archived" onclick="setCoupleFilter('archived',this)">Archived</button>
-          </div>
-        </div>
         <div id="couples-list"><span class="pulse"></span></div>
       </div>
 
