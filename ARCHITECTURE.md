@@ -307,7 +307,13 @@ Formation"**, built from the shared `buildPreparerField()` helper
 for that program) + **"Other…"** free-entry. The stored value is a plain
 display-name string in the **`preparer`** text column, which renders directly in
 each panel's File-details / detail read view. Annulments has no formation process
-and intentionally carries no such field.
+and intentionally carries no such field — its earlier "Person Responsible for
+Formation" dropdown was removed and its only person dropdown is now **Advocate**
+(sourced from the same Clergy+Coordinator+Other helper, but storing the directory
+pick to `advocate_id` / an "Other" entry to `advocate_name_override`, never to
+`preparer`). The **`annulment_cases.preparer`** column is therefore **dead on
+annulments** (never read or written; all 13 rows null) — DO NOT DROP it (still live
+on the other panels); pending the later dead-column cleanup pass.
 
 This replaced two overlapping fields. The earlier "Person Responsible" dropdown
 (clergy-only, stored in `preparation_responsible_id` + `preparation_responsible_override`)

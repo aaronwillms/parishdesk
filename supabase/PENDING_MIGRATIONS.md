@@ -1,7 +1,29 @@
-# Pending migrations — ✅ all clear
+# Pending migrations
 
-Verified against the live schema on **2026-06-18**. **Nothing is pending** — every
-proposed/paused migration has been applied (or was moot). No feature is blocked.
+## ▶ Pending — run this
+
+### `migrations/20260619_annulment_marriage_location.sql`  ⚠️ BLOCKING (proposed — awaiting approval)
+Adds `annulment_cases.marriage_state`, `marriage_country`, `marriage_county` (text)
+and `non_church_wedding` (boolean default false). Splits the combined
+`marriage_state_country` (now dead — probe found all 13 rows empty, no data to
+migrate) and adds the county + non-church fields the reformatted marriage section
+needs. **Blocking:** the Add/Edit save writes these columns; until applied, every
+annulment case save fails. Additive, idempotent, default false — no data impact.
+- Verify: `select count(*) from information_schema.columns where table_name='annulment_cases' and column_name in ('marriage_state','marriage_country','marriage_county','non_church_wedding');` → 4.
+
+### `migrations/20260619_annulment_baptism_by_affidavit.sql`  ✅ applied (per user)
+Adds `annulment_cases.petitioner_baptism_by_affidavit (boolean default false)`.
+**Why it's blocking:** the Add/Edit save and the viewer's inline "By Affidavit" toggle
+write this column. Until it exists, **every annulment case save fails** ("column …
+does not exist"). Additive, idempotent, default false — no data impact.
+- Verify: `select column_name from information_schema.columns where table_name='annulment_cases' and column_name='petitioner_baptism_by_affidavit';` → 1 row.
+
+---
+
+# Previously applied — ✅ all clear
+
+Verified against the live schema on **2026-06-18**. Every earlier proposed/paused
+migration has been applied (or was moot).
 
 ## Applied & verified
 

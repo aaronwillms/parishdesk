@@ -4,7 +4,6 @@ import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { normalizePhone } from '../utils/phone.js';
-import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 
 // ── Status (legacy codes preserved for backward compatibility) ───────────────
@@ -28,7 +27,6 @@ const ANNULMENT_TYPES = [
 ];
 export const TYPE_BADGE = Object.fromEntries(ANNULMENT_TYPES.map(t => [t.v, t.badge]));
 
-const CEREMONY_TYPES = ['Catholic Church', 'Civil Ceremony', 'Non-Catholic Religious Ceremony', 'Other'];
 const COUNTRIES = ['United States of America', 'Mexico', 'Philippines', 'Vietnam', 'Nigeria', 'India', 'Other'];
 const PROGRESS_OPTIONS = ['Submitted to Tribunal', 'Received by Tribunal', 'Witnesses Cited', 'Acts Published', 'Other'];
 // Preseeded procedural events offered in the timeline dropdown. The five
@@ -55,8 +53,6 @@ const TYPE_SECTIONS = {
 function typeSections(type) { return TYPE_SECTIONS[type] || TYPE_SECTIONS.formal; }
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
 
-const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
-const CLERGY_TITLE_RE = /^(fr\.|rev\.|deacon|msgr\.|bishop|archbishop|cardinal)/i;
 
 // Hardcoded fallback templates (used only if the annulment_templates table can't be read)
 const FALLBACK_TEMPLATES = {
@@ -71,7 +67,7 @@ const FALLBACK_TEMPLATES = {
 let allCases = [];
 let _templates = {};   // annulment_type → [{name, deletable}]
 let _M = null;         // working state for the open create/edit modal
-let _anlCoordinatorNames = [];   // annulment coordinator display names (preparer source)
+let _anlCoordinatorIds = [];   // annulment coordinator personnel ids (Advocate option source)
 
 // ── Access helpers ───────────────────────────────────────────────────────────
 function fullAccess()  { return isAdmin() || canAccessSacrament('annulments'); }
@@ -138,13 +134,14 @@ async function loadTemplates() {
   ANNULMENT_TYPES.forEach(t => { if (!_templates[t.v]) _templates[t.v] = FALLBACK_TEMPLATES[t.v].slice(); });
 }
 
-// Person-Responsible-for-Formation source — the annulment program's coordinator
-// display names (the shared preparer field merges these with parish clergy + Other).
+// Advocate option source — the annulment program's coordinator personnel ids. The
+// Advocate dropdown merges these with parish clergy + Other (same people as the
+// shared Clergy+Coordinator+Other helper), but stores the FK id rather than a name.
 async function loadAnnulmentCoordinator() {
   try {
     const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'annulments').maybeSingle();
-    _anlCoordinatorNames = (data?.coordinator_ids || []).map(pid => (store.personnel || []).find(p => p.id === pid)?.name).filter(Boolean);
-  } catch (_) { _anlCoordinatorNames = []; }
+    _anlCoordinatorIds = data?.coordinator_ids || [];
+  } catch (_) { _anlCoordinatorIds = []; }
 }
 
 // Data-only fetch (no render) — used by the shell's fetchRecords + autosave refresh.
@@ -257,6 +254,12 @@ async function anlSaveBaptismField(caseId, field, el) {
   const col = cols[field]; if (!col) return;
   await _anlPatch(caseId, { [col]: (el?.value || '').trim() || null });
   _anlSyncBaptismLock(caseId);
+}
+// Inline "By Affidavit" toggle from the viewer (shown when the baptism doc is
+// unchecked). Independent of the lock-gate — does NOT affect _anlSyncBaptismLock.
+// Saves via the write-retry wrapper; no re-render (the checkbox holds its own state).
+async function anlToggleBaptismAffidavit(caseId, checked) {
+  await _anlPatch(caseId, { petitioner_baptism_by_affidavit: !!checked });
 }
 // Enable/disable the baptism checkbox in place as the four fields are filled/cleared,
 // without re-rendering (which would drop input focus mid-edit). Forward-only — only
@@ -401,9 +404,14 @@ function openCaseEdit(id) {
 function _coupleLabel(id) { const r = (store.allCouples || []).find(x => x.id === id); return r ? `${r.groom || ''} & ${r.bride || ''}`.trim() : 'Marriage record'; }
 function _ociaLabel(id)   { const r = (store.allOcia || []).find(x => x.id === id); return r ? (r.name || 'OCIA record') : 'OCIA record'; }
 
-function clergyPersonnel() {
-  return (store.personnel || []).filter(p => CLERGY_TYPES.includes(p.type) || (p.title && CLERGY_TITLE_RE.test(p.title)))
-    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+// Advocate option source: the SAME people the shared formation helper offers —
+// parish clergy (personnel.clergy) ∪ the Annulments program coordinator(s) — but
+// returned as personnel records so the dropdown can store the FK id. Deduped by id.
+function advocatePersonnel() {
+  const byId = new Map();
+  (store.personnel || []).filter(p => p.clergy && p.name).forEach(p => byId.set(p.id, p));
+  _anlCoordinatorIds.forEach(id => { const p = (store.personnel || []).find(x => x.id === id); if (p && p.name) byId.set(p.id, p); });
+  return [...byId.values()].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 }
 
 function _row(...cells) { return `<div style="display:flex;gap:8px;flex-wrap:wrap;">${cells.map(c => `<div style="flex:1;min-width:120px;">${c}</div>`).join('')}</div>`; }
@@ -416,7 +424,7 @@ function buildCaseModalHtml(c, opts = {}) {
   const inline = !!opts.inline;
   const isEdit = _M.isEdit;
   const sec = typeSections(_M.type);
-  const advOpts = clergyPersonnel().map(p => `<option value="${p.id}"${c?.advocate_id === p.id ? ' selected' : ''}>${_esc(p.name)}</option>`).join('');
+  const advOpts = advocatePersonnel().map(p => `<option value="${p.id}"${c?.advocate_id === p.id ? ' selected' : ''}>${_esc(p.name)}</option>`).join('');
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Annulment Case' : 'New Annulment Case'}</div>`;
 
@@ -438,10 +446,6 @@ function buildCaseModalHtml(c, opts = {}) {
       <label>Advocate name</label><input type="text" id="am-advocate-other" value="${_esc(c?.advocate_name_override || '')}" placeholder="Name (no directory entry created)" />
     </div>`;
 
-  // Person Responsible for Formation — shared Clergy + Coordinator + Other helper.
-  // Stored in the `preparer` string column (consolidation standard).
-  h += buildPreparerField('am-preparer', c?.preparer || '', { coordinatorNames: _anlCoordinatorNames, label: 'Person Responsible for Formation' });
-
   // Section 3 — Petitioner
   h += _sectionHead('Petitioner');
   h += _row(_input('am-pet-first', 'First Name', c?.petitioner_first || ''), _input('am-pet-middle', 'Middle', c?.petitioner_middle || ''), _input('am-pet-last', 'Last Name', c?.petitioner_last || ''), _input('am-pet-maiden', 'Maiden', c?.petitioner_maiden || ''));
@@ -453,6 +457,7 @@ function buildCaseModalHtml(c, opts = {}) {
   // Church, City, State, Country (Country defaulted). Always part of the petitioner
   // section; the doc-state-dependent behavior lives only in the viewer.
   h += _row(_input('am-pet-bchurch', 'Church of Baptism', c?.petitioner_baptism_church || ''), _input('am-pet-bcity', 'Baptism City', c?.petitioner_baptism_city || ''), _stateSelect('am-pet-bstate', c?.petitioner_baptism_state || ''), `<label>Country</label><select id="am-pet-bcountry">${COUNTRIES.map(co => `<option${(c?.petitioner_baptism_country || 'United States of America') === co ? ' selected' : ''}>${co}</option>`).join('')}</select>`);
+  h += _toggle('am-pet-baffidavit', 'Baptism by Affidavit', !!c?.petitioner_baptism_by_affidavit);
 
   // Section 4 — Respondent
   h += _sectionHead('Respondent');
@@ -463,12 +468,20 @@ function buildCaseModalHtml(c, opts = {}) {
   h += _toggle('am-resp-catholic', 'Catholic?', !!c?.respondent_catholic);
   h += `</div>`;
 
-  // Section 5 — Marriage
+  // Section 5 — Marriage. Order: church (relabeled, top) + Non-Church toggle that
+  // hides it; then date, county, city, State (50-state dropdown), Country (dropdown,
+  // default USA). State hides + clears when Country is not USA. No ZIP.
   h += _sectionHead('Marriage Information');
-  h += _row(_input('am-mar-date', 'Date of Marriage', c?.marriage_date || '', 'date'), _input('am-mar-city', 'City of Marriage', c?.marriage_city || ''));
-  h += _row(_input('am-mar-state', 'State / Country', c?.marriage_state_country || ''),
-    `<label>Ceremony Type</label><select id="am-mar-ceremony"><option value="">—</option>${CEREMONY_TYPES.map(t => `<option${c?.marriage_ceremony_type === t ? ' selected' : ''}>${t}</option>`).join('')}</select>`);
-  h += _input('am-mar-church', 'Parish / Church where married (optional)', c?.marriage_church || '');
+  h += _toggle('am-mar-nonchurch', 'Non-Church Wedding', !!c?.non_church_wedding, 'anlOnMarNonChurchToggle()');
+  h += `<div id="am-mar-church-wrap" style="display:${c?.non_church_wedding ? 'none' : 'block'};">${_input('am-mar-church', 'Parish/Church where Marriage Occured', c?.marriage_church || '')}</div>`;
+  h += _input('am-mar-date', 'Date of Marriage', c?.marriage_date || '', 'date');
+  h += _row(_input('am-mar-county', 'County', c?.marriage_county || ''), _input('am-mar-city', 'City', c?.marriage_city || ''));
+  const marCountry = c?.marriage_country || 'United States of America';
+  const marIsUSA = marCountry === 'United States of America';
+  h += `<div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <div id="am-mar-state-wrap" style="flex:1;min-width:120px;display:${marIsUSA ? 'block' : 'none'};"><label>State</label><select id="am-mar-state"><option value="">—</option>${US_STATES.map(s => `<option${c?.marriage_state === s ? ' selected' : ''}>${s}</option>`).join('')}</select></div>
+    <div style="flex:1;min-width:120px;"><label>Country</label><select id="am-mar-country" onchange="anlOnMarCountryChange()">${COUNTRIES.map(co => `<option${marCountry === co ? ' selected' : ''}>${co}</option>`).join('')}</select></div>
+  </div>`;
 
   // Section 6 — Tribunal
   h += _sectionHead('Tribunal');
@@ -613,6 +626,18 @@ window.anlOnBrieferToggle = () => {
   const cp = document.getElementById('am-copet-wrap'); if (cp) cp.style.display = on ? 'block' : 'none';
 };
 window.anlOnVetitumToggle = () => { const on = document.getElementById('am-vetitum').checked; document.getElementById('am-vetitum-notes-wrap').style.display = on ? 'block' : 'none'; };
+// Non-Church Wedding hides the parish/church field (a civil wedding has no parish).
+window.anlOnMarNonChurchToggle = () => {
+  const on = document.getElementById('am-mar-nonchurch').checked;
+  const w = document.getElementById('am-mar-church-wrap'); if (w) w.style.display = on ? 'none' : 'block';
+};
+// The 50-state dropdown only applies to US marriages: hide it for a non-US country
+// and clear any selected state so a US state can't stay attached to a foreign country.
+window.anlOnMarCountryChange = () => {
+  const usa = (document.getElementById('am-mar-country')?.value === 'United States of America');
+  const w = document.getElementById('am-mar-state-wrap'); if (w) w.style.display = usa ? 'block' : 'none';
+  const sel = document.getElementById('am-mar-state'); if (sel && !usa) sel.value = '';
+};
 window.anlOnPrevToggle = () => {
   const on = document.getElementById('am-prev-toggle').checked;
   document.getElementById('am-prev-wrap').style.display = on ? 'block' : 'none';
@@ -681,11 +706,10 @@ function _anlReadPayload() {
     briefer_process: type === 'formal' ? _chk('am-briefer') : false,
     // Co-petitioner only applies to a Briefer (Formal) case; cleared otherwise.
     co_petitioner: (type === 'formal' && _chk('am-briefer')) ? (_v('am-copetitioner') || null) : null,
+    // Advocate stores to its own columns: FK id for a directory pick, free-text
+    // override for "Other". (The dead `preparer` column is never written here.)
     advocate_id: advSel && advSel !== '__other' ? advSel : null,
     advocate_name_override: advSel === '__other' ? (_v('am-advocate-other') || null) : null,
-    // Person Responsible for Formation — shared helper stores a display-name string
-    // in `preparer` (consistent with every other sacrament panel post-consolidation).
-    preparer: readPreparerValue('am-preparer'),
     petitioner_first: _v('am-pet-first') || null, petitioner_middle: _v('am-pet-middle') || null,
     petitioner_last: _v('am-pet-last') || null, petitioner_maiden: _v('am-pet-maiden') || null,
     petitioner_street: _v('am-pet-street') || null, petitioner_city: _v('am-pet-city') || null,
@@ -693,12 +717,20 @@ function _anlReadPayload() {
     petitioner_cell: normalizePhone(_v('am-pet-cell')) || null, petitioner_email: _v('am-pet-email') || null,
     petitioner_dob: _v('am-pet-dob') || null,
     petitioner_baptism_church: _v('am-pet-bchurch') || null, petitioner_baptism_city: _v('am-pet-bcity') || null, petitioner_baptism_state: _v('am-pet-bstate') || null, petitioner_baptism_country: _v('am-pet-bcountry') || null,
+    petitioner_baptism_by_affidavit: _chk('am-pet-baffidavit'),
     respondent_first: _v('am-resp-first') || null, respondent_middle: _v('am-resp-middle') || null,
     respondent_last: _v('am-resp-last') || null, respondent_maiden: _v('am-resp-maiden') || null,
     respondent_baptized: _chk('am-resp-baptized'), respondent_catholic: _chk('am-resp-catholic'),
-    marriage_date: _v('am-mar-date') || null, marriage_city: _v('am-mar-city') || null,
-    marriage_state_country: _v('am-mar-state') || null, marriage_ceremony_type: _v('am-mar-ceremony') || null,
-    marriage_church: _v('am-mar-church') || null,
+    // Marriage location (restructured): church only when NOT a non-church wedding;
+    // State only when Country is USA (cleared otherwise). marriage_state_country and
+    // marriage_ceremony_type are no longer written (dead columns).
+    non_church_wedding: _chk('am-mar-nonchurch'),
+    marriage_church: _chk('am-mar-nonchurch') ? null : (_v('am-mar-church') || null),
+    marriage_date: _v('am-mar-date') || null,
+    marriage_county: _v('am-mar-county') || null,
+    marriage_city: _v('am-mar-city') || null,
+    marriage_country: _v('am-mar-country') || null,
+    marriage_state: (_v('am-mar-country') === 'United States of America') ? (_v('am-mar-state') || null) : null,
     tribunal_diocese: _v('am-trib-diocese') || null, date_filed: _v('am-trib-filed') || null,
     previous_annulments: _chk('am-prev-toggle') ? _M.prev.filter(p => p.spouse_name || p.diocese) : [],
     documents: _M.docs,
@@ -861,6 +893,6 @@ Object.assign(window, {
   anlTplTab, anlTplAddDoc, anlTplRemove, anlTplSave,
   // Phase 2 — viewer-editable documents + timeline + notes (write-retry wrapped).
   toggleCaseDoc, anlAddTimelineEntry, anlDeleteTimelineEntry, anlTlSelChange,
-  anlAddNote, anlDeleteNote, anlSaveBaptismField,
+  anlAddNote, anlDeleteNote, anlSaveBaptismField, anlToggleBaptismAffidavit,
   expandCase,
 });

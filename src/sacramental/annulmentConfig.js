@@ -29,13 +29,11 @@ const GROUP_LABEL = { prep: 'Preparing', tribunal: 'In Tribunal', affirm: 'Affir
 function isFinalized(c) { return c.judgement_finalized === 'yes' || c.judgement_finalized === true; }
 // SIDEBAR CARD title — "Last vs Last", maiden overriding last; degrade to "—".
 function caseTitle(c) { return `${petLast(c) || '—'} vs ${respLast(c) || '—'}`; }
-// FILE VIEWER heading — full "First Last vs First Last", maiden overriding last
-// (petLast/respLast already apply the maiden override). Degrades to "—" per side.
-function fullName(first, last) { return [first, last].filter(Boolean).join(' '); }
+// FILE VIEWER heading — full legal name "First Last (Maiden)" per party, maiden in
+// parentheses (NOT overriding the last name), parens omitted when no maiden.
+// petName/respName already produce exactly this; respondent degrades to "—".
 function viewerTitle(c) {
-  const p = fullName(c.petitioner_first, petLast(c)) || petName(c) || '—';
-  const r = fullName(c.respondent_first, respLast(c)) || '—';
-  return `${p} vs ${r}`;
+  return `${petName(c)} vs ${respName(c) || '—'}`;
 }
 
 // ── Chips ────────────────────────────────────────────────────────────────────
@@ -87,10 +85,6 @@ function docsCompleteChip(c) {
 function row(label, val) {
   return val ? `<div style="display:flex;gap:10px;font-size:13px;padding:3px 0;"><span style="color:#6B7280;min-width:140px;">${esc(label)}</span><span style="flex:1;color:var(--navy);">${val}</span></div>` : '';
 }
-// Person Responsible for Formation — the single `preparer` string column
-// (consolidation standard). The legacy preparation_responsible_* fallback was
-// removed after those columns were dropped from annulment_cases.
-function personResponsible(c) { return c.preparer || ''; }
 function statusLabel(c) {
   const code = c.status_code || 'prep';
   if (code === 'affirm' || code === 'negative') {
@@ -114,7 +108,14 @@ function caseDetails(c) {
     row('Phone', phone ? esc(formatPhone(phone)) : ''),
     row('Email', email ? esc(email) : ''),
     row('Advocate', advocateName(c) ? esc(advocateName(c)) : ''),
-    row('Person responsible', personResponsible(c) ? esc(personResponsible(c)) : ''),
+    // Marriage location — church (or its absence when Non-Church Wedding), date,
+    // county, city, state (when present), country.
+    c.non_church_wedding ? row('Marriage', 'Non-Church Wedding') : row('Church of marriage', c.marriage_church ? esc(c.marriage_church) : ''),
+    row('Date of marriage', c.marriage_date ? esc(formatDateDisplay(c.marriage_date)) : ''),
+    row('County', c.marriage_county ? esc(c.marriage_county) : ''),
+    row('City', c.marriage_city ? esc(c.marriage_city) : ''),
+    row('State', c.marriage_state ? esc(c.marriage_state) : ''),
+    row('Country', c.marriage_country ? esc(c.marriage_country) : ''),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
 }
 // Detect the PETITIONER baptism document: a doc whose name mentions "baptism"
@@ -125,12 +126,14 @@ function petBaptismDocIdx(docs) {
   return docs.findIndex(d => /baptism/i.test(d.name) && !/respondent/i.test(d.name));
 }
 // Compact read-only baptism location (shown beneath the doc line when received).
+// A "(By Affidavit)" suffix is appended when petitioner_baptism_by_affidavit is true.
 function baptismReadonly(c) {
   const cityState = [c.petitioner_baptism_city, c.petitioner_baptism_state].filter(Boolean).map(esc).join(', ');
   const parts = [c.petitioner_baptism_church ? esc(c.petitioner_baptism_church) : '', cityState, c.petitioner_baptism_country ? esc(c.petitioner_baptism_country) : ''].filter(Boolean);
-  return parts.length
-    ? `<div style="margin:0 0 5px 23px;font-size:11.5px;color:#6B7280;line-height:1.4;">${parts.join(' · ')}</div>`
-    : `<div style="margin:0 0 5px 23px;font-size:11.5px;color:#9CA3AF;font-style:italic;">No baptism location recorded.</div>`;
+  const aff = c.petitioner_baptism_by_affidavit ? ' (By Affidavit)' : '';
+  const wrap = (txt, italic) => `<div style="margin:0 0 5px 23px;font-size:11.5px;color:${italic ? '#9CA3AF' : '#6B7280'};${italic ? 'font-style:italic;' : ''}line-height:1.4;">${txt}</div>`;
+  if (parts.length) return wrap(parts.join(' · ') + aff, false);
+  return c.petitioner_baptism_by_affidavit ? wrap('(By Affidavit)', false) : wrap('No baptism location recorded.', true);
 }
 // All four petitioner baptism fields filled (trimmed)? Gates the baptism checkbox.
 const BAPTISM_FIELDS = ['petitioner_baptism_church', 'petitioner_baptism_city', 'petitioner_baptism_state', 'petitioner_baptism_country'];
@@ -152,6 +155,9 @@ function baptismEditable(c, locked) {
       ${fld('state', 'State', c.petitioner_baptism_state, 1)}
       ${fld('country', 'Country', c.petitioner_baptism_country || 'United States of America', 1)}
     </div>
+    <label style="display:inline-flex;align-items:center;gap:5px;margin-top:6px;font-size:11.5px;color:#6B7280;cursor:pointer;">
+      <input type="checkbox" ${c.petitioner_baptism_by_affidavit ? 'checked' : ''} onchange="anlToggleBaptismAffidavit('${c.id}',this.checked)" style="width:13px;height:13px;accent-color:var(--cardinal);" />By Affidavit
+    </label>
     <div id="anl-bdoc-note-${c.id}" style="display:${locked ? 'block' : 'none'};font-size:11px;color:#9A6A1E;margin-top:5px;">
       <i class="fa-solid fa-circle-info" style="margin-right:4px;"></i>${esc(BAPTISM_LOCK_TIP)}
     </div>
