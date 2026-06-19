@@ -246,6 +246,40 @@ async function toggleCaseDoc(caseId, i) {
   if (await _anlPatch(caseId, { documents: docs })) { refreshActivePanel(); renderAnnulmentAlerts(); }
 }
 
+// Inline petitioner-baptism-location edit from the viewer (shown when the baptism
+// document is unchecked). field = church|city|state|country → petitioner_baptism_*.
+// Routes through the write-retry wrapper; NO full re-render, so focus/tabbing across
+// the four fields is preserved. After each save we live-sync the baptism checkbox's
+// locked state in place (enables it once all four fields are filled).
+const BAPTISM_LOCK_TIP = 'Enter the church name, city, and state before marking the baptism record received.';
+async function anlSaveBaptismField(caseId, field, el) {
+  const cols = { church: 'petitioner_baptism_church', city: 'petitioner_baptism_city', state: 'petitioner_baptism_state', country: 'petitioner_baptism_country' };
+  const col = cols[field]; if (!col) return;
+  await _anlPatch(caseId, { [col]: (el?.value || '').trim() || null });
+  _anlSyncBaptismLock(caseId);
+}
+// Enable/disable the baptism checkbox in place as the four fields are filled/cleared,
+// without re-rendering (which would drop input focus mid-edit). Forward-only — only
+// relevant while the doc is unchecked (the editable block, hence the box id, exists).
+function _anlSyncBaptismLock(caseId) {
+  const c = allCases.find(x => x.id === caseId); if (!c) return;
+  const box = document.getElementById(`anl-bdoc-box-${caseId}`); if (!box) return;
+  const docs = caseDocs(c);
+  const idx = docs.findIndex(d => /baptism/i.test(d.name) && !/respondent/i.test(d.name));
+  if (idx < 0) return;
+  const filled = ['petitioner_baptism_church', 'petitioner_baptism_city', 'petitioner_baptism_state', 'petitioner_baptism_country']
+    .every(k => String(c[k] || '').trim());
+  if (filled) {
+    box.setAttribute('onclick', `toggleCaseDoc('${caseId}',${idx})`);
+    box.style.cursor = 'pointer'; box.style.opacity = '1'; box.removeAttribute('title');
+  } else {
+    box.removeAttribute('onclick');
+    box.style.cursor = 'not-allowed'; box.style.opacity = '0.45'; box.setAttribute('title', BAPTISM_LOCK_TIP);
+  }
+  const note = document.getElementById(`anl-bdoc-note-${caseId}`);
+  if (note) note.style.display = filled ? 'none' : 'block';
+}
+
 // Timeline: show/hide the free-text "Other" input when the dropdown changes.
 function anlTlSelChange(caseId) {
   const sel = document.getElementById(`anl-tl-sel-${caseId}`);
@@ -415,11 +449,10 @@ function buildCaseModalHtml(c, opts = {}) {
   h += _row(_input('am-pet-city', 'City', c?.petitioner_city || ''), _stateSelect('am-pet-state', c?.petitioner_state || ''), _input('am-pet-zip', 'ZIP', c?.petitioner_zip || ''));
   h += _row(_input('am-pet-cell', 'Cell Phone', c?.petitioner_cell || c?.contact_phone || '', 'tel'), _input('am-pet-email', 'Email', c?.petitioner_email || c?.contact_email || ''));
   h += _input('am-pet-dob', 'Date of Birth', c?.petitioner_dob && /^\d{4}-\d{2}-\d{2}/.test(c.petitioner_dob) ? c.petitioner_dob.slice(0, 10) : '', 'date');
-  // Petitioner baptism block — surfaced for privilege/ratum/formal cases (prior
-  // bond + baptismal status); trimmed for Lack of Form. Toggled live on type change.
-  h += `<div id="am-pet-baptism-wrap" style="display:${sec.baptism ? 'block' : 'none'};">`;
+  // Petitioner baptism location — PLAIN, always-editable fields (not type-gated):
+  // Church, City, State, Country (Country defaulted). Always part of the petitioner
+  // section; the doc-state-dependent behavior lives only in the viewer.
   h += _row(_input('am-pet-bchurch', 'Church of Baptism', c?.petitioner_baptism_church || ''), _input('am-pet-bcity', 'Baptism City', c?.petitioner_baptism_city || ''), _stateSelect('am-pet-bstate', c?.petitioner_baptism_state || ''), `<label>Country</label><select id="am-pet-bcountry">${COUNTRIES.map(co => `<option${(c?.petitioner_baptism_country || 'United States of America') === co ? ' selected' : ''}>${co}</option>`).join('')}</select>`);
-  h += `</div>`;
 
   // Section 4 — Respondent
   h += _sectionHead('Respondent');
@@ -542,9 +575,9 @@ function anlOnTypeChange(val) {
   _M.type = val;
   // Briefer is a Formal-only flag; gate its section to Formal.
   const briefer = document.getElementById('am-briefer-section'); if (briefer) briefer.style.display = val === 'formal' ? 'block' : 'none';
-  // Type-conditional baptism / respondent-status blocks.
+  // Respondent baptismal-status toggles remain type-conditional. (Petitioner baptism
+  // location fields are now always shown — they are plain petitioner-section fields.)
   const sec = typeSections(val);
-  const petB = document.getElementById('am-pet-baptism-wrap'); if (petB) petB.style.display = sec.baptism ? 'block' : 'none';
   const respS = document.getElementById('am-resp-status-wrap'); if (respS) respS.style.display = sec.baptism ? 'block' : 'none';
   // Document checklist reconciliation with the new type's template.
   if (!_M.isEdit) {
@@ -828,6 +861,6 @@ Object.assign(window, {
   anlTplTab, anlTplAddDoc, anlTplRemove, anlTplSave,
   // Phase 2 — viewer-editable documents + timeline + notes (write-retry wrapped).
   toggleCaseDoc, anlAddTimelineEntry, anlDeleteTimelineEntry, anlTlSelChange,
-  anlAddNote, anlDeleteNote,
+  anlAddNote, anlDeleteNote, anlSaveBaptismField,
   expandCase,
 });

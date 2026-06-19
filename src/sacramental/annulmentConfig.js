@@ -117,17 +117,77 @@ function caseDetails(c) {
     row('Person responsible', personResponsible(c) ? esc(personResponsible(c)) : ''),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
 }
+// Detect the PETITIONER baptism document: a doc whose name mentions "baptism"
+// (covers "Baptismal Record", "Petitioner Baptismal Certificate or Affidavit",
+// "Baptism Documentation", etc.) and is NOT the respondent's. Its `received` flag
+// gates the viewer baptism block. Petitioner only.
+function petBaptismDocIdx(docs) {
+  return docs.findIndex(d => /baptism/i.test(d.name) && !/respondent/i.test(d.name));
+}
+// Compact read-only baptism location (shown beneath the doc line when received).
+function baptismReadonly(c) {
+  const cityState = [c.petitioner_baptism_city, c.petitioner_baptism_state].filter(Boolean).map(esc).join(', ');
+  const parts = [c.petitioner_baptism_church ? esc(c.petitioner_baptism_church) : '', cityState, c.petitioner_baptism_country ? esc(c.petitioner_baptism_country) : ''].filter(Boolean);
+  return parts.length
+    ? `<div style="margin:0 0 5px 23px;font-size:11.5px;color:#6B7280;line-height:1.4;">${parts.join(' · ')}</div>`
+    : `<div style="margin:0 0 5px 23px;font-size:11.5px;color:#9CA3AF;font-style:italic;">No baptism location recorded.</div>`;
+}
+// All four petitioner baptism fields filled (trimmed)? Gates the baptism checkbox.
+const BAPTISM_FIELDS = ['petitioner_baptism_church', 'petitioner_baptism_city', 'petitioner_baptism_state', 'petitioner_baptism_country'];
+export const BAPTISM_LOCK_TIP = 'Enter the church name, city, and state before marking the baptism record received.';
+function baptismFilled(c) { return BAPTISM_FIELDS.every(k => String(c[k] || '').trim()); }
+
+// Inline-editable baptism location (shown beneath the doc line when NOT received).
+// Pre-populated from the stored petitioner_baptism_* values; each field saves on
+// change via the write-retry wrapper (anlSaveBaptismField). When `locked` (not all
+// fields filled), shows the prompt explaining why the checkbox is disabled.
+function baptismEditable(c, locked) {
+  const inS = `border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.3rem .5rem;font-size:12px;font-family:'Inter',sans-serif;background:#fff;box-sizing:border-box;`;
+  const fld = (field, ph, val, grow) => `<input type="text" value="${esc(val || '')}" placeholder="${ph}" onchange="anlSaveBaptismField('${c.id}','${field}',this)" style="${inS}flex:${grow};min-width:0;" />`;
+  return `<div style="margin:1px 0 8px 23px;">
+    <div style="font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#9CA3AF;margin-bottom:4px;">Baptism location (record not yet received)</div>
+    <div style="display:flex;gap:5px;flex-wrap:wrap;">
+      ${fld('church', 'Church of Baptism', c.petitioner_baptism_church, 2)}
+      ${fld('city', 'City', c.petitioner_baptism_city, 1)}
+      ${fld('state', 'State', c.petitioner_baptism_state, 1)}
+      ${fld('country', 'Country', c.petitioner_baptism_country || 'United States of America', 1)}
+    </div>
+    <div id="anl-bdoc-note-${c.id}" style="display:${locked ? 'block' : 'none'};font-size:11px;color:#9A6A1E;margin-top:5px;">
+      <i class="fa-solid fa-circle-info" style="margin-right:4px;"></i>${esc(BAPTISM_LOCK_TIP)}
+    </div>
+  </div>`;
+}
 // Checklist driven by the case's type template; checkboxes are viewer-editable and
-// route through the write-retry wrapper (toggleCaseDoc).
+// route through the write-retry wrapper (toggleCaseDoc). Beneath the petitioner
+// baptism doc, the four baptism-location fields render state-dependently: editable
+// inputs while unchecked, compact read-only text once received. The baptism doc's
+// checkbox is DISABLED (forward-only gate) until all four fields are filled — an
+// already-received doc is never force-unchecked.
+function docLine(c, d, i, opts = {}) {
+  const canManage = anlCanManage();
+  const clickable = canManage && !opts.locked;
+  const click = clickable ? `onclick="toggleCaseDoc('${c.id}',${i})"` : '';
+  const boxStyle = `font-size:15px;${clickable ? 'cursor:pointer;' : (opts.locked ? 'cursor:not-allowed;opacity:.45;' : '')}`;
+  const boxAttrs = `${opts.boxId ? `id="${opts.boxId}" ` : ''}${click}${opts.locked ? ` title="${esc(BAPTISM_LOCK_TIP)}"` : ''}`;
+  return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;">
+    <span style="${boxStyle}" ${boxAttrs}>${d.received ? '✅' : '⬜'}</span>
+    <span style="flex:1;${clickable ? 'cursor:pointer;' : ''}color:${d.received ? '#2D6A4F' : 'var(--navy)'};" ${click}>${esc(d.name)}</span>
+    ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : ''}
+  </div>`;
+}
 function documents(c) {
   const canManage = anlCanManage();
   const docs = caseDocs(c);
   if (!docs.length) return '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No documents.</div>';
-  return docs.map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;">
-    <span style="font-size:15px;${canManage ? 'cursor:pointer;' : ''}" ${canManage ? `onclick="toggleCaseDoc('${c.id}',${i})"` : ''}>${d.received ? '✅' : '⬜'}</span>
-    <span style="flex:1;${canManage ? 'cursor:pointer;' : ''}color:${d.received ? '#2D6A4F' : 'var(--navy)'};" ${canManage ? `onclick="toggleCaseDoc('${c.id}',${i})"` : ''}>${esc(d.name)}</span>
-    ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : ''}
-  </div>`).join('');
+  const bIdx = petBaptismDocIdx(docs);
+  return docs.map((d, i) => {
+    if (i !== bIdx) return docLine(c, d, i);
+    // Forward-only gate: lock only when UNCHECKED and not all four fields filled.
+    const locked = canManage && !d.received && !baptismFilled(c);
+    const line = docLine(c, d, i, { locked, boxId: `anl-bdoc-box-${c.id}` });
+    const extra = d.received ? baptismReadonly(c) : (canManage ? baptismEditable(c, locked) : baptismReadonly(c));
+    return line + extra;
+  }).join('');
 }
 // Shared timeline/notes list entry: a gold bullet on a gold vertical line, the text
 // label with a small timestamp beneath, and a hover-X (revealed on row hover) sitting
