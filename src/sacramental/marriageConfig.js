@@ -241,6 +241,9 @@ export const marriageConfig = {
   }),
 
   detailHeader: (c) => ({
+    // Couple initials overflow the avatar circle, so the Marriage viewer shows a
+    // single gold fa-champagne-glasses glyph instead (inherits the avatar's gold).
+    avatarIcon: 'fa-champagne-glasses',
     initials: coupleInitials(c),
     name: coupleLabel(c),
     chips: [statusChip(c), typeChip(c)],

@@ -282,7 +282,7 @@ function detailPaneHtml() {
   return `
     <div style="display:flex;align-items:flex-start;gap:14px;">
       <button class="sac-back" data-act="back">‹</button>
-      <div class="sac-avatar">${esc(head.initials || '?')}</div>
+      <div class="sac-avatar">${head.avatarIcon ? `<i class="fa-solid ${esc(head.avatarIcon)}"></i>` : esc(head.initials || '?')}</div>
       <div style="flex:1;min-width:0;">
         <div class="sac-detail-name">${esc(head.name)}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">
