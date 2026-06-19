@@ -227,8 +227,9 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
   body.dark-mode [style*="color:#6B7280"],body.dark-mode [style*="color: #6B7280"],
   body.dark-mode [style*="color:#9CA3AF"],body.dark-mode [style*="color: #9CA3AF"],
   body.dark-mode .text-muted,body.dark-mode .text-secondary{color:#9CA3AF !important;}
-  /* Inline navy text → parchment */
-  body.dark-mode [style*="color:#1C2B3A"],body.dark-mode [style*="color: #1C2B3A"]{color:#F8F7F4 !important;}
+  /* Inline navy text → parchment (literal hex OR the --navy variable) */
+  body.dark-mode [style*="color:#1C2B3A"],body.dark-mode [style*="color: #1C2B3A"],
+  body.dark-mode [style*="color:var(--navy)"],body.dark-mode [style*="color: var(--navy)"]{color:#F8F7F4 !important;}
   /* Inline white/light backgrounds → dark card */
   body.dark-mode [style*="background:#fff"],body.dark-mode [style*="background: #fff"],
   body.dark-mode [style*="background:#FFFFFF"],body.dark-mode [style*="background: #FFFFFF"],

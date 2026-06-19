@@ -31,11 +31,12 @@ export const TYPE_BADGE = Object.fromEntries(ANNULMENT_TYPES.map(t => [t.v, t.ba
 const CEREMONY_TYPES = ['Catholic Church', 'Civil Ceremony', 'Non-Catholic Religious Ceremony', 'Other'];
 const COUNTRIES = ['United States of America', 'Mexico', 'Philippines', 'Vietnam', 'Nigeria', 'India', 'Other'];
 const PROGRESS_OPTIONS = ['Submitted to Tribunal', 'Received by Tribunal', 'Witnesses Cited', 'Acts Published', 'Other'];
-// Preseeded procedural events offered in the timeline dropdown. The four
-// auto-generated milestones (Case Opened / Affirmative Judgement / Negative
-// Judgement / Case Closed) are added by the system and are NOT in this list — the
-// dropdown shows these procedural steps plus a "+ Other…" free-text option.
-export const TIMELINE_EVENTS = ['Submitted to Tribunal', 'Received by Tribunal', 'Witnesses Cited', 'Acts Published'];
+// Preseeded procedural events offered in the timeline dropdown. The five
+// auto-generated milestones (Case Opened / Submitted to Tribunal / Affirmative
+// Judgement / Negative Judgement / Case Closed) are added by the system on the
+// matching status transition and are NOT in this list — the dropdown shows these
+// procedural steps plus a "+ Other…" free-text option.
+export const TIMELINE_EVENTS = ['Received by Tribunal', 'Witnesses Cited', 'Acts Published', 'Sent to Defender of the Bond'];
 
 // Type-conditional form sections. The petitioner-baptism + respondent
 // baptism/Catholic-status blocks are surfaced for the privilege and ratum cases
@@ -414,11 +415,14 @@ function buildCaseModalHtml(c, opts = {}) {
   h += _toggle('am-prev-toggle', 'Previous Annulment?', _M.prev.length > 0, 'anlOnPrevToggle()');
   h += `<div id="am-prev-wrap" style="display:${_M.prev.length > 0 ? 'block' : 'none'};margin-top:.5rem;"></div>`;
 
-  // Section 8 — Briefer (formal only)
+  // Section 8 — Briefer (formal only). briefer_process is a boolean ON a Formal
+  // case (not a separate type). When on, the respondent joins as co-petitioner, so
+  // the co_petitioner field is surfaced.
   h += `<div id="am-briefer-section" style="display:${_M.type === 'formal' ? 'block' : 'none'};">`;
   h += _sectionHead('Briefer Process');
   h += _toggle('am-briefer', 'Briefer Process', !!c?.briefer_process, 'anlOnBrieferToggle()');
   h += `<div id="am-briefer-info" style="display:${c?.briefer_process ? 'block' : 'none'};" class="anl-info-box">⚠️ The Briefer Process (Processus Brevior) requires:<br>• Both parties must jointly sign the petition<br>• The case is decided by the Bishop, not a collegiate tribunal<br>• Grounds must be evident from the facts</div>`;
+  h += `<div id="am-copet-wrap" style="display:${c?.briefer_process ? 'block' : 'none'};">${_input('am-copetitioner', 'Co-petitioner (the respondent joins the petition)', c?.co_petitioner || '')}</div>`;
   h += `</div>`;
 
   // Section 9 — Documents
@@ -539,7 +543,11 @@ function anlOnStatusChange(val) {
   document.getElementById('am-jf-wrap').style.display = (val === 'affirm' || val === 'negative') ? 'block' : 'none';
   document.getElementById('am-vetitum-wrap').style.display = val === 'affirm' ? 'block' : 'none';
 }
-window.anlOnBrieferToggle = () => { const on = document.getElementById('am-briefer').checked; document.getElementById('am-briefer-info').style.display = on ? 'block' : 'none'; };
+window.anlOnBrieferToggle = () => {
+  const on = document.getElementById('am-briefer').checked;
+  document.getElementById('am-briefer-info').style.display = on ? 'block' : 'none';
+  const cp = document.getElementById('am-copet-wrap'); if (cp) cp.style.display = on ? 'block' : 'none';
+};
 window.anlOnVetitumToggle = () => { const on = document.getElementById('am-vetitum').checked; document.getElementById('am-vetitum-notes-wrap').style.display = on ? 'block' : 'none'; };
 window.anlOnPrevToggle = () => {
   const on = document.getElementById('am-prev-toggle').checked;
@@ -607,6 +615,8 @@ function _anlReadPayload() {
   const payload = {
     annulment_type: type,
     briefer_process: type === 'formal' ? _chk('am-briefer') : false,
+    // Co-petitioner only applies to a Briefer (Formal) case; cleared otherwise.
+    co_petitioner: (type === 'formal' && _chk('am-briefer')) ? (_v('am-copetitioner') || null) : null,
     advocate_id: advSel && advSel !== '__other' ? advSel : null,
     advocate_name_override: advSel === '__other' ? (_v('am-advocate-other') || null) : null,
     // Person Responsible for Formation — shared helper stores a display-name string
@@ -650,12 +660,14 @@ function _anlApplyEditFields(payload, prior) {
   payload.linked_ocia_id = _M.linkedOcia?.id || null;
 
   // Auto-generated timeline milestones (added by the system, never user-chosen):
+  //   • Submitted to Tribunal — on status change into 'tribunal' (In Tribunal)
   //   • Affirmative Judgement / Negative Judgement — on status change into that state
   //   • Case Closed — when judgement_finalized transitions no → yes
   // No auto-REMOVAL when a flag reverts (deliberate — the user deletes by hand).
   const tl = _rawTimeline(prior);
   const stamp = (text) => tl.push({ type: 'auto', text, created_at: nowIso(), created_by: _curUserId() });
   const statusChanged = prior && prior.status_code !== newStatus;
+  if (statusChanged && newStatus === 'tribunal') stamp('Submitted to Tribunal');
   if (statusChanged && newStatus === 'affirm') stamp('Affirmative Judgement');
   if (statusChanged && newStatus === 'negative') stamp('Negative Judgement');
   const justFinalized = finalizedNow === 'yes' && (prior?.judgement_finalized !== 'yes' && prior?.judgement_finalized !== true);
@@ -678,8 +690,6 @@ async function anlSaveCase() {
   payload.judgement_finalized = null;
   payload.archived = false;
   payload.timeline = [{ type: 'auto', text: 'Case Opened', created_at: nowIso(), created_by: _curUserId() }];
-  const { data: { user } } = await sb.auth.getUser();
-  if (user?.id) payload.created_by = user.id;
   const { error } = await withWriteRetry(() => sb.from('annulment_cases').insert(payload), { kind: 'insert' });
   if (error) { reportWriteError('annulment insert', error); return; }
   await logActivity({ action: 'opened annulment case', entityType: 'annulments', entityName: payload.petitioner || 'New case', contextType: 'annulments' });

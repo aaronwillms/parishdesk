@@ -1,8 +1,8 @@
 // ── Annulments config for the sacramental master-detail shell ───────────────
-// Subject is a CASE (not a person/couple). PHASE 1: shell mount, status-grouped
-// list with a bottom Archive section, full chip system, and a read-first detail
-// pane. The type-driven FORM, document templates, and Priority Actions banner are
-// Phase 2 (NOT built here). Reuses the data/helpers from panels/annulments.js.
+// Subject is a CASE (not a person/couple). Shell mount, status-grouped list with a
+// bottom Archive section, full chip system, read-first detail, the inline
+// type-driven edit form, viewer-editable documents + timeline, and the Priority
+// Actions banner. Reuses the data/helpers from panels/annulments.js.
 //
 // Status field is `status_code`: prep | tribunal | affirm | negative | archived
 // (label "Inactive"). The separate `archived` BOOLEAN is independent of status and
