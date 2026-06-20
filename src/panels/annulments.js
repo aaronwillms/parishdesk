@@ -688,19 +688,14 @@ function buildCaseModalHtml(c, opts = {}) {
     </div>`;
     h += _toggle('am-archive', 'Archive this case', !!c?.archived);
 
-    h += _sectionHead('Linked Records');
-    h += `<label>Marriage Prep record</label>
-      <div style="position:relative;"><input type="text" id="am-link-mar" placeholder="Search couples by name…" oninput="anlLinkSearch('marriage')" autocomplete="off" style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" />
-      <div id="am-link-mar-results" class="anl-link-results" style="display:none;"></div></div>
-      <div id="am-link-mar-chip" style="margin-top:6px;"></div>`;
-    h += `<label style="margin-top:.75rem;">OCIA record</label>
-      <div style="position:relative;"><input type="text" id="am-link-ocia" placeholder="Search OCIA by name…" oninput="anlLinkSearch('ocia')" autocomplete="off" style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" />
-      <div id="am-link-ocia-results" class="anl-link-results" style="display:none;"></div></div>
-      <div id="am-link-ocia-chip" style="margin-top:6px;"></div>`;
-    // Annulment ↔ annulment linking (shared case group). Edit-safe block rendered by
-    // annulmentConfig; links/unlinks here re-render only this block (form edits kept).
-    h += `<label style="margin-top:.75rem;">Linked annulment cases</label>`;
+    // Annulment ↔ annulment linking (shared case group, mechanism A). Edit-safe block
+    // rendered by annulmentConfig; links/unlinks re-render only their block (form kept).
+    h += _sectionHead('Linked Cases');
     h += (typeof window !== 'undefined' && window._anlLinkedCasesEditor) ? window._anlLinkedCasesEditor(c) : '';
+    // Cross-panel links to OCIA / Marriage (mechanism B, record_links). Supersedes the
+    // old linked_marriage_prep_id / linked_ocia_id pickers (now unified + reciprocal).
+    h += _sectionHead('Linked Records');
+    h += (typeof window !== 'undefined' && window._anlLinkedRecordsEditor) ? window._anlLinkedRecordsEditor(c) : '';
   }
 
   // Actions — only for the create MODAL. The inline edit form lives in the shell's
@@ -1002,8 +997,8 @@ function _anlApplyEditFields(payload, prior) {
   payload.vetitum = newStatus === 'affirm' ? _chk('am-vetitum') : false;
   payload.vetitum_notes = payload.vetitum ? (_v('am-vetitum-notes') || null) : null;
   payload.archived = _chk('am-archive');
-  payload.linked_marriage_prep_id = _M.linkedMarriage?.id || null;
-  payload.linked_ocia_id = _M.linkedOcia?.id || null;
+  // Cross-panel links (Marriage / OCIA) now live in record_links (mechanism B, edited
+  // via the "Linked Records" section), not these legacy columns — no longer written.
 
   // Auto-generated timeline milestones (added by the system, never user-chosen):
   //   • Submitted to Tribunal — on status change into 'tribunal' (In Tribunal)

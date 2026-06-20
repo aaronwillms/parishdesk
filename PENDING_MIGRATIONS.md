@@ -3,6 +3,17 @@
 These migrations are written but NOT yet applied. Apply each once in the Supabase
 SQL editor, then move it to the "Applied" section below.
 
+## 🚧 BLOCKING — `20260620_record_links.sql` (table created; RLS fix still needed)
+
+Creates `record_links` (cross-panel direct bidirectional pairs: OCIA / Marriage /
+Annulment) + indexes + self-link CHECK, backfills legacy annulment links, and
+**disables RLS** so the anon key can read/write it like the other parish tables.
+
+The table was created, but RLS was left ON with no policy → all access blocked (42501).
+**Run the one remaining line:** `ALTER TABLE record_links DISABLE ROW LEVEL SECURITY;`
+(re-running the whole migration is safe — everything is idempotent). Until then,
+cross-panel link/unlink/list silently fail. Annulment↔annulment grouping is unaffected.
+
 ## Applied
 
 ### ✅ `20260620_annulment_case_group.sql` — APPLIED

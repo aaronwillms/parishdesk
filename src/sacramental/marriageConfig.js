@@ -14,6 +14,8 @@ import {
   feeTotals, weddingDateOf, officiantOf, preparerOf, weddingLocation,
   buildMarEditForm, marSaveEdit, marDeleteRec, marBulkStatus,
 } from '../panels/marriage.js';
+import { chipHtml } from './panelShell.js';
+import { registerLinkPanel, linkSectionHtml } from './recordLinks.js';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -222,6 +224,22 @@ function emailCouple(c) {
 }
 
 // ── Config object ───────────────────────────────────────────────────────────
+// Cross-panel link adapter (mechanism B): Marriage links to OCIA + Annulment (never
+// Marriage↔Marriage). Reused by the shared recordLinks module.
+registerLinkPanel('marriage', {
+  label: 'Marriage',
+  canManage: () => marCanManage(),
+  recordTitle: (c) => coupleLabel(c),
+  chipsHtml: (c) => chipHtml(statusChip(c)) + chipHtml(typeChip(c)),
+  openCall: (id) => `window.expandCouple('${id}')`,
+  searchTable: 'couples',
+  searchCols: 'id, groom, bride',
+  searchFilter: (safe) => `groom.ilike.%${safe}%,bride.ilike.%${safe}%`,
+  searchTitle: (r) => `${r.groom || '?'} & ${r.bride || '?'}`,
+  displayCols: 'id, groom, bride, spouse1_first, spouse1_last, spouse2_first, spouse2_last, status_code, is_external, archived, marriage_type, type',
+});
+function linkedRecords(c) { return linkSectionHtml('marriage', c.id); }
+
 export const marriageConfig = {
   panelKey: 'marriage',
   title: 'Marriage Files',
@@ -274,6 +292,7 @@ export const marriageConfig = {
     { title: 'Bride',                render: (c) => spouseDetail(c, 2) },
     { title: 'Fees',                 render: fees },                                  // shown for external too
     { title: 'Documents & Steps',    render: documentsSteps, when: (c) => !c.is_external },  // omitted for external
+    { title: 'Linked Records',       render: linkedRecords },
     { title: 'Notes',                render: activity },
   ],
 

@@ -19,6 +19,7 @@ import {
 } from '../panels/annulments.js';
 import { registerFamilyPanel, familyMembers, familyLink, familyUnlink, familySearchOptions } from './familyLink.js';
 import { chipHtml, refreshActivePanel } from './panelShell.js';
+import { registerLinkPanel, linkSectionHtml, linkRowHtml } from './recordLinks.js';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -360,6 +361,24 @@ registerFamilyPanel('annulments', {
   unlinkAction: 'unlinked annulment case',
   groupContext: 'annulments',
 });
+// Cross-panel link adapter (mechanism B): Annulment links to OCIA + Marriage (never
+// annulment↔annulment — that's mechanism A above). groupMembers powers the BRIDGE
+// RULE so a cross-panel link to a grouped annulment surfaces the whole group.
+registerLinkPanel('annulment', {
+  label: 'Annulment',
+  canManage: () => anlCanManage(),
+  recordTitle: (c) => caseTitle(c),
+  chipsHtml: (c) => chipHtml(statusChip(c)) + chipHtml(typeChip(c)),
+  openCall: (id) => `window.expandCase('${id}')`,
+  searchTable: 'annulment_cases',
+  searchCols: 'id, petitioner, petitioner_last, petitioner_maiden, respondent, respondent_last, respondent_maiden',
+  searchFilter: (safe) => `petitioner.ilike.%${safe}%,respondent.ilike.%${safe}%,petitioner_last.ilike.%${safe}%,respondent_last.ilike.%${safe}%`,
+  searchTitle: (r) => `${r.petitioner_maiden || r.petitioner_last || '—'} vs ${r.respondent_maiden || r.respondent_last || '—'}`,
+  displayCols: 'id, status_code, judgement_finalized, annulment_type, type, briefer_process, petitioner, petitioner_last, petitioner_maiden, respondent, respondent_last, respondent_maiden, co_petitioner, case_group_id',
+});
+// Cross-panel "Linked Records" section (mechanism B) for the annulment read view + editor.
+function linkedRecords(c) { return linkSectionHtml('annulment', c.id); }
+if (typeof window !== 'undefined') window._anlLinkedRecordsEditor = (c) => linkSectionHtml('annulment', c.id);
 // Shared linked-cases body: member list (title + [Status][Type] chips + Unlink) and a
 // link picker. `ctx` = 'view' (read-view detailSection; link/unlink full-refresh the
 // panel — no form to lose) | 'edit' (rendered INSIDE the editor's Linked Records
@@ -367,13 +386,14 @@ registerFamilyPanel('annulments', {
 function _linkedCasesBody(c, ctx) {
   const manage = anlCanManage();
   const members = familyMembers(getCaseRecords(), c.case_group_id, c.id, 'case_group_id');
-  const unlinkCall = ctx === 'edit' ? `window.anlCaseUnlink('${c.id}','` : `window.famUnlink('annulments','`;
+  // Shared row renderer (navy circle + arrow, title, chips immediately right, clickable).
   const list = members.length
-    ? members.map(m => `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;">
-        <span style="flex:1;cursor:pointer;color:var(--navy);" onclick="window.expandCase('${m.id}')">${esc(caseTitle(m))}</span>
-        <span style="display:flex;gap:4px;flex-shrink:0;">${chipHtml(statusChip(m))}${chipHtml(typeChip(m))}</span>
-        ${manage ? `<button onclick="${unlinkCall}${m.id}')" style="background:none;border:none;cursor:pointer;color:#C0392B;font-size:12px;flex-shrink:0;">Unlink</button>` : ''}
-      </div>`).join('')
+    ? members.map(m => linkRowHtml({
+        openCall: `window.expandCase('${m.id}')`,
+        title: esc(caseTitle(m)),
+        chipsHtml: chipHtml(statusChip(m)) + chipHtml(typeChip(m)),
+        unlinkCall: manage ? (ctx === 'edit' ? `window.anlCaseUnlink('${c.id}','${m.id}')` : `window.famUnlink('annulments','${m.id}')`) : '',
+      })).join('')
     : `<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No linked cases.</div>`;
   const ids = ctx === 'edit'
     ? { inp: 'am-cl-search', res: 'am-cl-results', onin: `window.anlCaseLinkSearch('${c.id}')` }
@@ -463,6 +483,7 @@ export const annulmentConfig = {
   detailSections: [
     { title: 'Case details',  render: caseDetails },
     { title: 'Linked Cases',  render: linkedCases },
+    { title: 'Linked Records', render: linkedRecords },
     { title: 'Documents',     render: documents },
     { title: 'Timeline',      render: timeline },
     { title: 'Notes',         render: notes },

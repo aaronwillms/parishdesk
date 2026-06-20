@@ -18,6 +18,8 @@ import {
   cohortKeyOf, ociaCohortName, ociaCohortDateOf,
   buildOciaEditForm, ociaSaveEdit, ociaDeleteRec,
 } from '../panels/ocia.js';
+import { chipHtml } from './panelShell.js';
+import { registerLinkPanel, linkSectionHtml } from './recordLinks.js';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -142,6 +144,22 @@ function annulmentChip(p) {
     : null;
 }
 
+// Cross-panel link adapter (mechanism B): OCIA links to Marriage + Annulment (never
+// OCIA↔OCIA). Reused by the shared recordLinks module for search/list/chips/open.
+registerLinkPanel('ocia', {
+  label: 'OCIA',
+  canManage: () => ociaCanManage(),
+  recordTitle: (p) => ociaName(p),
+  chipsHtml: (p) => chipHtml(statusChip(p)) + chipHtml(typeChip(p)),
+  openCall: (id) => `window.expandOcia('${id}')`,
+  searchTable: 'sacramental_ocia',
+  searchCols: 'id, name',
+  searchFilter: (safe) => `name.ilike.%${safe}%`,
+  searchTitle: (r) => r.name || 'OCIA record',
+  displayCols: 'id, name, status_code, candidate_type, baptismal_status',
+});
+function linkedRecords(p) { return linkSectionHtml('ocia', p.id); }
+
 export const ociaConfig = {
   panelKey: 'ocia',
   title: 'Person Files',
@@ -197,6 +215,7 @@ export const ociaConfig = {
   detailSections: [
     { title: 'Candidate details',            render: personDetails },
     { title: 'Parent/Guardian Permission',   render: minorPermission, when: (p) => ociaIsMinor(p) },
+    { title: 'Linked Records',               render: linkedRecords },
     { title: 'Notes',                        render: notes },
   ],
 
