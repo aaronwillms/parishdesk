@@ -15,6 +15,7 @@ import { isSacramentCoordinator } from '../roles.js';
 import {
   getOciaRecords, getOciaRecord, ociaCanManage, OCIA_STATUS,
   ociaName, ociaLastName, ociaStatusOf, candTypeOf, ociaAge, ociaNotesOf, ociaIsMinor, ociaNeedsAnnulment,
+  pmHowEnded, pmDisplayName,
   cohortKeyOf, ociaCohortName, ociaCohortDateOf,
   buildOciaEditForm, ociaSaveEdit, ociaDeleteRec,
 } from '../panels/ocia.js';
@@ -64,10 +65,12 @@ function personDetails(p) {
   // Candidate baptism location (+ country only alongside a real location).
   const bap = [p.baptism_church, p.baptism_city, p.baptism_state].filter(Boolean);
   if (bap.length && p.baptism_country) bap.push(p.baptism_country);
-  // Prior marriages (entered list) — spouse, how it ended, annulment link/needed.
-  const prior = (p.prior_marriages || []).filter(m => m && (m.spouse_name || m.how_ended)).map(m => {
-    const annul = m.annulment_case_id ? ' · annulment linked' : (m.how_ended === 'Civil Divorce Only' ? ' · annulment needed' : '');
-    return `<div>${esc(m.spouse_name || 'Prior spouse')}${m.how_ended ? ` — ${esc(m.how_ended)}` : ''}${annul}</div>`;
+  // Prior marriages — spouse name + how-it-ended (DERIVED at read time when a case
+  // is linked, via pmHowEnded) + annulment link/needed.
+  const prior = (p.prior_marriages || []).filter(m => m && (pmDisplayName(m) || m.annulment_case_id || m.how_ended)).map(m => {
+    const he = pmHowEnded(m);
+    const annul = m.annulment_case_id ? ' · annulment linked' : (he === 'Civil Divorce Only' ? ' · annulment needed' : '');
+    return `<div>${esc(pmDisplayName(m) || 'Prior spouse')}${he ? ` — ${esc(he)}` : ''}${annul}</div>`;
   }).join('');
   return [
     row('Candidate type', candTypeOf(p) === 'candidate' ? 'Candidate' : 'Catechumen'),

@@ -6,7 +6,7 @@ import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
-import { inheritCohortFormation,
+import { inheritCohortFormation, setFieldLocked,
   institutionAddressAutofill, institutionOptionsHtml, institutionSelectedName, institutionAddressSync } from '../sacramental/churchLocation.js';
 import { registerCohortManager } from '../sacramental/cohortManager.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
@@ -22,7 +22,6 @@ const HOW_ENDED = ['Death', 'Annulment', 'Civil Divorce Only'];
 const COUNTRIES = ['United States of America', 'Mexico', 'Philippines', 'Vietnam', 'Nigeria', 'India', 'Other'];
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
 const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
-const CLERGY_TITLE_RE = /^(fr\.|rev\.|deacon|msgr\.|bishop|archbishop|cardinal)/i;
 const FALLBACK_TEMPLATES = { catechumen: [], candidate: [{ name: 'Baptismal Certificate', deletable: false }] };
 
 let allOcia = [], ociaFilter = 'all', ociaExpanded = null;
@@ -51,7 +50,12 @@ function fullAccess() { return isAdmin() || canAccessSacrament('ocia'); }
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function _curUserName() { return store.currentUserProfile?.personnel?.name || 'Staff'; }
 function nowIso() { return new Date().toISOString(); }
-function clergyPersonnel() { return (store.personnel || []).filter(p => CLERGY_TYPES.includes(p.type) || (p.title && CLERGY_TITLE_RE.test(p.title))).sort((a, b) => (a.name || '').localeCompare(b.name || '')); }
+// Parish clergy — source of truth is the parish-wide personnel.clergy boolean (set
+// in the Directory), the same source clergyNames() uses. The old filter relied on
+// personnel.type / personnel.title, but title was retired in the HR Stage 1
+// collapse and clergy are commonly type:'staff', so it returned nobody. (Same fix
+// applied to Baptism in 4a.) CLERGY_TYPES kept as a fallback.
+function clergyPersonnel() { return (store.personnel || []).filter(p => p.clergy || CLERGY_TYPES.includes(p.type)).sort((a, b) => (a.name || '').localeCompare(b.name || '')); }
 
 // Easter (Anonymous Gregorian algorithm)
 function easterDate(year) {
@@ -79,11 +83,102 @@ function ociaAge(dob) {
 function candType(p) { return p.candidate_type || (p.baptismal_status === 'baptized' ? 'candidate' : 'catechumen'); }
 function lastNameOf(p) { const parts = (p.name || '').trim().split(/\s+/); return parts[parts.length - 1] || ''; }
 function caseIsConfirmed(caseId) { if (!caseId) return false; const c = getCaseDisplay(caseId); return !!(c && c.status_code === 'affirm' && c.judgement_finalized === 'yes'); }
-function pmName(m) { return m.spouse_name || m.ex_name || '—'; }
+// ── Prior-marriage entry model ──────────────────────────────────────────────
+// Entry shape: { first, middle, last, maiden, how_ended, annulment_case_id, prior_party }.
+//   • Names: manual when no case is linked; autofilled from the linked annulment
+//     case's NON-OCIA party (and greyed) when linked.
+//   • how_ended: STORED only when unlinked. When a case is linked it is DERIVED at
+//     read time from the case status (single source of truth) — never stored, so a
+//     case advancing from in-progress to affirmed flips it automatically.
+//   • prior_party: which case party ('petitioner'|'respondent') is the prior spouse
+//     (set by party detection, or by the user when detection is ambiguous).
+// Legacy entries carried a single `spouse_name` string — normPrior() parses it.
+
+// Parse a single display name "First Middle Last (Maiden)" → structured parts.
+function parseSpouseName(s) {
+  s = String(s == null ? '' : s).trim();
+  let maiden = '';
+  const mm = s.match(/\(([^)]+)\)\s*$/);           // trailing "(Maiden)"
+  if (mm) { maiden = mm[1].trim(); s = s.slice(0, mm.index).trim(); }
+  const parts = s.split(/\s+/).filter(Boolean);
+  if (!parts.length) return { first: '', middle: '', last: '', maiden };
+  if (parts.length === 1) return { first: parts[0], middle: '', last: '', maiden };
+  if (parts.length === 2) return { first: parts[0], middle: '', last: parts[1], maiden };
+  return { first: parts[0], middle: parts.slice(1, -1).join(' '), last: parts[parts.length - 1], maiden };
+}
+// Normalize any stored entry (new OR legacy single-name) to the new shape.
+function normPrior(m) {
+  m = m || {};
+  const base = (m.first || m.middle || m.last || m.maiden)
+    ? { first: m.first || '', middle: m.middle || '', last: m.last || '', maiden: m.maiden || '' }
+    : parseSpouseName(m.spouse_name || m.ex_name || '');
+  return { ...base, how_ended: m.how_ended || 'Civil Divorce Only', annulment_case_id: m.annulment_case_id || null, prior_party: m.prior_party || null };
+}
+// DERIVE "how ended" at read time: a linked case in progress → "Civil Divorce Only";
+// affirmative + finalized → "Annulment". Unlinked → the stored manual value.
+export function pmHowEnded(m) {
+  if (m && m.annulment_case_id) return caseIsConfirmed(m.annulment_case_id) ? 'Annulment' : 'Civil Divorce Only';
+  return (m && m.how_ended) || '';
+}
+// Display name for the prior spouse (structured, with legacy fallback).
+export function pmDisplayName(m) {
+  if (!m) return '';
+  const full = [m.first, m.middle, m.last].filter(Boolean).join(' ') || m.spouse_name || '';
+  return m.maiden ? `${full} (${m.maiden})`.trim() : full;
+}
 function pmResolved(m) {
-  if (m.how_ended === 'Death') return true;
-  if (m.how_ended === 'Civil Divorce Only') return false;
-  return m.annulment_granted || caseIsConfirmed(m.annulment_case_id);
+  const he = pmHowEnded(m);
+  if (he === 'Death') return true;
+  if (he === 'Annulment') return true;
+  return false;   // Civil Divorce Only (linked-in-progress or unlinked) → unresolved
+}
+
+// ── Party detection ─────────────────────────────────────────────────────────
+// Decide which annulment-case party is the PRIOR SPOUSE, given the OCIA person's
+// name. The OCIA person is whichever party they match; the spouse is the OTHER.
+// Scoring (normalized, parentheticals/punctuation stripped): exact full name = 3,
+// first+last = 2, last-only = 1. A party is "the OCIA person" only when it scores
+// ≥2 AND strictly beats the other party → confident; the spouse is then the
+// opposite party. Anything else (tie / both / neither match) → NOT confident, so
+// the caller falls back to letting the user pick. NEVER autofills the discerner's
+// own name as their prior spouse.
+function _normName(s) {
+  return String(s == null ? '' : s).toLowerCase().replace(/\([^)]*\)/g, ' ').replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function _matchScore(meNorm, otherNorm) {
+  if (!meNorm || !otherNorm) return 0;
+  if (meNorm === otherNorm) return 3;
+  const me = meNorm.split(' '), ot = otherNorm.split(' ');
+  const meFirst = me[0], meLast = me[me.length - 1], oFirst = ot[0], oLast = ot[ot.length - 1];
+  if (oFirst === meFirst && oLast === meLast) return 2;
+  if (oLast === meLast) return 1;
+  return 0;
+}
+function detectPriorSpouseParty(caseDisp, ociaFullName) {
+  const me = _normName(ociaFullName);
+  if (!me || !caseDisp) return { party: null, confident: false };
+  const sp = _matchScore(me, _normName(caseDisp.petitioner));
+  const sr = _matchScore(me, _normName(caseDisp.respondent));
+  if (sp >= 2 && sp > sr) return { party: 'respondent', confident: true };  // OCIA = petitioner → spouse = respondent
+  if (sr >= 2 && sr > sp) return { party: 'petitioner', confident: true };  // OCIA = respondent → spouse = petitioner
+  return { party: null, confident: false };                                 // ambiguous → user picks
+}
+function _partyName(caseDisp, party) {
+  if (!caseDisp || !party) return '';
+  return party === 'petitioner' ? (caseDisp.petitioner || '') : (caseDisp.respondent || '');
+}
+// The OCIA person's current full name (from the open modal's name inputs).
+function currentOciaName() { return [_v('of-first'), _v('of-middle'), _v('of-last')].filter(Boolean).join(' '); }
+// Map an in-memory entry to its stored jsonb shape. how_ended is stored ONLY when
+// unlinked (null when linked → derived at read time, never store the flip).
+function _priorToStore(m) {
+  const linked = !!m.annulment_case_id;
+  return {
+    first: m.first || '', middle: m.middle || '', last: m.last || '', maiden: m.maiden || '',
+    how_ended: linked ? null : (m.how_ended || 'Civil Divorce Only'),
+    annulment_case_id: m.annulment_case_id || null,
+    prior_party: linked ? (m.prior_party || null) : null,
+  };
 }
 function isMinor(p) { const a = ociaAge(p.dob); return a !== null && a < 18; }
 function hasConsent(p) { return !!p.parental_consent; }
@@ -272,7 +367,7 @@ function newModalState(p, type) {
   return {
     id: p?.id || null, isEdit: !!p, type,
     docs: p ? normDocs(p) : computeTemplateDocs(type),
-    prior: p?.prior_marriages?.length ? JSON.parse(JSON.stringify(p.prior_marriages)) : [],
+    prior: (p?.prior_marriages || []).map(normPrior),
     family: p?.family_group_id ? { group_id: p.family_group_id, label: `${lastNameOf(p)} Family` } : null,
     recOther: p ? (p.reception_date && p.reception_is_easter_vigil === false) : false,
   };
@@ -412,6 +507,8 @@ function ociaSacramentRows(p) {
 }
 
 function _hydrate() {
+  // Refresh linked prior-spouse names from their case (source of truth) before render.
+  _M.prior.forEach((m, i) => { if (m.annulment_case_id && m.prior_party) applyLinkedNames(i); });
   renderModalDocs(); renderPrior(); renderFamilyChip();
   // Lock+fill baptism City/State if a listed church is preselected (candidate only;
   // no-op when hidden/empty/"Other").
@@ -431,18 +528,68 @@ function renderModalDocs() {
     ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;margin-left:8px;" title="Required"></i>` : `<button onclick="ociaRemoveDoc(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;margin-left:8px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">×</button>`}
   </div>`).join('') || `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No documents.</div>`;
 }
+// Prior-marriage section — link-annulment-FIRST, then four name fields + "How did
+// the marriage end?". When a case is linked the names autofill from the case's
+// NON-OCIA party (greyed) and how-ended is derived; unlinked is fully manual.
+const _PM_IN = `width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;`;
 function renderPrior() {
   const wrap = document.getElementById('of-prior-wrap'); if (!wrap) return;
-  wrap.innerHTML = _M.prior.map((m, i) => `<div style="background:var(--parch);border:.5px solid var(--stone);border-radius:var(--radius-sm);padding:.6rem;margin-bottom:.5rem;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><span style="font-size:12px;font-weight:600;color:#555;">Prior marriage ${i + 1}</span><button onclick="ociaRemovePrior(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:12px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">× Remove</button></div>
-    ${_input(`of-pm-name-${i}`, 'Prior spouse name', m.spouse_name || m.ex_name || '')}
-    <label>How ended</label><select id="of-pm-ended-${i}" onchange="ociaPriorEnded(${i},this.value)">${HOW_ENDED.map(o => `<option${m.how_ended === o ? ' selected' : ''}>${o}</option>`).join('')}</select>
-    <div id="of-pm-annul-${i}" style="display:${m.how_ended === 'Annulment' ? 'block' : 'none'};position:relative;">
-      <input type="text" id="of-pm-annulsearch-${i}" placeholder="Link annulment case…" autocomplete="off" oninput="ociaAnnulSearch(${i})" style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;margin-top:6px;" />
-      <div id="of-pm-annulresults-${i}" class="anl-link-results" style="display:none;"></div>
-      <div id="of-pm-annulchip-${i}" style="margin-top:6px;">${m.annulment_case_id ? annulChip(i, m.annulment_case_id) : ''}</div>
+  wrap.innerHTML = _M.prior.map((m, i) => priorEntryHtml(m, i)).join('')
+    + `<button class="btn-secondary" style="padding:.3rem .8rem;font-size:12px;" onclick="ociaAddPrior()">+ Add prior marriage</button>`;
+  _M.prior.forEach((_, i) => syncPriorLock(i));   // apply read-only cue to linked+resolved names
+}
+function priorEntryHtml(m, i) {
+  const linked = !!m.annulment_case_id;
+  const he = linked ? pmHowEnded(m) : (m.how_ended || 'Civil Divorce Only');
+  const showLink = he === 'Annulment' || he === 'Civil Divorce Only';   // Death → no link field
+  const cd = linked ? getCaseDisplay(m.annulment_case_id) : null;
+  const ambiguous = linked && !m.prior_party;
+  const nameField = (s, label, val) => `<div style="flex:1;min-width:90px;"><label>${label}</label><input type="text" id="of-pm-${s}-${i}" value="${_esc(val || '')}" style="${_PM_IN}" /></div>`;
+
+  // 1 — Link annulment case FIRST (shown for Annulment / Civil Divorce Only).
+  const linkBlock = showLink ? `<div id="of-pm-annul-${i}" style="margin-bottom:8px;">
+      <label>Link annulment case</label>
+      <div id="of-pm-annulsearchwrap-${i}" style="display:${linked ? 'none' : 'block'};position:relative;">
+        <input type="text" id="of-pm-annulsearch-${i}" placeholder="Search annulment case…" autocomplete="off" oninput="ociaAnnulSearch(${i})" style="${_PM_IN}" />
+        <div id="of-pm-annulresults-${i}" class="anl-link-results" style="display:none;"></div>
+      </div>
+      <div id="of-pm-annulchip-${i}" style="margin-top:6px;">${linked ? annulChip(i, m.annulment_case_id) : ''}</div>
+      ${ambiguous ? partyPickerHtml(i, cd) : ''}
+    </div>` : '';
+
+  // 2 — Names (always present). Greyed (via syncPriorLock) when linked+resolved.
+  const namesBlock = `<div style="display:flex;gap:8px;flex-wrap:wrap;">${nameField('first', 'First', m.first)}${nameField('middle', 'Middle', m.middle)}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">${nameField('last', 'Last', m.last)}${nameField('maiden', 'Maiden', m.maiden)}</div>
+    ${linked && m.prior_party ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;"><i class="fa-solid fa-link" style="font-size:10px;"></i> Prior spouse is taken from the linked annulment case.</div>` : ''}`;
+
+  // 3 — How did the marriage end? Disabled + derived when linked.
+  const endedBlock = `<label style="margin-top:.4rem;display:block;">How did the marriage end?</label>
+    <select id="of-pm-ended-${i}" onchange="ociaPriorEnded(${i},this.value)" ${linked ? 'disabled style="opacity:.6;cursor:not-allowed;"' : ''}>
+      ${HOW_ENDED.map(o => `<option${he === o ? ' selected' : ''}>${o}</option>`).join('')}
+    </select>
+    ${linked ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;">Derived from the linked case: in progress → Civil Divorce Only; affirmed &amp; finalized → Annulment.</div>` : ''}`;
+
+  return `<div style="background:var(--parch);border:.5px solid var(--stone);border-radius:var(--radius-sm);padding:.6rem;margin-bottom:.5rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><span style="font-size:12px;font-weight:600;color:#555;">Prior marriage ${i + 1}</span><button onclick="ociaRemovePrior(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:12px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">× Remove</button></div>
+    ${linkBlock}${namesBlock}${endedBlock}
+  </div>`;
+}
+// Ambiguous party fallback — let the user say which case party is the prior spouse.
+function partyPickerHtml(i, cd) {
+  return `<div style="margin-top:8px;background:#FEF9E7;border:.5px solid #F2E2B5;border-radius:var(--radius-sm);padding:.5rem .6rem;">
+    <div style="font-size:12px;color:#7D6608;margin-bottom:6px;"><i class="fa-solid fa-circle-question" style="margin-right:4px;"></i>Which party is the prior spouse?</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      <button type="button" class="btn-secondary" style="padding:.3rem .7rem;font-size:12px;" onclick="ociaPickParty(${i},'petitioner')">Petitioner — ${_esc(cd?.petitioner || '—')}</button>
+      <button type="button" class="btn-secondary" style="padding:.3rem .7rem;font-size:12px;" onclick="ociaPickParty(${i},'respondent')">Respondent — ${_esc(cd?.respondent || '—')}</button>
     </div>
-  </div>`).join('') + `<button class="btn-secondary" style="padding:.3rem .8rem;font-size:12px;" onclick="ociaAddPrior()">+ Add prior marriage</button>`;
+  </div>`;
+}
+// Apply the theme-safe read-only lock cue to the 4 name inputs when the entry is
+// linked AND the prior-spouse party is known (names then come from the case).
+function syncPriorLock(i) {
+  const m = _M.prior[i]; if (!m) return;
+  const locked = !!m.annulment_case_id && !!m.prior_party;
+  ['first', 'middle', 'last', 'maiden'].forEach(s => setFieldLocked(document.getElementById(`of-pm-${s}-${i}`), locked));
 }
 function annulChip(i, caseId) { return `<span style="display:inline-flex;align-items:center;gap:8px;background:#1C2B3A;color:#fff;border-radius:14px;padding:3px 8px 3px 12px;font-size:12px;"><span>${_esc(_caseLabel(caseId))}</span><button onclick="window.expandCase('${caseId}')" style="background:none;border:none;color:#C9A84C;cursor:pointer;font-size:11px;padding:0;"><i class="fa-solid fa-arrow-up-right-from-square"></i></button><button onclick="ociaRemoveAnnul(${i})" style="background:none;border:none;color:#cdd6df;cursor:pointer;font-size:12px;padding:0;">×</button></span>`; }
 function renderFamilyChip() {
@@ -477,11 +624,47 @@ function ociaCohortPick(v) {
   if (name && [...rc.options].some(o => o.value === name)) rc.value = name;
 }
 function ociaRecOtherChange() { _M.recOther = document.getElementById('of-rec-other').checked; document.getElementById('of-rec-date-wrap').style.display = _M.recOther ? 'block' : 'none'; document.getElementById('of-rec-easter-note').style.display = _M.recOther ? 'none' : 'block'; }
-function ociaPriorToggle() { const on = document.getElementById('of-prior-toggle').checked; document.getElementById('of-prior-wrap').style.display = on ? 'block' : 'none'; if (on && !_M.prior.length) { _M.prior = [{ spouse_name: '', how_ended: 'Death', annulment_case_id: null }]; renderPrior(); } }
-function _syncPrior() { _M.prior = _M.prior.map((m, i) => ({ spouse_name: document.getElementById(`of-pm-name-${i}`)?.value.trim() || '', how_ended: document.getElementById(`of-pm-ended-${i}`)?.value || 'Death', annulment_case_id: m.annulment_case_id || null })); }
-function ociaAddPrior() { _syncPrior(); _M.prior.push({ spouse_name: '', how_ended: 'Death', annulment_case_id: null }); renderPrior(); }
+function _newPriorEntry() { return { first: '', middle: '', last: '', maiden: '', how_ended: 'Civil Divorce Only', annulment_case_id: null, prior_party: null }; }
+function ociaPriorToggle() { const on = document.getElementById('of-prior-toggle').checked; document.getElementById('of-prior-wrap').style.display = on ? 'block' : 'none'; if (on && !_M.prior.length) { _M.prior = [_newPriorEntry()]; renderPrior(); } }
+// Read the DOM back into _M.prior. Names read from the (possibly read-only) inputs
+// so autofilled linked values are preserved; how_ended is DERIVED for linked entries
+// (the disabled select is ignored) and read from the select when unlinked.
+function _syncPrior() {
+  _M.prior = _M.prior.map((m, i) => {
+    const gv = (s) => { const el = document.getElementById(`of-pm-${s}-${i}`); return el ? el.value.trim() : (m[s] || ''); };
+    const linked = !!m.annulment_case_id;
+    return {
+      first: gv('first'), middle: gv('middle'), last: gv('last'), maiden: gv('maiden'),
+      how_ended: linked ? pmHowEnded(m) : (document.getElementById(`of-pm-ended-${i}`)?.value || m.how_ended || 'Civil Divorce Only'),
+      annulment_case_id: m.annulment_case_id || null,
+      prior_party: m.prior_party || null,
+    };
+  });
+}
+function ociaAddPrior() { _syncPrior(); _M.prior.push(_newPriorEntry()); renderPrior(); }
 function ociaRemovePrior(i) { _syncPrior(); _M.prior.splice(i, 1); renderPrior(); }
-function ociaPriorEnded(i, v) { document.getElementById(`of-pm-annul-${i}`).style.display = v === 'Annulment' ? 'block' : 'none'; _syncPrior(); }
+// Unlinked how-ended change → re-render to toggle the link field (Annulment /
+// Civil Divorce Only expose it; Death hides it).
+function ociaPriorEnded(i, v) { _syncPrior(); _M.prior[i].how_ended = v; renderPrior(); }
+// Autofill the prior-spouse names from the linked case's resolved party.
+function applyLinkedNames(i) {
+  const m = _M.prior[i]; if (!m || !m.annulment_case_id || !m.prior_party) return;
+  const cd = getCaseDisplay(m.annulment_case_id); if (!cd) return;
+  Object.assign(m, parseSpouseName(_partyName(cd, m.prior_party)));
+}
+// Link a case: detect which party is the OCIA person, autofill the OTHER as the
+// prior spouse + grey it; ambiguous → leave names blank and show the party picker.
+async function ociaLinkCase(i, caseId) {
+  _syncPrior();
+  _M.prior[i].annulment_case_id = caseId;
+  await ensureCaseDisplays([caseId]);
+  const det = detectPriorSpouseParty(getCaseDisplay(caseId), currentOciaName());
+  _M.prior[i].prior_party = det.confident ? det.party : null;
+  applyLinkedNames(i);
+  renderPrior();
+}
+// User resolves the ambiguous case → set the party, autofill, grey.
+function ociaPickParty(i, party) { _syncPrior(); _M.prior[i].prior_party = party; applyLinkedNames(i); renderPrior(); }
 function ociaDocReceived(i, v) { applyDocCheck(_M.docs[i], v); renderModalDocs(); }
 function ociaRemoveDoc(i) { _M.docs.splice(i, 1); renderModalDocs(); }
 function ociaAddDoc() { const inp = document.getElementById('of-doc-new'); const name = (inp?.value || '').trim(); if (!name) return; _M.docs.push({ name, received: false, deletable: true, auto: false }); inp.value = ''; renderModalDocs(); }
@@ -506,9 +689,11 @@ function ociaRemoveFamily() { _M.family = null; renderFamilyChip(); }
 async function ociaAnnulSearch(i) {
   const q = document.getElementById(`of-pm-annulsearch-${i}`)?.value || '';
   const box = await _linkSearch(`of-pm-annulresults-${i}`, 'annulment_cases', ['petitioner', 'respondent'], r => ({ id: r.id, label: `${r.petitioner || ''}${r.respondent ? ' v. ' + r.respondent : ''}` }), q);
-  box?.querySelectorAll('.anl-link-opt').forEach(o => o.addEventListener('mousedown', e => { e.preventDefault(); _syncPrior(); _M.prior[i].annulment_case_id = o.dataset.id; box.style.display = 'none'; document.getElementById(`of-pm-annulchip-${i}`).innerHTML = annulChip(i, o.dataset.id); }));
+  box?.querySelectorAll('.anl-link-opt').forEach(o => o.addEventListener('mousedown', e => { e.preventDefault(); box.style.display = 'none'; ociaLinkCase(i, o.dataset.id); }));
 }
-function ociaRemoveAnnul(i) { _syncPrior(); _M.prior[i].annulment_case_id = null; document.getElementById(`of-pm-annulchip-${i}`).innerHTML = ''; }
+// Unlink → names become manually editable again; clear the resolved party. Keep the
+// (now manual) how_ended seeded from whatever it was so the entry stays valid.
+function ociaRemoveAnnul(i) { _syncPrior(); const m = _M.prior[i]; m.annulment_case_id = null; m.prior_party = null; if (!m.how_ended) m.how_ended = 'Civil Divorce Only'; renderPrior(); }
 
 // ── Save ─────────────────────────────────────────────────────────────────────
 function _v(id) { const e = document.getElementById(id); return e ? e.value.trim() : ''; }
@@ -547,7 +732,7 @@ function _ociaReadPayload() {
     baptism_state: type === 'candidate' ? (_v('of-bstate') || null) : null,
     baptism_country: type === 'candidate' ? (_v('of-bcountry') || null) : null,
     sponsor_name: _v('of-sponsor') || null,
-    prior_marriages: _M.prior.filter(m => m.spouse_name),
+    prior_marriages: _M.prior.filter(m => m.first || m.middle || m.last || m.maiden || m.annulment_case_id).map(_priorToStore),
     documents: _M.docs,
     family_group_id: familyGroupId,
     updated_at: nowIso(),
@@ -667,7 +852,7 @@ Object.assign(window, {
   expandOcia, expandCase,
   openOciaCreate, openOciaEdit, openOciaTemplates, ociaCloseModal,
   ociaSetType, ociaDobChange, ociaStatusChange, ociaRecOtherChange, ociaCohortPick, ociaBaptismChange,
-  ociaPriorToggle, ociaAddPrior, ociaRemovePrior, ociaPriorEnded,
+  ociaPriorToggle, ociaAddPrior, ociaRemovePrior, ociaPriorEnded, ociaPickParty,
   ociaDocReceived, ociaRemoveDoc, ociaAddDoc,
   ociaFamilySearch, ociaRemoveFamily, ociaAnnulSearch, ociaRemoveAnnul,
   ociaSave, ociaDeletePerson,
