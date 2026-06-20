@@ -27,7 +27,6 @@ let _cohorts = [], _tplDocs = [], _M = null, _fcCoordinatorNames = [];
 function fullAccess() { return isAdmin() || canAccessSacrament('first_communion') || canAccessSacrament('firstcomm'); }
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function _curUserName() { return store.currentUserProfile?.personnel?.name || 'Staff'; }
-function _curUserId() { return store.currentUserProfile?.user_id || null; }
 function nowIso() { return new Date().toISOString(); }
 function ageOf(dob) { if (!dob) return null; const d = new Date(dob); if (isNaN(d)) return null; const now = new Date(new Date().toLocaleString('en-US', { timeZone: store.parishSettings?.timezone || 'America/Chicago' })); let a = now.getFullYear() - d.getFullYear(); const m = now.getMonth() - d.getMonth(); if (m < 0 || (m === 0 && now.getDate() < d.getDate())) a--; return a; }
 function cohortLabel(dateStr) { if (!dateStr) return 'No date'; const d = new Date(dateStr + 'T00:00:00'); return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); }
@@ -108,7 +107,7 @@ function updateStats() {
   const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
   set('stat-fc-total', active.length);
   set('stat-fc-upcoming', active.filter(p => commDate(p) && commDate(p) >= todayCST() && statusOf(p) !== 'received').length);
-  set('stat-fc-docs', active.filter(p => normDocs(p).some(d => !d.received) || !p.preparation_complete).length);
+  set('stat-fc-docs', active.filter(p => normDocs(p).some(d => !d.received)).length);
 }
 
 function cohortChurchName(coh) { if (!coh) return ''; if (coh.church_institution_id) { const i = (store.institutions || []).find(x => x.id === coh.church_institution_id); if (i) return i.name; } return coh.church_override || ''; }
@@ -129,11 +128,6 @@ async function toggleFcDoc(id, i) {
   const patch = { documents: docs };
   if (allDone && !prevAll) { const tl = JSON.parse(JSON.stringify(p.timeline || [])); tl.push({ type: 'auto', text: 'All documents received', created_at: nowIso() }); patch.timeline = tl; }
   if (await _patch(id, patch)) { updateStats(); refreshActivePanel(); }
-}
-async function toggleFcPrep(id) {
-  const p = allFc.find(x => x.id === id); if (!p) return;
-  const done = !p.preparation_complete;
-  if (await _patch(id, { preparation_complete: done, preparation_complete_date: done ? todayCST() : null, preparation_complete_by: done ? _curUserId() : null })) { updateStats(); refreshActivePanel(); }
 }
 async function addFcNote(id) {
   const inp = document.getElementById('fcn-' + id); const note = (inp?.value || '').trim(); if (!note) return;
@@ -478,7 +472,7 @@ async function fcTplSave() {
 Object.assign(window, {
   loadFirstComm, expandFirstComm,
   openFcCreate, openFcEdit, openFcTemplate, fcCloseModal,
-  toggleFcDoc, toggleFcPrep, addFcNote,
+  toggleFcDoc, addFcNote,
   fcCohortPick, fcDobChange, fcChurchChange, fcSchoolChange, fcBaptismChange,
   fcDocReceived, fcRemoveDoc, fcAddDoc,
   fcSave, fcDeletePerson,

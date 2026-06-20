@@ -17,6 +17,23 @@ the existing `school_name` / `baptism_church` / `first_communion_church` text
 columns + their existing `*_city`/`*_state` columns) — only the School ADDRESS
 genuinely lacked storage. Apply this, then FC/Confirmation save again.
 
+## 🚧 BLOCKING — `20260620_baptism_preparer.sql` (apply before Baptism save)
+
+Adds `preparer text` to **`sacramental_baptism`** — the only initiation panel whose
+rebuild never added the clergy-aware "Person Responsible for Formation" column
+(FC/Confirmation/OCIA each have theirs). `panels/baptism.js` writes `preparer`, so
+saving fails: "Could not find the 'preparer' column of 'sacramental_baptism' in the
+schema cache." VERIFIED a genuinely MISSING column (a SELECT returns 42703 "column
+does not exist"), NOT a stale cache. Additive, idempotent, nullable.
+
+## 🚧 BLOCKING — `20260619_confirmation_church_city_state.sql` (written earlier, NEVER APPLIED)
+
+Adds `confirmation_city` / `confirmation_state` to **`sacramental_confirmation`**.
+The migration file has existed since 2026-06-19 but was never run, so saving a
+Confirmation file fails: "Could not find the 'confirmation_city' column … in the
+schema cache." VERIFIED genuinely MISSING (SELECT → 42703 "column does not exist"),
+NOT a stale cache. **Apply the existing file as-is** (additive, idempotent, nullable).
+
 ## 🚧 BLOCKING — `20260620_record_links.sql` (table created; RLS fix still needed)
 
 Creates `record_links` (cross-panel direct bidirectional pairs: OCIA / Marriage /
