@@ -30,6 +30,17 @@ ok('currentStage: id tiebreak when timestamps equal', () => {
   ];
   assert.strictEqual(currentStage(tr), 'Active Discernment'); // id 'z' > 'a'
 });
+ok('currentStage: RECORDED order (created_at) wins over an EARLIER effective date — the stuck-chip bug', () => {
+  // Repro: file created today at 22:00Z (Inquiry); user moves stage today, whose
+  // transitioned_at is the date at noon-local → 18:00Z, EARLIER than creation.
+  // Ordering by transitioned_at would (wrongly) keep "Inquiry"; created_at fixes it.
+  const tr = [
+    { id: 'a', to_stage: 'Inquiry',            transitioned_at: '2026-06-20T22:00:00Z', created_at: '2026-06-20T22:00:00Z' },
+    { id: 'b', to_stage: 'Active Discernment', transitioned_at: '2026-06-20T18:00:00Z', created_at: '2026-06-20T22:05:00Z' },
+  ];
+  assert.strictEqual(currentStage(tr), 'Active Discernment');
+  assert.strictEqual(mostRecentTransition(tr).id, 'b');
+});
 
 // ── next contact = soonest incomplete follow-up ──
 ok('nextFollowup: null when none open', () => {

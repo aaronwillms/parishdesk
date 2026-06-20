@@ -17,6 +17,27 @@ the existing `school_name` / `baptism_church` / `first_communion_church` text
 columns + their existing `*_city`/`*_state` columns) — only the School ADDRESS
 genuinely lacked storage. Apply this, then FC/Confirmation save again.
 
+## 🚧 BLOCKING — `20260620_discernment_revision.sql` (apply before the Discernment revision works)
+
+Adds the revised inline person model to `discerners` (first/middle/last name split,
+gender CHECK, mailing street/city/state/zip, dob, school_name/city/state, parents
+jsonb, parent_aware, spiritual_director) and — importantly — adds `created_at` to
+`discernment_stage_transitions`. Additive, idempotent, nullable; backfills
+transitions' created_at = transitioned_at.
+
+**Two reasons it's BLOCKING:**
+1. The intake save writes the new columns, so editing/creating a discerner errors
+   ("column not found") until applied.
+2. The **stuck-stage-chip fix (#10) depends on `created_at`** — current-stage
+   derivation now orders by recorded order (created_at) instead of the human
+   effective date (transitioned_at). Without the column, new transitions carry no
+   created_at and the derivation falls back to transitioned_at (the buggy path).
+   So the chip is only fully fixed once this is applied.
+
+`discerners.name` is RETAINED (kept in sync with the split on every save — the card
+and the % grantable-record search read it). `discerners.person_id` is RETAINED but
+no longer written (linking removed in code); drop later if desired.
+
 ## 🚧 BLOCKING — `20260620_baptism_preparer.sql` (apply before Baptism save)
 
 Adds `preparer text` to **`sacramental_baptism`** — the only initiation panel whose

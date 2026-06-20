@@ -23,8 +23,9 @@ import { store } from '../store.js';
 import { logActivity, reportWriteError, todayCST, formatDateDisplay, daysUntil } from '../utils.js';
 import { isSuperAdmin, canAccessDiscernment } from '../roles.js';
 import { chipHtml } from '../sacramental/panelShell.js';
-import { createContactPicker } from '../ui/contactPicker.js';
 import { ensureIdentities, userName, fetchGrantRow, loadMyGrants, hasMyGrantForLink } from '../ui/grants.js';
+import { institutionAddressAutofill, institutionOptionsHtml, institutionSelectedName, institutionAddressSync } from '../sacramental/churchLocation.js';
+import { buildOfficiantField, readOfficiantValue } from '../sacramental/officiantField.js';
 import {
   ALL_STAGES, STAGE_LADDER, TERMINAL_STAGES, STARTING_STAGE, stageChipStyle, stageRank,
   VOCATION_TYPES, vocationLabel, currentStage as deriveStage, nextFollowup as deriveNextFollowup,
@@ -41,26 +42,40 @@ let _authUserId = null;
 let _selectedId = null;
 let _stageFilter = 'all', _vocFilter = 'all', _search = '', _showArchived = false;
 let _M = null;          // create/edit modal state
-let _picker = null;     // contact picker instance (link-existing intake)
 let _hashBound = false;
 
 const nowIso = () => new Date().toISOString();
 
-// ── Person model — name/contact DERIVE from the linked directory person when
-// person_id is set; otherwise the inline identity fields on the file are used.
+// ── Person model — INLINE only (directory-person linking was removed; discerners
+// never see their own file, so linking added no value). Name/contact always live
+// on the discerner row. `name` is the denormalized combined first/middle/last
+// (kept in sync on save) used by the card + the % grantable-record search.
 function discernerName(d) {
-  if (d.person_id) {
-    const p = (store.personnel || []).find(x => x.id === d.person_id);
-    if (p?.name) return p.name;
-  }
-  return d.name || 'Unnamed discerner';
+  const parts = [d.first_name, d.middle_name, d.last_name].filter(Boolean).join(' ');
+  return parts || d.name || 'Unnamed discerner';
 }
-function discernerContact(d) {
-  // Inline contact lives on the file; for a linked person we still show whatever
-  // inline contact was captured (the directory person carries no email/phone here).
-  return [d.phone || '', d.email || ''].filter(Boolean).join(' · ');
-}
+function discernerContact(d) { return [d.phone || '', d.email || ''].filter(Boolean).join(' · '); }
 function isArchived(d) { return !!d.archived_at; }
+function parentsOf(d) { return Array.isArray(d.parents) ? d.parents.filter(p => p && (p.first || p.last || p.phone || p.email)) : []; }
+// Auto-calculated age from DOB (parish timezone), or null.
+function ageOf(dob) {
+  if (!dob) return null;
+  const d = new Date(dob); if (isNaN(d)) return null;
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: store.parishSettings?.timezone || 'America/Chicago' }));
+  let a = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) a--;
+  return a;
+}
+// Split a legacy combined `name` into parts (back-compat for rows predating the split).
+function nameParts(d) {
+  if (d.first_name || d.middle_name || d.last_name) return { first: d.first_name || '', middle: d.middle_name || '', last: d.last_name || '' };
+  const parts = String(d.name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return { first: '', middle: '', last: '' };
+  if (parts.length === 1) return { first: parts[0], middle: '', last: '' };
+  if (parts.length === 2) return { first: parts[0], middle: '', last: parts[1] };
+  return { first: parts[0], middle: parts.slice(1, -1).join(' '), last: parts[parts.length - 1] };
+}
 
 // ── Derived snapshots (delegate to the pure helpers) ─────────────────────────
 function transitionsOf(id) { return _transByD[id] || []; }
@@ -77,8 +92,10 @@ function followupsOf(d) {
   });
 }
 function historyOf(d) {
+  // Newest-recorded first (created_at, falling back to transitioned_at) so the top
+  // of the list matches the derived current-stage chip.
   return transitionsOf(d.id).slice().sort((a, b) =>
-    String(b.transitioned_at || '').localeCompare(String(a.transitioned_at || '')));  // newest first
+    String(b.created_at || b.transitioned_at || '').localeCompare(String(a.created_at || a.transitioned_at || '')));
 }
 
 // ── Access wrappers (live role calls feed the pure cores in derive.js) ───────
@@ -157,17 +174,32 @@ function render() {
   const el = root(); if (!el) return;
   let shell = el.querySelector('#disc-shell');
   if (!shell) {
-    el.innerHTML = `<div class="sac-shell" id="disc-shell"></div>`;
+    // Built once: confidentiality banner + vocation stat row + the master-detail shell.
+    el.innerHTML = `
+      <div class="confid-notice"><i class="fa-solid fa-lock" style="margin-right:7px;"></i>Discernment information is strictly confidential. Access is limited to clergy and those responsible for discernment accompaniment.</div>
+      <div class="stat-row" id="disc-stats"></div>
+      <div class="sac-shell" id="disc-shell"></div>`;
     shell = el.querySelector('#disc-shell');
     shell.addEventListener('click', onShellClick);
     shell.addEventListener('input', onShellInput);
     shell.addEventListener('change', onShellChange);
   }
+  renderStats();
   shell.classList.toggle('detail-open', !!_selectedId);
   shell.innerHTML = `<div class="sac-list">${listHtml()}</div><div class="sac-detail">${detailHtml()}</div>`;
   // Grantee header (axis 2) is async — fill it after the sync paint.
   const d = selected();
   if (d) fillGranteeHeader(d);
+}
+// Stat row — counts of active (non-archived, viewable) discerners by vocation type.
+function renderStats() {
+  const el = document.getElementById('disc-stats'); if (!el) return;
+  const active = _discerners.filter(d => canViewDiscerner(d) && !isArchived(d));
+  const c = (t) => active.filter(d => d.vocation_type === t).length;
+  el.innerHTML = `
+    <div class="stat-card"><div class="stat-num">${c('priesthood')}</div><div class="stat-label">Priesthood</div></div>
+    <div class="stat-card"><div class="stat-num">${c('diaconate')}</div><div class="stat-label">Diaconate</div></div>
+    <div class="stat-card"><div class="stat-num">${c('religious_life')}</div><div class="stat-label">Religious Life</div></div>`;
 }
 function selected() { return _discerners.find(x => x.id === _selectedId) || null; }
 
@@ -223,9 +255,13 @@ function listBodyHtml() {
 function cardHtml(d) {
   const sel = _selectedId === d.id;
   const stage = currentStageOf(d);
-  const chips = [{ label: vocationLabel(d.vocation_type), tone: 'neutral' }];
+  // Chip order: [Stage] [Vocation Type].
+  const chips = [];
   if (stage) chips.push({ label: stage, tone: 'neutral', style: stageChipStyle(stage) });
+  chips.push({ label: vocationLabel(d.vocation_type), tone: 'neutral' });
   if (isArchived(d)) chips.push({ label: 'Archived', tone: 'neutral', style: 'background:#F2F3F4;color:#616A6B;' });
+  const age = ageOf(d.dob);
+  const title = discernerName(d) + (age !== null ? ` (${age})` : '');
   const fu = nextFollowupOf(d);
   const today = todayCST();
   let next = '';
@@ -240,7 +276,7 @@ function cardHtml(d) {
   }
   return `<div class="sac-item${sel ? ' selected' : ''}" data-act="open" data-id="${d.id}">
     <div class="sac-item-row"><div style="flex:1;min-width:0;">
-      <div class="sac-item-title">${esc(discernerName(d))}</div>
+      <div class="sac-item-title">${esc(title)}</div>
       <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:5px;">${chips.map(chipHtml).join('')}</div>
       ${next}
     </div></div>
@@ -257,32 +293,62 @@ function detailHtml() {
 
   const write = canWriteDiscerner(d);
   const stage = currentStageOf(d);
-  const chips = [{ label: vocationLabel(d.vocation_type), tone: 'neutral' }];
+  // Chip order: [Stage] [Vocation Type].
+  const chips = [];
   if (stage) chips.push({ label: stage, tone: 'neutral', style: stageChipStyle(stage) });
+  chips.push({ label: vocationLabel(d.vocation_type), tone: 'neutral' });
   if (isArchived(d)) chips.push({ label: 'Archived', tone: 'neutral', style: 'background:#F2F3F4;color:#616A6B;' });
   const contact = discernerContact(d);
-  const initials = (discernerName(d).match(/\b\w/g) || ['?']).slice(0, 2).join('').toUpperCase();
+  const age = ageOf(d.dob);
 
   const actions = write ? `
     <button class="btn-secondary sac-detail-btn" data-act="move-stage" aria-label="Move stage"><i class="fa-solid fa-arrow-right-arrow-left"></i> <span class="sac-btn-label">Move stage</span></button>
     <button class="btn-secondary sac-detail-btn" data-act="toggle-archive" aria-label="${isArchived(d) ? 'Unarchive' : 'Archive'}"><i class="fa-solid fa-box-archive"></i> <span class="sac-btn-label">${isArchived(d) ? 'Unarchive' : 'Archive'}</span></button>
-    <button class="btn-primary sac-detail-btn" data-act="edit" aria-label="Edit"><i class="fa-solid fa-pencil"></i> <span class="sac-btn-label">Edit</span></button>` : '';
+    <button class="btn-primary sac-detail-btn" data-act="edit" aria-label="Edit"><i class="fa-solid fa-pencil"></i> <span class="sac-btn-label">Edit</span></button>
+    <button class="btn-secondary sac-detail-btn" data-act="delete" aria-label="Delete" style="color:#C0392B;border-color:#F2C9D1;"><i class="fa-solid fa-trash"></i> <span class="sac-btn-label">Delete</span></button>` : '';
 
   return `
     <div id="disc-grantee"></div>
     <div class="sac-detail-head">
       <button class="sac-back" data-act="back" aria-label="Back">‹</button>
-      <div class="sac-avatar">${esc(initials)}</div>
+      <div class="sac-avatar"><i class="fa-solid fa-cross"></i></div>
       <div class="sac-detail-main">
-        <div class="sac-detail-name">${esc(discernerName(d))}</div>
+        <div class="sac-detail-name">${esc(discernerName(d))}${age !== null ? ` <span style="font-size:16px;color:#9CA3AF;font-weight:400;">(${age})</span>` : ''}</div>
         ${contact ? `<div style="font-size:12.5px;color:#6B7280;margin-top:2px;">${esc(contact)}</div>` : ''}
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">${chips.map(chipHtml).join('')}</div>
       </div>
       <div class="sac-detail-actions">${actions}</div>
     </div>
+    <div class="sac-section"><div class="sac-section-title">Details</div><div>${detailsSection(d)}</div></div>
     <div class="sac-section"><div class="sac-section-title">Notes</div><div>${notesSection(d, write)}</div></div>
-    <div class="sac-section"><div class="sac-section-title">Stage History</div><div>${historySection(d)}</div></div>
+    <div class="sac-section"><div class="sac-section-title">Stage History</div><div>${historySection(d, write)}</div></div>
     <div class="sac-section"><div class="sac-section-title">Follow-up Reminders</div><div>${followupsSection(d, write)}</div></div>`;
+}
+
+// Read-only person details (address, DOB/age, school, parents + awareness,
+// spiritual director, gender).
+function detailsSection(d) {
+  const row = (label, val) => val ? `<div style="display:flex;gap:10px;font-size:13px;padding:3px 0;"><span style="color:#6B7280;min-width:150px;">${esc(label)}</span><span style="flex:1;color:var(--navy);">${val}</span></div>` : '';
+  const addr = [d.street, [d.city, d.state].filter(Boolean).join(', '), d.zip].filter(Boolean).join(' · ');
+  const school = [d.school_name, [d.school_city, d.school_state].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+  const age = ageOf(d.dob);
+  const parents = parentsOf(d).map(p => {
+    const nm = [p.first, p.last].filter(Boolean).join(' ');
+    const ct = [p.phone, p.email].filter(Boolean).join(' · ');
+    return `<div>${esc(nm || 'Parent')}${ct ? ` — ${esc(ct)}` : ''}</div>`;
+  }).join('');
+  const awareness = d.parent_aware == null ? '' :
+    (d.parent_aware ? `<span style="color:#2D6A4F;">Parent aware of discernment</span>` : `<span style="color:#9A6A1E;">Parent <strong>UNAWARE</strong> of discernment</span>`);
+  const out = [
+    row('Gender', d.gender ? (d.gender === 'male' ? 'Male' : 'Female') : ''),
+    row('Date of birth', d.dob ? `${esc(formatDateDisplay(d.dob))}${age !== null ? ` (age ${age})` : ''}` : ''),
+    row('Mailing address', addr ? esc(addr) : ''),
+    row('School', school ? esc(school) : ''),
+    row('Parent contact', parents),
+    row('Parent awareness', awareness),
+    row('Spiritual director', d.spiritual_director ? esc(d.spiritual_director) : ''),
+  ].filter(Boolean).join('');
+  return out || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details recorded.</div>';
 }
 
 function notesSection(d, write) {
@@ -307,11 +373,11 @@ function notesSection(d, write) {
   </div>`;
 }
 
-function historySection(d) {
+function historySection(d, write) {
   const list = historyOf(d);
   if (!list.length) return '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No stage history yet.</div>';
   return `<div class="sac-tl">${list.map(t => `<div class="sac-tl-entry">
-    <div class="sac-tl-row"><span class="sac-tl-text">${t.from_stage ? `${esc(t.from_stage)} → ` : 'Started at '}<strong>${esc(t.to_stage)}</strong></span></div>
+    <div class="sac-tl-row"><span class="sac-tl-text">${t.from_stage ? `${esc(t.from_stage)} → ` : 'Started at '}<strong>${esc(t.to_stage)}</strong></span>${write ? `<button class="sac-tl-x" title="Delete this transition" data-act="del-transition" data-id="${t.id}">×</button>` : ''}</div>
     <div class="sac-tl-time">${esc(formatDateDisplay((t.transitioned_at || '').slice(0, 10)))}${t.transitioned_by ? ' · ' + esc(userName(t.transitioned_by)) : ''}${t.note ? ' · ' + esc(t.note) : ''}</div>
   </div>`).join('')}</div>`;
 }
@@ -386,8 +452,10 @@ async function onShellClick(e) {
     case 'edit': openIntake(selected()); break;
     case 'move-stage': openMoveStage(selected()); break;
     case 'toggle-archive': await toggleArchive(selected()); break;
+    case 'delete': await deleteDiscerner(selected()); break;
     case 'add-note': await addNote(id); break;
     case 'del-note': await deleteNote(id); break;
+    case 'del-transition': await deleteTransition(id); break;
     case 'add-followup': await addFollowup(id); break;
     case 'toggle-followup': e.stopPropagation(); await toggleFollowup(id, t.checked); break;
     case 'del-followup': await deleteFollowup(id); break;
@@ -408,7 +476,7 @@ async function addNote(discernerId) {
   if (error) { reportWriteError('discernment note', error); return; }
   (_notesByD[discernerId] = _notesByD[discernerId] || []).push(data);
   logActivity({ action: 'added discernment note', entityType: 'discerner', entityName: discernerName(d), contextType: 'discernment', contextId: discernerId });
-  render();
+  window.flashSavedThen(() => render());
 }
 async function deleteNote(noteId) {
   const d = selected(); if (!d || !canWriteDiscerner(d)) return;
@@ -429,7 +497,7 @@ async function addFollowup(discernerId) {
   if (error) { reportWriteError('discernment follow-up', error); return; }
   (_followByD[discernerId] = _followByD[discernerId] || []).push(data);
   logActivity({ action: 'added discernment follow-up', entityType: 'discerner', entityName: discernerName(d), contextType: 'discernment', contextId: discernerId });
-  render();
+  window.flashSavedThen(() => render());
 }
 async function toggleFollowup(followupId, done) {
   const d = selected(); if (!d || !canWriteDiscerner(d)) return;
@@ -446,6 +514,30 @@ async function deleteFollowup(followupId) {
   const { error } = await deleteWithRetry(() => sb.from('discernment_followups').delete().eq('id', followupId));
   if (error) { reportWriteError('discernment follow-up delete', error); return; }
   _followByD[d.id] = (_followByD[d.id] || []).filter(x => x.id !== followupId);
+  render();
+}
+// Delete a stage transition (non-destructive to the rest of history; the current
+// stage simply re-derives from whatever transitions remain).
+async function deleteTransition(transitionId) {
+  const d = selected(); if (!d || !canWriteDiscerner(d)) return;
+  if (!confirm('Delete this stage transition? The current stage will re-derive from the remaining history.')) return;
+  const { error } = await deleteWithRetry(() => sb.from('discernment_stage_transitions').delete().eq('id', transitionId));
+  if (error) { reportWriteError('discernment transition delete', error); return; }
+  _transByD[d.id] = (_transByD[d.id] || []).filter(x => x.id !== transitionId);
+  logActivity({ action: 'deleted discernment stage transition', entityType: 'discerner', entityName: discernerName(d), contextType: 'discernment', contextId: d.id });
+  render();
+}
+// Permanently delete the whole discerner file (child notes/transitions/follow-ups
+// cascade via FK ON DELETE CASCADE). Routed through the shared deleteWithRetry.
+async function deleteDiscerner(d) {
+  if (!d || !canWriteDiscerner(d)) return;
+  if (!confirm(`Permanently delete the discernment file for ${discernerName(d)}? This removes all notes, stage history, and follow-ups. This cannot be undone.`)) return;
+  const { error } = await deleteWithRetry(() => sb.from('discerners').delete().eq('id', d.id));
+  if (error) { reportWriteError('discernment delete', error); return; }
+  _discerners = _discerners.filter(x => x.id !== d.id);
+  delete _notesByD[d.id]; delete _transByD[d.id]; delete _followByD[d.id];
+  logActivity({ action: 'deleted discernment file', entityType: 'discerner', entityName: discernerName(d), contextType: 'discernment', contextId: d.id });
+  selectDiscerner(null);   // back to the list
   render();
 }
 async function toggleArchive(d) {
@@ -497,119 +589,164 @@ async function confirmMoveStage(d) {
   if (error) { reportWriteError('discernment transition', error); return; }
   (_transByD[d.id] = _transByD[d.id] || []).push(data);
   logActivity({ action: `moved discernment stage to ${to}`, entityType: 'discerner', entityName: discernerName(d), contextType: 'discernment', contextId: d.id });
-  window.closeModal();
-  render();
+  window.flashSavedThen(() => { window.closeModal(); render(); });
 }
 
-// ── Intake modal (create) / edit modal — inline-identity vs link-existing ────
+// ── Intake modal (create / edit) — INLINE person model only ─────────────────
 function openIntake(d = null) {
   if (d ? !canWriteDiscerner(d) : !canCreate()) return;
-  // Dispose any picker left over from a modal closed via Cancel / overlay click
-  // (those paths bypass _cleanupIntake) so we rebuild a fresh one.
-  try { _picker?.destroy?.(); } catch (_) {}
-  _picker = null;
   const isEdit = !!d;
+  const np = nameParts(d || {});
   _M = {
     id: d?.id || null, isEdit,
-    mode: d ? (d.person_id ? 'link' : 'inline') : 'inline',
-    personId: d?.person_id || null,
+    gender: d?.gender || null,
+    parents: parentsOf(d || {}).map(p => ({ first: p.first || '', last: p.last || '', phone: p.phone || '', email: p.email || '' })),
   };
+  if (!_M.parents.length) _M.parents = [{ first: '', last: '', phone: '', email: '' }];
+
   const vocOpts = Object.entries(VOCATION_TYPES).map(([k, l]) =>
     `<option value="${k}"${d?.vocation_type === k ? ' selected' : ''}>${esc(l)}</option>`).join('');
   const stageOpts = [...STAGE_LADDER, ...TERMINAL_STAGES].map(s =>
     `<option value="${esc(s)}"${s === STARTING_STAGE ? ' selected' : ''}>${esc(s)}</option>`).join('');
+  const school = institutionOptionsHtml(d?.school_name || '');
+  const dob = (d?.dob && /^\d{4}-\d{2}-\d{2}/.test(d.dob)) ? d.dob.slice(0, 10) : '';
+  const head = (t) => `<div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--cardinal);margin:1rem 0 .4rem;">${t}</div>`;
 
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-title">${isEdit ? 'Edit discernment file' : 'New discernment file'}</div>
 
-    <label>Identity</label>
-    <div style="display:flex;gap:8px;margin-bottom:.5rem;">
-      <button type="button" class="cf-btn" id="disc-mode-inline" data-mode="inline">Inline (not in directory)</button>
-      <button type="button" class="cf-btn" id="disc-mode-link" data-mode="link">Link directory person</button>
+    <label>Name</label>
+    <div style="display:flex;gap:8px;">
+      <div style="flex:1;"><input type="text" id="disc-first" placeholder="First" value="${esc(np.first)}" /></div>
+      <div style="flex:1;"><input type="text" id="disc-middle" placeholder="Middle" value="${esc(np.middle)}" /></div>
+      <div style="flex:1;"><input type="text" id="disc-last" placeholder="Last" value="${esc(np.last)}" /></div>
     </div>
 
-    <div id="disc-inline-fields" style="display:none;">
-      <label>Name</label><input type="text" id="disc-name" value="${esc(d?.person_id ? '' : (d?.name || ''))}" placeholder="Full name" />
-      <div style="display:flex;gap:8px;">
-        <div style="flex:1;"><label>Phone</label><input type="tel" id="disc-phone" value="${esc(d?.phone || '')}" /></div>
-        <div style="flex:1;"><label>Email</label><input type="email" id="disc-email" value="${esc(d?.email || '')}" /></div>
-      </div>
-    </div>
-    <div id="disc-link-fields" style="display:none;">
-      <label>Directory person</label>
-      <div id="disc-person-picker"></div>
-      <div style="font-size:11px;color:#9CA3AF;margin-top:4px;">Name &amp; contact derive from the directory entry.</div>
+    <label>Gender</label>
+    <div style="display:flex;gap:8px;">
+      <button type="button" class="cf-btn" id="disc-gender-male" onclick="discSetGender('male')" style="flex:1;">Male</button>
+      <button type="button" class="cf-btn" id="disc-gender-female" onclick="discSetGender('female')" style="flex:1;">Female</button>
     </div>
 
     <label style="margin-top:.75rem;">Vocation type</label>
     <select id="disc-voc">${vocOpts}</select>
-
     ${isEdit ? '' : `<label>Starting stage</label><select id="disc-start-stage">${stageOpts}</select>`}
+
+    <label>Date of birth</label>
+    <input type="date" id="disc-dob" value="${esc(dob)}" />
+
+    ${head('Mailing Address')}
+    <label>Street</label><input type="text" id="disc-street" value="${esc(d?.street || '')}" />
+    <div style="display:flex;gap:8px;">
+      <div style="flex:2;"><label>City</label><input type="text" id="disc-city" value="${esc(d?.city || '')}" /></div>
+      <div style="flex:1;"><label>State</label><input type="text" id="disc-state" maxlength="2" value="${esc(d?.state || '')}" /></div>
+      <div style="flex:1;"><label>Zip</label><input type="text" id="disc-zip" value="${esc(d?.zip || '')}" /></div>
+    </div>
+
+    <div style="display:flex;gap:8px;">
+      <div style="flex:1;"><label>Cell phone</label><input type="tel" id="disc-phone" value="${esc(d?.phone || '')}" /></div>
+      <div style="flex:1;"><label>Email</label><input type="email" id="disc-email" value="${esc(d?.email || '')}" /></div>
+    </div>
+
+    <label style="margin-top:.75rem;">School</label>
+    <select id="disc-school-sel" onchange="discSchoolChange(this.value)"><option value="">— Select —</option>${school.options}<option value="__other"${school.isOther ? ' selected' : ''}>Other…</option></select>
+    <div id="disc-school-other-wrap" style="display:${school.isOther ? 'block' : 'none'};margin-top:6px;"><label>School name</label><input type="text" id="disc-school-name" value="${esc(school.isOther ? (d?.school_name || '') : '')}" /></div>
+    <div style="display:flex;gap:8px;">
+      <div style="flex:2;"><label>School city</label><input type="text" id="disc-school-city" value="${esc(d?.school_city || '')}" /></div>
+      <div style="flex:1;"><label>School state</label><input type="text" id="disc-school-state" maxlength="2" value="${esc(d?.school_state || '')}" /></div>
+    </div>
+
+    ${head('Parent / Guardian')}
+    <div id="disc-parents"></div>
+    <label style="display:inline-flex;align-items:center;gap:8px;margin-top:.6rem;cursor:pointer;">
+      <input type="checkbox" id="disc-parent-aware" ${d?.parent_aware ? 'checked' : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" /> Parent aware of discernment?
+    </label>
+
+    <div style="margin-top:.75rem;">${buildOfficiantField('disc-spirdir', d?.spiritual_director || '', { label: 'Spiritual Director' })}</div>
 
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn-primary" id="disc-intake-save">${isEdit ? 'Save' : 'Create file'}</button>
     </div>`;
   document.getElementById('modal-overlay').classList.add('open');
-
-  document.getElementById('disc-mode-inline').addEventListener('click', () => setIntakeMode('inline'));
-  document.getElementById('disc-mode-link').addEventListener('click', () => setIntakeMode('link'));
   document.getElementById('disc-intake-save').addEventListener('click', () => saveIntake());
-  setIntakeMode(_M.mode);
+  renderParents();
+  syncGenderButtons();
+  institutionAddressSync('disc-school-sel', { city: 'disc-school-city', state: 'disc-school-state' });
 }
-function setIntakeMode(mode) {
-  _M.mode = mode;
-  const inlineWrap = document.getElementById('disc-inline-fields');
-  const linkWrap = document.getElementById('disc-link-fields');
-  if (!inlineWrap || !linkWrap) return;
-  inlineWrap.style.display = mode === 'inline' ? 'block' : 'none';
-  linkWrap.style.display = mode === 'link' ? 'block' : 'none';
-  document.getElementById('disc-mode-inline').classList.toggle('active', mode === 'inline');
-  document.getElementById('disc-mode-link').classList.toggle('active', mode === 'link');
-  if (mode === 'link' && !_picker) {
-    _picker = createContactPicker({
-      container: document.getElementById('disc-person-picker'),
-      placeholder: 'Search the directory…',
-      initialValue: _M.personId || undefined,
-      onSelect: (p) => { _M.personId = p?.id || null; },
-    });
-  }
+// Gender — mutually exclusive; clicking the active one clears it.
+function discSetGender(g) { _M.gender = (_M.gender === g) ? null : g; syncGenderButtons(); }
+function syncGenderButtons() {
+  document.getElementById('disc-gender-male')?.classList.toggle('active', _M.gender === 'male');
+  document.getElementById('disc-gender-female')?.classList.toggle('active', _M.gender === 'female');
 }
+// School dropdown change — toggle the "Other" name input + autofill/grey City/State.
+function discSchoolChange(v) {
+  const wrap = document.getElementById('disc-school-other-wrap'); if (wrap) wrap.style.display = v === '__other' ? 'block' : 'none';
+  institutionAddressAutofill(v, { city: 'disc-school-city', state: 'disc-school-state' });
+}
+// Parent contacts (1–2 repeatable set).
+function renderParents() {
+  const el = document.getElementById('disc-parents'); if (!el) return;
+  el.innerHTML = _M.parents.map((p, i) => `
+    <div style="background:var(--parch);border:.5px solid var(--stone);border-radius:var(--radius-sm);padding:.6rem;margin-bottom:.5rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><span style="font-size:12px;font-weight:600;color:#555;">Parent ${i + 1}</span>${_M.parents.length > 1 ? `<button type="button" onclick="discRemoveParent(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:12px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">× Remove</button>` : ''}</div>
+      <div style="display:flex;gap:8px;"><div style="flex:1;"><label>First name</label><input type="text" id="disc-par-first-${i}" value="${esc(p.first)}" /></div><div style="flex:1;"><label>Last name</label><input type="text" id="disc-par-last-${i}" value="${esc(p.last)}" /></div></div>
+      <div style="display:flex;gap:8px;"><div style="flex:1;"><label>Cell phone</label><input type="tel" id="disc-par-phone-${i}" value="${esc(p.phone)}" /></div><div style="flex:1;"><label>Email</label><input type="email" id="disc-par-email-${i}" value="${esc(p.email)}" /></div></div>
+    </div>`).join('')
+    + (_M.parents.length < 2 ? `<button type="button" class="btn-secondary" style="padding:.3rem .8rem;font-size:12px;" onclick="discAddParent()">+ Add second parent</button>` : '');
+}
+function _syncParents() {
+  _M.parents = _M.parents.map((p, i) => ({
+    first: document.getElementById(`disc-par-first-${i}`)?.value.trim() || '',
+    last: document.getElementById(`disc-par-last-${i}`)?.value.trim() || '',
+    phone: document.getElementById(`disc-par-phone-${i}`)?.value.trim() || '',
+    email: document.getElementById(`disc-par-email-${i}`)?.value.trim() || '',
+  }));
+}
+function discAddParent() { _syncParents(); if (_M.parents.length < 2) _M.parents.push({ first: '', last: '', phone: '', email: '' }); renderParents(); }
+function discRemoveParent(i) { _syncParents(); _M.parents.splice(i, 1); if (!_M.parents.length) _M.parents = [{ first: '', last: '', phone: '', email: '' }]; renderParents(); }
+
 async function saveIntake() {
   const voc = document.getElementById('disc-voc')?.value;
   if (!voc) { alert('Vocation type is required.'); return; }
-  let personId = null, name = null, phone = null, email = null;
-  if (_M.mode === 'link') {
-    personId = _picker?.getId() || _M.personId || null;
-    if (!personId) { alert('Select a directory person, or switch to Inline.'); return; }
-  } else {
-    name = (document.getElementById('disc-name')?.value || '').trim();
-    phone = (document.getElementById('disc-phone')?.value || '').trim() || null;
-    email = (document.getElementById('disc-email')?.value || '').trim() || null;
-    if (!name) { alert('Name is required (or link a directory person).'); return; }
-  }
+  const gv = (id) => (document.getElementById(id)?.value || '').trim();
+  const first = gv('disc-first'), middle = gv('disc-middle'), last = gv('disc-last');
+  const name = [first, middle, last].filter(Boolean).join(' ');
+  if (!name) { alert('A first or last name is required.'); return; }
+  _syncParents();
+  const parents = _M.parents.filter(p => p.first || p.last || p.phone || p.email);
+  // `name` stays the denormalized combined value (card + % grantable search read it).
+  const fields = {
+    first_name: first || null, middle_name: middle || null, last_name: last || null, name,
+    gender: _M.gender || null,
+    dob: gv('disc-dob') || null,
+    street: gv('disc-street') || null, city: gv('disc-city') || null, state: gv('disc-state') || null, zip: gv('disc-zip') || null,
+    phone: gv('disc-phone') || null, email: gv('disc-email') || null,
+    school_name: institutionSelectedName(document.getElementById('disc-school-sel')?.value, 'disc-school-name'),
+    school_city: gv('disc-school-city') || null, school_state: gv('disc-school-state') || null,
+    parents,
+    parent_aware: !!document.getElementById('disc-parent-aware')?.checked,
+    spiritual_director: readOfficiantValue('disc-spirdir'),
+    vocation_type: voc,
+    updated_at: nowIso(),
+  };
 
   if (_M.isEdit) {
     const d = _discerners.find(x => x.id === _M.id); if (!d) return;
-    const patch = { person_id: personId, name, phone, email, vocation_type: voc, updated_at: nowIso() };
-    const { error } = await withWriteRetry(() => sb.from('discerners').update(patch).eq('id', d.id), { kind: 'update' });
+    const { error } = await withWriteRetry(() => sb.from('discerners').update(fields).eq('id', d.id), { kind: 'update' });
     if (error) { reportWriteError('discernment update', error); return; }
-    Object.assign(d, patch);
-    logActivity({ action: 'updated discernment file', entityType: 'discerner', entityName: discernerName(d), contextType: 'discernment', contextId: d.id });
-    _cleanupIntake();
-    render();
+    Object.assign(d, fields);
+    logActivity({ action: 'updated discernment file', entityType: 'discerner', entityName: name, contextType: 'discernment', contextId: d.id });
+    window.flashSavedThen(() => { _cleanupIntake(); render(); });
     return;
   }
 
   // Create: insert the file, then write the FIRST transition (NULL → starting stage).
-  // Omit parish_id when unknown so the DB default current_parish_id() applies
-  // (passing null would violate NOT NULL). supabase-js drops undefined keys.
+  // Omit parish_id when unknown so the DB default current_parish_id() applies.
   const parishId = store.parishSettings?.id || undefined;
   const startStage = document.getElementById('disc-start-stage')?.value || STARTING_STAGE;
-  const { data, error } = await insertWithRetry('discerners', {
-    parish_id: parishId, person_id: personId, name, phone, email,
-    vocation_type: voc, author_id: _authUserId,
-  }, { select: '*' });
+  const { data, error } = await insertWithRetry('discerners', { ...fields, parish_id: parishId, author_id: _authUserId }, { select: '*' });
   if (error) { reportWriteError('discernment create', error); return; }
   _discerners.unshift(data);
   const { data: tr } = await insertWithRetry('discernment_stage_transitions', {
@@ -617,21 +754,16 @@ async function saveIntake() {
     transitioned_at: nowIso(), transitioned_by: _authUserId,
   }, { select: '*' });
   if (tr) (_transByD[data.id] = _transByD[data.id] || []).push(tr);
-  logActivity({ action: 'created discernment file', entityType: 'discerner', entityName: discernerName(data), contextType: 'discernment', contextId: data.id });
-  _cleanupIntake();
-  selectDiscerner(data.id);   // open the new file (also re-renders via hashchange)
-  render();
+  logActivity({ action: 'created discernment file', entityType: 'discerner', entityName: name, contextType: 'discernment', contextId: data.id });
+  window.flashSavedThen(() => { _cleanupIntake(); selectDiscerner(data.id); render(); });
 }
-function _cleanupIntake() {
-  try { _picker?.destroy?.(); } catch (_) {}
-  _picker = null; _M = null;
-  window.closeModal();
-}
+function _cleanupIntake() { _M = null; window.closeModal(); }
 
 // ── Globals (HTML onclick + cross-link entry) ────────────────────────────────
 Object.assign(window, {
   expandDiscerner,
   discAddFollowup: (id) => addFollowup(id),
+  discSetGender, discSchoolChange, discAddParent, discRemoveParent,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -51,8 +51,15 @@ export const VOCATION_TYPES = {
 export function vocationLabel(t) { return VOCATION_TYPES[t] || t || '—'; }
 
 // ── Snapshot derivations ────────────────────────────────────────────────────
-// Current stage = to_stage of the MOST RECENT transition (by transitioned_at,
-// id as a stable tiebreak). Returns null when there are no transitions.
+// Current stage = to_stage of the MOST RECENT transition. "Most recent" is the
+// RECORDED order (`created_at`), NOT the human-entered effective date
+// (`transitioned_at`). This matters: moving a stage stores transitioned_at as the
+// picked DATE at noon-local, which can convert to a UTC instant EARLIER than the
+// same-day file-creation transition's real timestamp — so ordering by
+// transitioned_at made the creation ("Inquiry") transition win and the chip stuck.
+// Ordering by created_at (DB default now() on every insert → monotonic) makes the
+// latest-recorded transition always win. Falls back to transitioned_at for legacy
+// rows lacking created_at. Returns null when there are no transitions.
 export function currentStage(transitions) {
   const t = mostRecentTransition(transitions);
   return t ? t.to_stage : null;
@@ -61,11 +68,11 @@ export function mostRecentTransition(transitions) {
   if (!Array.isArray(transitions) || !transitions.length) return null;
   return transitions.slice().sort(compareTransitionDesc)[0];
 }
-// Newest first: later transitioned_at first; tiebreak by id descending so the
-// order is deterministic even when two transitions share a timestamp.
+// Newest first by recorded order (created_at, else transitioned_at); tiebreak by id
+// descending so the order is deterministic when two share a timestamp.
 export function compareTransitionDesc(a, b) {
-  const ta = a.transitioned_at || '', tb = b.transitioned_at || '';
-  if (ta !== tb) return tb.localeCompare(ta);
+  const ka = a.created_at || a.transitioned_at || '', kb = b.created_at || b.transitioned_at || '';
+  if (ka !== kb) return kb.localeCompare(ka);
   return String(b.id || '').localeCompare(String(a.id || ''));
 }
 
