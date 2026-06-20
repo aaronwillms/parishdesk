@@ -34,6 +34,12 @@ const SAC_GRANTABLE = {
   baptism:      { gtype: 'baptism',         typeLabel: 'Baptism',         table: 'sacramental_baptism',     cols: ['name'],                     label: r => r.name || '?' },
   firstcomm:    { gtype: 'first_communion', typeLabel: 'First Communion', table: 'sacramental_firstcomm',   cols: ['name'],                     label: r => r.name || '?' },
   confirmation: { gtype: 'confirmation',    typeLabel: 'Confirmation',    table: 'sacramental_confirmation',cols: ['name'],                     label: r => r.name || '?' },
+  // Discernment files ride the % layer too (super-admin grants ONE file
+  // READ-ONLY to a non-panel user, e.g. a diocesan vocations director). Searched
+  // by the inline `name` column — a discerner LINKED to a directory person
+  // (name NULL, derived from personnel) is not name-searchable here yet, but a
+  // grant on it is fully functional (audit / grantee header / revoke / view gate).
+  discerner:    { gtype: 'discerner',       typeLabel: 'Discerner',       table: 'discerners',              cols: ['name'],                     label: r => r.name || 'Discerner' },
 };
 
 // Map a mention/link type key → the record_grants.record_type value. Used both

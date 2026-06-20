@@ -14,6 +14,72 @@ The table was created, but RLS was left ON with no policy → all access blocked
 (re-running the whole migration is safe — everything is idempotent). Until then,
 cross-panel link/unlink/list silently fail. Annulment↔annulment grouping is unaffected.
 
+## ✅ APPLIED — `20260620_discernment.sql` (verified live 2026-06-20)
+
+Stands up the entire **Discernment** module (private, pastor-facing vocations
+tracker). Creates 4 tables + adds `'discerner'` to the `record_grants` CHECK.
+
+**Verified live 2026-06-20 via PostgREST round-trips (anon key):** all 4 tables +
+every column present; a full insert→read→delete cycle works (discerner + first
+transition → derived current stage = "Inquiry"; note; follow-up); the
+`vocation_type` CHECK rejects an invalid value (23514); deleting the discerner
+cascades to its children. The `record_grants` `'discerner'` CHECK shipped in this
+same committed migration but could NOT be exercised from the script because
+`record_grants` is correctly RLS-restricted to super-admins
+(`is_super_admin(auth.uid())`) — its live exercise is the in-app `%`-grant flow as
+a super-admin, still pending the parallel `%` fix.
+
+Creates (all with `parish_id DEFAULT current_parish_id()`, **RLS DISABLED** — these
+are CLIENT-GATED in JS via `roles.js`/`discernment.js`, exactly like the
+sacramental tables; the app converts to RLS app-wide later):
+- `discerners` — id, parish_id, `person_id` FK→personnel NULL (link-existing;
+  NULL → inline `name`/`email`/`phone`), `vocation_type` CHECK
+  (priesthood/diaconate/religious_life), `author_id` (creator), `archived_at`, ts.
+- `discernment_notes` — discerner_id, parish_id, author_id, note_date, subject, body, created_at.
+- `discernment_stage_transitions` — discerner_id, parish_id, `from_stage` NULL,
+  `to_stage`, transitioned_at, transitioned_by, note. (Current stage is DERIVED
+  from the latest row — never stored; stages are frozen TEXT.)
+- `discernment_followups` — discerner_id, parish_id, due_date, note, done, done_at, created_by, created_at.
+
+Also: `ALTER TABLE record_grants ... CHECK (... 'discerner')` — the single
+integration point that lights up the universal `%` layer (has_record_grant,
+grantee header, Admin audit view, revoke) for discerner files. This rebuilds the
+auto-named `record_grants_record_type_check` constraint (drop-if-exists + re-add).
+
+**Depends on nothing new**, but the `%`-grant path also depends on the in-flight
+`record_links` RLS fix above being settled — the `%` layer is being fixed in
+parallel, so the discerner `%`-grant flow can't be fully verified until BOTH this
+migration AND that `%` fix land. Idempotent (IF NOT EXISTS / drop-then-add); safe to re-run.
+
+⚠️ **RLS GOTCHA (same as `record_links`):** this project re-enables RLS on newly
+created tables, so the `DISABLE ROW LEVEL SECURITY` lines in the migration do NOT
+stick when run in the same script — the tables come up RLS-ON with no policy and
+ALL writes are rejected ("new row violates row-level security policy"), reads
+return empty. After creating the tables, run these as a SEPARATE step:
+```sql
+ALTER TABLE discerners                     DISABLE ROW LEVEL SECURITY;
+ALTER TABLE discernment_notes              DISABLE ROW LEVEL SECURITY;
+ALTER TABLE discernment_stage_transitions  DISABLE ROW LEVEL SECURITY;
+ALTER TABLE discernment_followups          DISABLE ROW LEVEL SECURITY;
+```
+This was hit and resolved on 2026-06-20 — the four lines above were run as a
+separate step, after which all writes succeeded (see verification note above).
+
+## 🧹 CLEANUP (optional) — `20260620_drop_legacy_annulment_link_columns.sql`
+
+Drops the dead `annulment_cases.linked_marriage_prep_id` / `linked_ocia_id` columns.
+They predate `record_links`, were backfilled into it by `20260620_record_links.sql`,
+and are no longer written or rendered by the app (cross-panel links live in
+`record_links` + the unified "Linked Records" section). The migration first does an
+idempotent re-backfill of any un-mirrored legacy link (so no link can be lost), then
+drops the columns. **Apply AFTER `20260620_record_links.sql`.** Safe to re-run.
+
+Companion code cleanup (do when/after applying — currently inert, safe to leave):
+the dead JS in `src/panels/annulments.js` that reads these columns — `_coupleLabel`,
+`_ociaLabel`, `renderLinkedChip`, `anlLinkSearch`, `anlSelectLinked`, `anlRemoveLinked`,
+and the `linkedMarriage`/`linkedOcia` fields in the two modal-state builders. After the
+column drop they resolve to `undefined → null` (no-op), so removal is non-urgent.
+
 ## Applied
 
 ### ✅ `20260620_annulment_case_group.sql` — APPLIED

@@ -111,6 +111,24 @@ export function canAccessSacrament(sacrament) {
   return r?.sacraments.includes(sacrament) || r?.panelGrants.includes(sacrament) || false;
 }
 
+// ── Discernment PANEL ACCESS (axis 1) ───────────────────────────────────────
+// True for super-admin + anyone holding the 'discernment' panel grant (granted
+// in the Admin Panel by a super-admin — same family as the sacramental-
+// coordinator/panel-grant roles) + the legacy 'vocation_director' role. These
+// are COLLABORATORS: they read AND write every parish discernment file. The
+// panel defaults to just the pastor (super-admin) and is extensible to other
+// priests / the youth director via the toggle. Entirely pastor/staff-facing —
+// there is no discerner self-view. NOTE: admins do NOT auto-get access (the
+// loadUserRoles admin path carries no panelGrants) — discernment is private by
+// design. The READ-ONLY % file-grant (axis 2) is enforced per-file in the
+// Discernment panel (canViewDiscerner), NOT here.
+export function canAccessDiscernment() {
+  if (isSuperAdmin()) return true;
+  const r = store.currentUserRoles;
+  if (!r) return false;
+  return (r.panelGrants || []).includes('discernment') || hasRole('vocation_director');
+}
+
 // Stricter than canAccessSacrament: super admin OR the actual sacramental
 // coordinator role for this sacrament (sacramental_roles / program_coordinators).
 // Excludes panel_grants and plain admins — used to gate template management.
@@ -143,8 +161,10 @@ export function canAccessPanel(panel) {
   if (panel === 'annulments') return canAccessSacrament('annulments') || (r.advocateCaseIds?.length > 0);
 
   // Pastoral Care stubs
-  // Discernment: vocation director or super admin
-  if (panel === 'discernment') return isSuperAdmin() || hasRole('vocation_director');
+  // Discernment: super-admin, a manual panel_grants('discernment') holder
+  // (granted in the Admin Panel — the "panel access" axis), or the legacy
+  // vocation_director role. See canAccessDiscernment() below.
+  if (panel === 'discernment') return canAccessDiscernment();
   // Homebound: admin + super admin for now (dedicated role to come later)
   if (panel === 'homebound') return isAdmin();
 

@@ -14,6 +14,10 @@ const SACRAMENT_LABELS = { baptism: 'Baptism', first_communion: 'First Communion
 // (projects and tasks are always available — no grant needed)
 const PANEL_LABELS = {
   school: 'Cathedral School',
+  // Discernment "panel access" (axis 1): super-admin grants/revokes it here.
+  // Persisted in panel_grants.panel='discernment'; read by canAccessDiscernment().
+  // Holders are collaborators (read + write all parish discernment files).
+  discernment: 'Discernment',
 };
 
 let _activeTab = 'users';

@@ -46,6 +46,7 @@ async function startApp(user) {
   lazyExpand('expandBaptism', 'baptism');
   lazyExpand('expandFirstComm', 'firstcomm');
   lazyExpand('expandConfirmation', 'confirmation');
+  lazyExpand('expandDiscerner', 'discernment');
 
   window.openModal = async (type, defaultStatus) => {
     if (type === 'couple')  { const m = await ensurePanel('marriage'); m.openCoupleAdd(); return; }
