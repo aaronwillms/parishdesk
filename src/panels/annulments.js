@@ -253,6 +253,30 @@ function updateAnnulmentStats() {
   set('stat-anl-notfinal', active.filter(c => ['affirm', 'negative'].includes(c.status_code) && c.judgement_finalized === 'no').length);
 }
 
+// ── Cross-panel case display cache ──────────────────────────────────────────
+// Marriage/OCIA prior-marriage rows reference annulment cases by id. Their chips
+// (label) and "resolved" flag must render even if the Annulments panel was never
+// opened this session — so we resolve those cases by id DIRECTLY from the DB into
+// a small cache, instead of reading the panel's lazy-loaded `allCases` list.
+// Only the few display columns are fetched, and already-known cases are reused.
+const _caseDisplayCache = new Map();   // id -> { petitioner, respondent, status_code, judgement_finalized }
+// Resolve the given case ids, fetching any not already cached or in memory.
+export async function ensureCaseDisplays(ids) {
+  const want = [...new Set((ids || []).filter(Boolean))];
+  if (!want.length) return;
+  // Reuse the panel's loaded list when present (no fetch needed for those).
+  for (const c of allCases) if (c?.id) _caseDisplayCache.set(c.id, c);
+  const miss = want.filter(id => !_caseDisplayCache.has(id));
+  if (!miss.length) return;
+  const { data } = await sb.from('annulment_cases')
+    .select('id, petitioner, respondent, status_code, judgement_finalized').in('id', miss);
+  (data || []).forEach(r => _caseDisplayCache.set(r.id, r));
+}
+// Sync read: cache first, then the panel's in-memory list (either source works).
+export function getCaseDisplay(id) {
+  return _caseDisplayCache.get(id) || allCases.find(x => x.id === id) || (store.allCases || []).find(x => x.id === id) || null;
+}
+
 // ── Shell accessors (consumed by annulmentConfig) ───────────────────────────
 export function getCaseRecords() { return allCases; }
 export function getCaseRecord(id) { return allCases.find(x => x.id === id) || null; }

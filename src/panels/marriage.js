@@ -1,7 +1,7 @@
 import { sb, withWriteRetry, serializeWrite, insertWithRetry } from '../supabase.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { store } from '../store.js';
-import { expandCase } from './annulments.js';
+import { expandCase, ensureCaseDisplays, getCaseDisplay } from './annulments.js';
 import { isAdmin, canAccessSacrament } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
@@ -137,6 +137,10 @@ export async function loadCouplesData() {
   if (error) { console.error('[marriage]', error); return []; }
   allCouples = data || [];
   store.allCouples = allCouples;
+  // Warm the annulment display cache for every linked prior-marriage case so chips
+  // resolve by id without the Annulments panel being loaded.
+  await ensureCaseDisplays(allCouples.flatMap(c =>
+    [...(c.spouse1_prior_marriages || []), ...(c.spouse2_prior_marriages || [])].map(m => m.annulment_case_id)));
   updateCoupleStats();
   renderMarriageAlerts();
   return allCouples;
@@ -371,7 +375,10 @@ function spouseState(c, n) {
   };
 }
 function _ociaLabel(id) { const r = (store.allOcia || []).find(x => x.id === id); return r ? (r.name || 'OCIA record') : 'OCIA record'; }
-function _caseLabel(id) { const r = (store.allCases || []).find(x => x.id === id); return r ? `${r.petitioner || ''}${r.respondent ? ' v. ' + r.respondent : ''}` : 'Annulment case'; }
+// Resolve by id from the cross-panel display cache (DB-backed) so the chip label
+// renders even if the Annulments panel was never opened. ensureCaseDisplays() is
+// called when couples load and on edit-form hydrate, so the cache is warm here.
+function _caseLabel(id) { const r = getCaseDisplay(id); return r ? `${r.petitioner || ''}${r.respondent ? ' v. ' + r.respondent : ''}` : 'Annulment case'; }
 
 function buildCoupleModalHtml(c, opts = {}) {
   const inline = !!opts.inline;

@@ -1,7 +1,7 @@
 import { sb, withWriteRetry, serializeWrite, insertWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
-import { expandCase } from './annulments.js';
+import { expandCase, ensureCaseDisplays, getCaseDisplay } from './annulments.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
@@ -77,7 +77,7 @@ function ociaAge(dob) {
 // ── Field accessors (backward-compatible) ────────────────────────────────────
 function candType(p) { return p.candidate_type || (p.baptismal_status === 'baptized' ? 'candidate' : 'catechumen'); }
 function lastNameOf(p) { const parts = (p.name || '').trim().split(/\s+/); return parts[parts.length - 1] || ''; }
-function caseIsConfirmed(caseId) { if (!caseId) return false; const c = (store.allCases || []).find(x => x.id === caseId); return !!(c && c.status_code === 'affirm' && c.judgement_finalized === 'yes'); }
+function caseIsConfirmed(caseId) { if (!caseId) return false; const c = getCaseDisplay(caseId); return !!(c && c.status_code === 'affirm' && c.judgement_finalized === 'yes'); }
 function pmName(m) { return m.spouse_name || m.ex_name || '—'; }
 function pmResolved(m) {
   if (m.how_ended === 'Death') return true;
@@ -114,6 +114,9 @@ export async function loadOciaData() {
   if (error) { console.error('[ocia]', error); return []; }
   allOcia = data || [];
   store.allOcia = allOcia;
+  // Warm the annulment display cache for every linked prior-marriage case so chips
+  // and the "resolved" flag resolve by id without the Annulments panel being loaded.
+  await ensureCaseDisplays(allOcia.flatMap(p => (p.prior_marriages || []).map(m => m.annulment_case_id)));
   updateOciaStats();
   renderOciaAlerts();
   return allOcia;
@@ -279,7 +282,9 @@ function computeTemplateDocs(type) {
   return base;
 }
 function _ociaLabel(id) { const r = (store.allOcia || []).find(x => x.id === id); return r ? (r.name || 'OCIA') : 'OCIA'; }
-function _caseLabel(id) { const r = (store.allCases || []).find(x => x.id === id); return r ? `${r.petitioner || ''}${r.respondent ? ' v. ' + r.respondent : ''}` : 'Annulment case'; }
+// Resolve by id from the cross-panel display cache (DB-backed) so the chip label
+// renders even if the Annulments panel was never opened (cache warmed on load).
+function _caseLabel(id) { const r = getCaseDisplay(id); return r ? `${r.petitioner || ''}${r.respondent ? ' v. ' + r.respondent : ''}` : 'Annulment case'; }
 
 function _nameParts(p) {
   const parts = (p?.name || '').trim().split(/\s+/);
