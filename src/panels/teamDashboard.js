@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { logActivity, fmtDate, todayCST, personTitle } from '../utils.js';
@@ -401,7 +401,7 @@ function _openMemberModal(memberId) {
   if (canRemove) {
     document.getElementById('tm-remove-btn').addEventListener('click', async () => {
       if (!confirm(`Remove ${p.name || 'this member'} from the team?`)) return;
-      const { error } = await sb.from('team_members').delete().eq('id', memberId);
+      const { error } = await deleteWithRetry(() => sb.from('team_members').delete().eq('id', memberId));
       if (error) { alert('Failed to remove: ' + error.message); return; }
       logActivity({ action: 'removed member from team', entityType: 'team', entityName: _team?.name || 'Unknown', contextType: 'team', contextId: _currentTeamId });
       closeModal();

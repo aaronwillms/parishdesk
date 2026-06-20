@@ -14,7 +14,7 @@ import { loadTeams, loadTeamsStore } from './panels/teams.js';
 import { ensurePanel } from './panels/registry.js';
 import { initNotifications } from './notifications.js';
 import { loadMessaging, initChatBubble } from './panels/messaging.js';
-import { sb } from './supabase.js';
+import { sb, deleteWithRetry } from './supabase.js';
 import { store } from './store.js';
 import { installPhoneMask } from './utils/phone.js';
 import './ui/saveButton.js';   // installs window.flashSaved / flashSavedThen + click tracker
@@ -130,12 +130,12 @@ async function startApp(user) {
     initChatBubble(user.id);
     // Hard-delete conversations and discussions soft-deleted more than 14 days ago
     const _cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
-    sb.from('conversations').delete()
-      .lt('deleted_at', _cutoff).not('deleted_at', 'is', null).then(() => {});
-    sb.from('discussions').delete()
-      .lt('deleted_at', _cutoff).not('deleted_at', 'is', null).then(() => {});
-    sb.from('project_log').delete()
-      .lt('deleted_at', _cutoff).not('deleted_at', 'is', null).then(() => {});
+    deleteWithRetry(() => sb.from('conversations').delete()
+      .lt('deleted_at', _cutoff).not('deleted_at', 'is', null)).then(() => {});
+    deleteWithRetry(() => sb.from('discussions').delete()
+      .lt('deleted_at', _cutoff).not('deleted_at', 'is', null)).then(() => {});
+    deleteWithRetry(() => sb.from('project_log').delete()
+      .lt('deleted_at', _cutoff).not('deleted_at', 'is', null)).then(() => {});
     try { await loadUserProfile(); } catch (e) { console.error('[startApp] loadUserProfile failed:', e); }
     // Apply dark mode on load — mobile only
     if (store.currentUserProfile?.dark_mode && window.innerWidth < 768) {

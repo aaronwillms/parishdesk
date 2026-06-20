@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { createAvatar } from '../ui/avatar.js';
 import { applyParishName } from '../ui/navigation.js';
@@ -488,7 +488,7 @@ async function _saveUser(userId) {
     if (wantsSA && !u.roles.includes('super_admin')) {
       await sb.from('user_roles').upsert({ user_id: userId, role: 'super_admin' }, { onConflict: 'user_id,role' });
     } else if (!wantsSA && u.roles.includes('super_admin')) {
-      await sb.from('user_roles').delete().eq('user_id', userId).eq('role', 'super_admin');
+      await deleteWithRetry(() => sb.from('user_roles').delete().eq('user_id', userId).eq('role', 'super_admin'));
     }
   }
 
@@ -499,7 +499,7 @@ async function _saveUser(userId) {
       if (wantsAdmin && !u.roles.includes('admin')) {
         await sb.from('user_roles').upsert({ user_id: userId, role: 'admin' }, { onConflict: 'user_id,role' });
       } else if (!wantsAdmin && u.roles.includes('admin')) {
-        await sb.from('user_roles').delete().eq('user_id', userId).eq('role', 'admin');
+        await deleteWithRetry(() => sb.from('user_roles').delete().eq('user_id', userId).eq('role', 'admin'));
       }
     }
   }
@@ -515,7 +515,7 @@ async function _saveUser(userId) {
   const sacCbs = Array.from(detail.querySelectorAll('.au-sac-cb'));
   const desiredSac = new Set(sacCbs.filter(cb => !cb.disabled && cb.checked).map(cb => cb.dataset.sacrament));
   u.sacraments.forEach(s => { const cb = sacCbs.find(c => c.dataset.sacrament === s); if (cb && cb.disabled) desiredSac.add(s); });
-  await sb.from('sacramental_roles').delete().eq('user_id', userId);
+  await deleteWithRetry(() => sb.from('sacramental_roles').delete().eq('user_id', userId));
   if (desiredSac.size) {
     await sb.from('sacramental_roles').insert([...desiredSac].map(s => ({ user_id: userId, sacrament: s })));
   }
@@ -524,7 +524,7 @@ async function _saveUser(userId) {
   const grantCbs = Array.from(detail.querySelectorAll('.au-grant-cb'));
   const desiredGrants = new Set(grantCbs.filter(cb => !cb.disabled && cb.checked).map(cb => cb.dataset.panel));
   u.grants.forEach(p => { const cb = grantCbs.find(c => c.dataset.panel === p); if (cb && cb.disabled) desiredGrants.add(p); });
-  await sb.from('panel_grants').delete().eq('user_id', userId);
+  await deleteWithRetry(() => sb.from('panel_grants').delete().eq('user_id', userId));
   if (desiredGrants.size) {
     await sb.from('panel_grants').insert([...desiredGrants].map(p => ({ user_id: userId, panel: p })));
   }
@@ -540,7 +540,7 @@ async function _saveUser(userId) {
       if (cb.checked) {
         await sb.from('team_members').upsert({ team_id: teamId, personnel_id: personnelId }, { onConflict: 'team_id,personnel_id' });
       } else {
-        await sb.from('team_members').delete().eq('team_id', teamId).eq('personnel_id', personnelId);
+        await deleteWithRetry(() => sb.from('team_members').delete().eq('team_id', teamId).eq('personnel_id', personnelId));
       }
     }
   }
@@ -709,7 +709,7 @@ async function _renderCalendarsTab() {
   el.querySelectorAll('.cal-delete-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       if (!confirm(`Delete "${btn.dataset.calName}"?`)) return;
-      const { error } = await sb.from('calendars').delete().eq('id', btn.dataset.calId);
+      const { error } = await deleteWithRetry(() => sb.from('calendars').delete().eq('id', btn.dataset.calId));
       if (error) { alert('Delete failed: ' + error.message); return; }
       await _renderCalendarsTab();
     });

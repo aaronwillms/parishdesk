@@ -6,6 +6,10 @@
 // Confirmation now; OCIA Phase 2 will reuse it (see ARCHITECTURE.md).
 
 import { getInstitutionAddress } from '../ui/directory.js';
+import { store } from '../store.js';
+
+const _esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // Lock/unlock a field: text input → readOnly, <select> → disabled, with a muted
 // read-only cue. (Disabled selects + readonly inputs still expose .value to save.)
@@ -18,24 +22,91 @@ export function setFieldLocked(el, locked) {
   el.style.cursor = locked ? 'not-allowed' : '';
 }
 
-// COHORT MANAGER church change. Toggles the "Other" church-name field; for a LISTED
-// church that has a stored address, pre-fills + LOCKS city/state (read-only) via
-// getInstitutionAddress; a listed church with no address (or "Other"/none) leaves
-// them editable. `prefix` = 'coh' (Confirmation) | 'fcoh' (First Communion).
-export function cohortChurchLocation(v, prefix) {
-  const other = v === '__other';
-  const wrap = document.getElementById(`${prefix}-other-wrap`); if (wrap) wrap.style.display = other ? 'block' : 'none';
-  const cityEl = document.getElementById(`${prefix}-city`), stateEl = document.getElementById(`${prefix}-state`);
-  const a = (!other && v) ? getInstitutionAddress(v) : null;
+// ── REUSABLE institution-dropdown → address autofill+grey ───────────────────
+// Panel-agnostic primitive: given the selected dropdown value and the target
+// address-field elements, it autofills each from the institution's stored address
+// (always via getInstitutionAddress — principal resolves to parish_settings) and
+// LOCKS it read-only; for "Other"/none/an address-less institution it clears +
+// unlocks (editable). This is the shared behavior FC / Confirmation / OCIA consume
+// — pass only the fields you have, by element OR id string. NOT hardcoded to any
+// panel's markup conventions; the cohort flow below is one caller, not the impl.
+//   fields:     { street?, city?, state? }  element or getElementById id (any subset)
+//   otherValue: the dropdown sentinel meaning "manual entry" (default '__other')
+// Returns { filled, address } so a caller can react (e.g. also fill its own street).
+export function institutionAddressAutofill(value, fields = {}, { otherValue = '__other' } = {}) {
+  const resolve = (f) => (typeof f === 'string' ? document.getElementById(f) : f) || null;
+  const els = { street: resolve(fields.street), city: resolve(fields.city), state: resolve(fields.state) };
+  const isOther = !value || value === otherValue;
+  const a = isOther ? null : getInstitutionAddress(value);
+  const set = (el, val, lock) => { if (!el) return; el.value = lock ? (val || '') : ''; setFieldLocked(el, lock); };
   if (a && a.has) {
-    if (cityEl) cityEl.value = a.city || '';
-    if (stateEl) stateEl.value = a.state || '';
-    setFieldLocked(cityEl, true); setFieldLocked(stateEl, true);
-  } else {
-    if (cityEl) cityEl.value = '';
-    if (stateEl) stateEl.value = '';
-    setFieldLocked(cityEl, false); setFieldLocked(stateEl, false);
+    set(els.street, a.street, true);
+    set(els.city, a.city, true);
+    set(els.state, a.state, true);
+    return { filled: true, address: a };
   }
+  // "Other" / nothing selected / a listed institution with no stored address →
+  // clear + unlock so the fields can be entered manually.
+  set(els.street, '', false);
+  set(els.city, '', false);
+  set(els.state, '', false);
+  return { filled: false, address: null };
+}
+
+// ── Institution dropdown helpers (text-stored church/school fields) ─────────
+// Some sacrament fields store their church/school as TEXT (e.g. baptism_church,
+// first_communion_church, school_name) with no institution_id column. These two
+// helpers let such a field become an "institution dropdown + Other" while still
+// round-tripping through its existing text column — the dropdown's option VALUES
+// are institution ids (so institutionAddressAutofill can resolve the address),
+// but the stored value is the institution NAME, and reselect-on-reopen matches by
+// name. Panels with a real *_institution_id column keep using that id directly.
+
+// Build the <option> list for an institution dropdown, preselecting the one whose
+// NAME equals selectedName. Returns { options, isOther } — isOther is true when a
+// non-empty stored name matches no institution (→ the caller marks "Other…" selected).
+export function institutionOptionsHtml(selectedName) {
+  const insts = store.institutions || [];
+  const match = selectedName ? insts.find(i => i.name === selectedName) : null;
+  const options = insts.map(i => `<option value="${i.id}"${match && match.id === i.id ? ' selected' : ''}>${_esc(i.name)}</option>`).join('');
+  return { options, isOther: !!selectedName && !match };
+}
+
+// Resolve an institution <select>+Other to the church/school NAME to store in a
+// text column: a listed institution → its name; '__other' → the free-text input;
+// '' → null. (City/State/Street are read straight from the address fields, which
+// institutionAddressAutofill keeps correct for both listed (locked, derived) and
+// Other (manual).)
+export function institutionSelectedName(selectValue, otherInputId, { otherValue = '__other' } = {}) {
+  if (!selectValue) return null;
+  if (selectValue === otherValue) return (document.getElementById(otherInputId)?.value || '').trim() || null;
+  return (store.institutions || []).find(i => i.id === selectValue)?.name || null;
+}
+
+// On (re)load, lock+fill the address fields IF the <select> currently has a listed
+// institution selected (the onchange only fires on user interaction, so a
+// preselected listed institution needs this to render greyed/derived). No-op for
+// '' / '__other' so a stored manual "Other" address is never cleared on reopen.
+export function institutionAddressSync(selectId, fields, opts = {}) {
+  const sel = document.getElementById(selectId);
+  const otherValue = opts.otherValue || '__other';
+  if (!sel || !sel.value || sel.value === otherValue) return;
+  // Only lock+fill when the listed institution actually HAS an address. A listed
+  // institution with no stored address is left untouched on reopen (so any
+  // pre-existing manual City/State on the record is preserved, not cleared) — the
+  // user's active onchange still clears+unlocks if they re-pick it deliberately.
+  const a = getInstitutionAddress(sel.value);
+  if (!a || !a.has) return;
+  institutionAddressAutofill(sel.value, fields, opts);
+}
+
+// COHORT MANAGER church change. Toggles the "Other" church-name field, then
+// delegates address autofill/lock to the shared institutionAddressAutofill above
+// (city/state only — the cohort form carries no street field). `prefix` =
+// 'coh' (Confirmation) | 'fcoh' (First Communion).
+export function cohortChurchLocation(v, prefix) {
+  const wrap = document.getElementById(`${prefix}-other-wrap`); if (wrap) wrap.style.display = v === '__other' ? 'block' : 'none';
+  institutionAddressAutofill(v, { city: `${prefix}-city`, state: `${prefix}-state` });
 }
 
 // DETAILS section church change. City/State live INSIDE `${prefix}-church-other-wrap`

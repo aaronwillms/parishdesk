@@ -1,13 +1,14 @@
-import { sb, withWriteRetry, serializeWrite, insertWithRetry } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite, insertWithRetry, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError, applyDocCheck, docCheckStampHtml } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { registerFamilyPanel, familyAddPickerHtml, getPendingAdd, clearPendingAdd, familyLink } from '../sacramental/familyLink.js';
-import { detailsChurchToggle, detailsCityState, inheritCohortChurch, inheritCohortFormation } from '../sacramental/churchLocation.js';
+import { detailsChurchToggle, detailsCityState, inheritCohortChurch, inheritCohortFormation,
+  institutionAddressAutofill, institutionOptionsHtml, institutionSelectedName, institutionAddressSync } from '../sacramental/churchLocation.js';
 import { registerCohortManager } from '../sacramental/cohortManager.js';
 
 const CONF_STATUS = {
@@ -16,7 +17,6 @@ const CONF_STATUS = {
   complete:    { label:'Complete',       color:'#2D6A4F', bg:'#D8F3DC', dot:'#2D6A4F' },  // green
   inactive:    { label:'Inactive',       color:'#616A6B', bg:'#F2F3F4', dot:'#AAB7B8' },  // grey
 };
-const GRADES = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'Other'];
 const COUNTRIES = ['United States of America', 'Mexico', 'Philippines', 'Vietnam', 'Nigeria', 'India', 'Other'];
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
 const FALLBACK_TEMPLATES = {
@@ -40,7 +40,7 @@ function lastNameOf(p) { if (p.last_name) return p.last_name; const parts = (p.n
 function statusOf(p) { return p.status_code || 'enrolled'; }
 function tmplType(p) { return p.template_type || 'youth'; }
 function confDate(p) { return p ? (p.confirmation_date || p.sacrament_date || null) : null; }
-function normDocs(p) { return (p.documents || []).map(d => ({ name: d.name, received: d.received ?? d.done ?? false, deletable: d.deletable ?? !d.auto, auto: !!d.auto })); }
+function normDocs(p) { return (p.documents || []).map(d => ({ name: d.name, received: d.received ?? d.done ?? false, deletable: d.deletable ?? !d.auto, auto: !!d.auto, checked_on: d.checked_on || null })); }
 function notesOf(p) {
   const out = (Array.isArray(p.notes_log) ? p.notes_log : []).map(n => ({ note: n.note || '', by: n.by || null, created_at: n.created_at || null }));
   if (p.notes && String(p.notes).trim()) out.push({ note: String(p.notes).trim(), by: null, created_at: null, legacy: true });
@@ -133,7 +133,7 @@ function cohortChurchName(coh) {
 async function _patch(id, patch) { const p = allConf.find(x => x.id === id); if (!p) return null; const { error } = await serializeWrite(`confirmation:${id}`, () => withWriteRetry(() => sb.from('sacramental_confirmation').update({ ...patch, updated_at: nowIso() }).eq('id', id), { kind: 'update' })); if (error) { alert('Save failed: ' + error.message); return null; } Object.assign(p, patch); return p; }
 async function toggleConfDoc(id, i) {
   const p = allConf.find(x => x.id === id); if (!p) return;
-  const docs = normDocs(p); docs[i].received = !docs[i].received;
+  const docs = normDocs(p); applyDocCheck(docs[i], !docs[i].received);
   const prevAll = normDocs(p).length > 0 && normDocs(p).every(d => d.received);
   const allDone = docs.length > 0 && docs.every(d => d.received);
   const patch = { documents: docs };
@@ -162,6 +162,20 @@ function _input(id, label, val = '', type = 'text', extra = '') { return `<label
 function _stateSelect(id, val) { return `<label>State/Province</label><select id="${id}"><option value="">—</option>${US_STATES.map(s => `<option${s === val ? ' selected' : ''}>${s}</option>`).join('')}</select>`; }
 function _toggle(id, label, on, onchange = '') { return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:.75rem;"><input type="checkbox" id="${id}" ${on ? 'checked' : ''} ${onchange ? `onchange="${onchange}"` : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />${label}</label>`; }
 function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cardinal);margin:1.4rem 0 .5rem;border-bottom:.5px solid var(--stone);padding-bottom:4px;">${t}</div>`; }
+// Grade dropdown 2–12, default 2 (out-of-range legacy values preserved as a leading option).
+const GRADE_OPTS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+function _gradeSelect(id, current) {
+  const cur = current || '2';
+  const extra = (cur && !GRADE_OPTS.includes(cur)) ? `<option selected>${_esc(cur)}</option>` : '';
+  return `<label>Grade Level</label><select id="${id}">${extra}${GRADE_OPTS.map(g => `<option${g === cur ? ' selected' : ''}>${g}</option>`).join('')}</select>`;
+}
+// Institution dropdown ("— Select —" + institutions + "Other…") for a text-stored
+// church/school field; option VALUES are institution ids (for address autofill),
+// stored value is the institution NAME, preselected by name match.
+function _instSelect(id, name, onchange) {
+  const { options, isOther } = institutionOptionsHtml(name);
+  return `<select id="${id}" onchange="${onchange}(this.value)"><option value="">— Select —</option>${options}<option value="__other"${isOther ? ' selected' : ''}>Other…</option></select>`;
+}
 
 // ── Create / Edit ────────────────────────────────────────────────────────────
 async function openConfCreate() {
@@ -219,7 +233,10 @@ function buildModalHtml(p, opts = {}) {
   // minor block
   h += `<div id="cf-minor-block" style="display:${isMinor ? 'block' : 'none'};">
     ${_row(`<label>Cell Phone</label><input type="text" id="cf-cell-minor" value="" placeholder="Student is a minor" disabled style="background:#F0EDE8;" />`, _input('cf-email-minor', 'Email', p?.candidate_email || p?.email || ''))}
-    ${_row(_input('cf-school', 'School Name', p?.school_name || ''), `<label>Grade Level</label><select id="cf-grade">${GRADES.map(g => `<option${(p?.grade_level || p?.grade) === g ? ' selected' : ''}>${g}</option>`).join('')}</select>`)}
+    ${_row(`<label>School</label>${_instSelect('cf-school-sel', p?.school_name || '', 'confSchoolChange')}`, _gradeSelect('cf-grade', p?.grade_level || p?.grade))}
+    <div id="cf-school-other-wrap" style="display:${institutionOptionsHtml(p?.school_name || '').isOther ? 'block' : 'none'};margin-top:6px;">${_input('cf-school-name', 'School name', institutionOptionsHtml(p?.school_name || '').isOther ? (p?.school_name || '') : '')}</div>
+    ${_input('cf-school-street', 'School Street Address', p?.school_street || '')}
+    ${_row(_input('cf-school-city', 'School City', p?.school_city || ''), _stateSelect('cf-school-state', p?.school_state || ''))}
     ${_sectionHead('Parent / Guardian')}
     ${_input('cf-parent-name', 'Parent/Guardian Name', p?.parent_name || p?.parent1 || '')}
     ${_row(_input('cf-parent-phone', 'Cell Phone', p?.parent_phone || '', 'tel'), _input('cf-parent-email', 'Email', p?.parent_email || ''))}
@@ -240,15 +257,19 @@ function buildModalHtml(p, opts = {}) {
       ${_row(_input('cf-ccity', 'City', p?.confirmation_city || ''), _stateSelect('cf-cstate', p?.confirmation_state || ''))}
     </div>`;
 
-  // 6 — Baptism
+  // 6 — Baptism — institution dropdown + Other; listed church autofills/greys City/State.
   h += _sectionHead('Baptism Information');
-  h += _input('cf-bchurch', 'Church of Baptism', p?.baptism_church || '');
+  const cbchName = p?.baptism_church || '';
+  h += `<label>Church of Baptism</label>${_instSelect('cf-bchurch-sel', cbchName, 'confBaptismChange')}`;
+  h += `<div id="cf-bchurch-other-wrap" style="display:${institutionOptionsHtml(cbchName).isOther ? 'block' : 'none'};margin-top:6px;">${_input('cf-bchurch-name', 'Church name', institutionOptionsHtml(cbchName).isOther ? cbchName : '')}</div>`;
   h += _row(_input('cf-bcity', 'City', p?.baptism_city || ''), _stateSelect('cf-bstate', p?.baptism_state || ''));
   h += `<label>Country</label><select id="cf-bcountry">${COUNTRIES.map(co => `<option${(p?.baptism_country || 'United States of America') === co ? ' selected' : ''}>${co}</option>`).join('')}</select>`;
 
-  // 7 — First communion
+  // 7 — First communion — institution dropdown + Other; listed church autofills/greys City/State.
   h += _sectionHead('First Communion Information');
-  h += _input('cf-fcchurch', 'Church of First Communion', p?.first_communion_church || '');
+  const cfcName = p?.first_communion_church || '';
+  h += `<label>Church of First Communion</label>${_instSelect('cf-fcchurch-sel', cfcName, 'confFcChurchChange')}`;
+  h += `<div id="cf-fcchurch-other-wrap" style="display:${institutionOptionsHtml(cfcName).isOther ? 'block' : 'none'};margin-top:6px;">${_input('cf-fcchurch-name', 'Church name', institutionOptionsHtml(cfcName).isOther ? cfcName : '')}</div>`;
   h += _row(_input('cf-fccity', 'City', p?.first_communion_city || ''), _stateSelect('cf-fcstate', p?.first_communion_state || ''));
   h += `<label>Country</label><select id="cf-fccountry">${COUNTRIES.map(co => `<option${(p?.first_communion_country || 'United States of America') === co ? ' selected' : ''}>${co}</option>`).join('')}</select>`;
 
@@ -285,13 +306,33 @@ function buildModalHtml(p, opts = {}) {
   return h;
 }
 
-function _hydrate() { renderModalDocs(); }
+function _hydrate() {
+  renderModalDocs();
+  // Lock+fill address for any preselected listed institution (onchange fires only on
+  // user change). No-op for "Other"/none. School fields exist only in the minor block.
+  institutionAddressSync('cf-school-sel', { street: 'cf-school-street', city: 'cf-school-city', state: 'cf-school-state' });
+  institutionAddressSync('cf-bchurch-sel', { city: 'cf-bcity', state: 'cf-bstate' });
+  institutionAddressSync('cf-fcchurch-sel', { city: 'cf-fccity', state: 'cf-fcstate' });
+}
+function confSchoolChange(v) {
+  const wrap = document.getElementById('cf-school-other-wrap'); if (wrap) wrap.style.display = v === '__other' ? 'block' : 'none';
+  institutionAddressAutofill(v, { street: 'cf-school-street', city: 'cf-school-city', state: 'cf-school-state' });
+}
+function confBaptismChange(v) {
+  const wrap = document.getElementById('cf-bchurch-other-wrap'); if (wrap) wrap.style.display = v === '__other' ? 'block' : 'none';
+  institutionAddressAutofill(v, { city: 'cf-bcity', state: 'cf-bstate' });
+}
+function confFcChurchChange(v) {
+  const wrap = document.getElementById('cf-fcchurch-other-wrap'); if (wrap) wrap.style.display = v === '__other' ? 'block' : 'none';
+  institutionAddressAutofill(v, { city: 'cf-fccity', state: 'cf-fcstate' });
+}
 function renderModalDocs() {
   const el = document.getElementById('cf-docs'); if (!el) return;
   el.innerHTML = _M.docs.map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;">
     <input type="checkbox" ${d.received ? 'checked' : ''} onchange="confDocReceived(${i},this.checked)" style="width:15px;height:15px;accent-color:var(--cardinal);" />
-    <span style="flex:1;font-size:13px;color:var(--navy);">${_esc(d.name)}</span>
-    ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : `<button onclick="confRemoveDoc(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">×</button>`}
+    <span style="font-size:13px;color:var(--navy);">${_esc(d.name)}</span>
+    ${docCheckStampHtml(d)}
+    ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;margin-left:8px;" title="Required"></i>` : `<button onclick="confRemoveDoc(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;margin-left:8px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">×</button>`}
   </div>`).join('') || `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No documents.</div>`;
 }
 
@@ -319,7 +360,7 @@ function confDobChange() {
   document.getElementById('cf-adultage-note').style.display = adultAge ? 'block' : 'none';
 }
 function confChurchChange(v) { detailsChurchToggle(v, 'cf'); }
-function confDocReceived(i, v) { _M.docs[i].received = v; }
+function confDocReceived(i, v) { applyDocCheck(_M.docs[i], v); renderModalDocs(); }
 function confRemoveDoc(i) { _M.docs.splice(i, 1); renderModalDocs(); }
 function confAddDoc() { const inp = document.getElementById('cf-doc-new'); const name = (inp?.value || '').trim(); if (!name) return; _M.docs.push({ name, received: false, deletable: true, auto: false }); inp.value = ''; renderModalDocs(); }
 
@@ -346,7 +387,10 @@ function _confReadPayload() {
     preparer: readPreparerValue('cf-preparer'),
     candidate_phone: minor ? null : (normalizePhone(_v('cf-cell')) || null),
     candidate_email: minor ? (_v('cf-email-minor') || null) : (_v('cf-email') || null),
-    school_name: minor ? (_v('cf-school') || null) : null,
+    school_name: minor ? institutionSelectedName(document.getElementById('cf-school-sel')?.value, 'cf-school-name') : null,
+    school_street: minor ? (_v('cf-school-street') || null) : null,
+    school_city:   minor ? (_v('cf-school-city') || null) : null,
+    school_state:  minor ? (_v('cf-school-state') || null) : null,
     grade_level: minor ? (document.getElementById('cf-grade')?.value || null) : null,
     parent_name: minor ? (_v('cf-parent-name') || null) : null,
     parent_phone: minor ? (normalizePhone(_v('cf-parent-phone')) || null) : null,
@@ -360,8 +404,10 @@ function _confReadPayload() {
     confirmation_location: churchSel === '__other' ? (_v('cf-church-override') || null) : (churchSel && churchSel !== '__other' ? ((store.institutions || []).find(i => i.id === churchSel)?.name || null) : null),
     // City/State: manual for "Other", else derived from the listed institution.
     ...(() => { const cs = detailsCityState(churchSel, 'cf-ccity', 'cf-cstate'); return { confirmation_city: cs.city, confirmation_state: cs.state }; })(),
-    baptism_church: _v('cf-bchurch') || null, baptism_city: _v('cf-bcity') || null, baptism_state: _v('cf-bstate') || null, baptism_country: _v('cf-bcountry') || null,
-    first_communion_church: _v('cf-fcchurch') || null, first_communion_city: _v('cf-fccity') || null, first_communion_state: _v('cf-fcstate') || null, first_communion_country: _v('cf-fccountry') || null,
+    baptism_church: institutionSelectedName(document.getElementById('cf-bchurch-sel')?.value, 'cf-bchurch-name'),
+    baptism_city: _v('cf-bcity') || null, baptism_state: _v('cf-bstate') || null, baptism_country: _v('cf-bcountry') || null,
+    first_communion_church: institutionSelectedName(document.getElementById('cf-fcchurch-sel')?.value, 'cf-fcchurch-name'),
+    first_communion_city: _v('cf-fccity') || null, first_communion_state: _v('cf-fcstate') || null, first_communion_country: _v('cf-fccountry') || null,
     documents: _M.docs,
     updated_at: nowIso(),
   };
@@ -428,7 +474,7 @@ export async function confSaveEdit(id) {
 }
 export async function confDeleteRec(id) {
   if (!confirm('Permanently delete this record? This cannot be undone.')) return { ok: false };
-  const { error } = await sb.from('sacramental_confirmation').delete().eq('id', id);
+  const { error } = await deleteWithRetry(() => sb.from('sacramental_confirmation').delete().eq('id', id));
   if (error) { reportWriteError('confirmation delete', error); return { ok: false }; }
   allConf = allConf.filter(x => x.id !== id);
   logActivity({ action: 'deleted Confirmation record', entityType: 'confirmation', entityName: id, contextType: 'confirmation' });
@@ -448,7 +494,7 @@ export async function confBulkStatus(ids, status) {
 
 async function confDeletePerson(id) {
   if (!confirm('Permanently delete this record? This cannot be undone.')) return;
-  const { error } = await sb.from('sacramental_confirmation').delete().eq('id', id);
+  const { error } = await deleteWithRetry(() => sb.from('sacramental_confirmation').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return; }
   confCloseModal(); await loadConfData(); refreshActivePanel();
 }
@@ -504,6 +550,7 @@ Object.assign(window, {
   openConfCreate, openConfEdit, openConfTemplates, confCloseModal,
   toggleConfDoc, addConfNote,
   confSetType, confCohortPick, confDobChange, confChurchChange,
+  confSchoolChange, confBaptismChange, confFcChurchChange,
   confDocReceived, confRemoveDoc, confAddDoc,
   confSave, confDeletePerson,
   confTplTab, confTplAdd, confTplRemove, confTplSvcToggle, confTplSave,

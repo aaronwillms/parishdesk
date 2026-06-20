@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { todayCST, fmtDateYear, PANEL_TITLES } from '../utils.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
@@ -191,7 +191,7 @@ async function saveScheduleEntries(prog) {
 }
 
 async function deleteScheduleEntry(prog, id) {
-  const { error } = await sb.from('program_schedule').delete().eq('id', id);
+  const { error } = await deleteWithRetry(() => sb.from('program_schedule').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return; }
   await loadCoordData(prog);
   openScheduleModal(prog);

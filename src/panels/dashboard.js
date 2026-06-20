@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity } from '../utils.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
@@ -836,7 +836,7 @@ async function loadActivityFeed() {
     c.querySelectorAll('.feed-delete-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const logId = btn.dataset.logId;
-        await sb.from('activity_log').delete().eq('id', logId);
+        await deleteWithRetry(() => sb.from('activity_log').delete().eq('id', logId));
         btn.closest('div[style*="border-bottom"]')?.remove();
       });
     });

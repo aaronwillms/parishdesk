@@ -1,7 +1,7 @@
-import { sb, withWriteRetry, serializeWrite, insertWithRetry } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite, insertWithRetry, deleteWithRetry } from '../supabase.js';
 import { notifyUsers } from '../notifications.js';
 import { store } from '../store.js';
-import { fmtDate, todayCST, logActivity, reportWriteError } from '../utils.js';
+import { fmtDate, todayCST, logActivity, reportWriteError, applyDocCheck, docCheckStampHtml } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
@@ -171,7 +171,7 @@ function advocateName(c) {
 }
 function caseDocs(c) {
   return (c.documents || []).map(d => ({
-    name: d.name, received: d.received ?? d.done ?? false, deletable: d.deletable ?? true,
+    name: d.name, received: d.received ?? d.done ?? false, deletable: d.deletable ?? true, checked_on: d.checked_on || null,
   }));
 }
 function caseTimeline(c) {
@@ -350,9 +350,9 @@ async function _anlPatch(caseId, patch) {
 // Document checkbox in the read view (write-retry wrapped).
 async function toggleCaseDoc(caseId, i) {
   const c = allCases.find(x => x.id === caseId); if (!c) return;
-  const docs = caseDocs(c).map(d => ({ name: d.name, received: d.received, deletable: d.deletable }));
+  const docs = caseDocs(c).map(d => ({ name: d.name, received: d.received, deletable: d.deletable, checked_on: d.checked_on || null }));
   if (!docs[i]) return;
-  docs[i].received = !docs[i].received;
+  applyDocCheck(docs[i], !docs[i].received);
   if (await _anlPatch(caseId, { documents: docs })) { refreshActivePanel(); renderAnnulmentAlerts(); }
 }
 
@@ -756,8 +756,9 @@ function renderModalDocs() {
     return `
     <div style="display:flex;align-items:center;gap:8px;padding:3px 0;">
       <input type="checkbox" ${d.received ? 'checked' : ''} onchange="anlDocReceived(${i},this.checked)" style="width:15px;height:15px;accent-color:var(--cardinal);" />
-      <span style="flex:1;font-size:13px;color:var(--navy);">${_esc(d.name)}</span>
-      ${d.deletable ? `<button onclick="anlRemoveDoc(${i})" title="Remove" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">×</button>` : `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>`}
+      <span style="font-size:13px;color:var(--navy);">${_esc(d.name)}</span>
+      ${docCheckStampHtml(d)}
+      ${d.deletable ? `<button onclick="anlRemoveDoc(${i})" title="Remove" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;margin-left:8px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">×</button>` : `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;margin-left:8px;" title="Required"></i>`}
     </div>`;
   }).join('');
   el.innerHTML = rows.trim() ? rows : `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No documents.</div>`;
@@ -806,7 +807,7 @@ function anlOnTypeChange(val) {
 // a merge/re-render never loses a just-toggled box).
 function _syncDocsReceivedFromDom() {
   const boxes = document.querySelectorAll('#am-docs input[type=checkbox]');
-  boxes.forEach((b, i) => { if (_M.docs[i]) _M.docs[i].received = b.checked; });
+  boxes.forEach((b, i) => { if (_M.docs[i]) applyDocCheck(_M.docs[i], b.checked); });
 }
 function anlOnAdvocateChange(val) {
   _M.advocateOther = val === '__other';
@@ -897,7 +898,7 @@ window.anlOnPrevToggle = () => {
 };
 function anlAddPrev() { _syncPrevFromDom(); _M.prev.push({ spouse_name: '', diocese: '' }); renderModalPrev(); }
 function anlRemovePrev(i) { _syncPrevFromDom(); _M.prev.splice(i, 1); renderModalPrev(); }
-function anlDocReceived(i, v) { _M.docs[i].received = v; }
+function anlDocReceived(i, v) { applyDocCheck(_M.docs[i], v); }
 function anlRemoveDoc(i) { _M.docs.splice(i, 1); renderModalDocs(); }
 function anlAddDoc() {
   const inp = document.getElementById('am-doc-new'); const name = (inp?.value || '').trim();
@@ -1091,7 +1092,7 @@ export async function anlSaveEdit(id) {
 
 export async function anlDeleteRec(id) {
   if (!confirm('Permanently delete this case? This cannot be undone.')) return { ok: false };
-  const { error } = await sb.from('annulment_cases').delete().eq('id', id);
+  const { error } = await deleteWithRetry(() => sb.from('annulment_cases').delete().eq('id', id));
   if (error) { reportWriteError('annulment delete', error); return { ok: false }; }
   allCases = allCases.filter(x => x.id !== id);
   store.allCases = allCases;

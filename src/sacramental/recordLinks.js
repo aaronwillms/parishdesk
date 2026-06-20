@@ -13,7 +13,7 @@
 // registers a small adapter (display cols + chips + search + open hook); rules + the
 // shared row rendering live here, reused by all three viewers.
 
-import { sb, withWriteRetry } from '../supabase.js';
+import { sb, withWriteRetry, deleteWithRetry } from '../supabase.js';
 import { logActivity } from '../utils.js';
 
 const esc = (s) => String(s == null ? '' : s)
@@ -66,7 +66,7 @@ export async function linkRecords(tA, idA, tB, idB) {
 }
 export async function unlinkRecords(tA, idA, tB, idB) {
   const n = _norm(tA, idA, tB, idB);
-  const { error } = await withWriteRetry(() => sb.from('record_links').delete().match(n), { kind: 'update' });
+  const { error } = await deleteWithRetry(() => sb.from('record_links').delete().match(n));
   if (error) { alert('Unlink failed: ' + error.message); return false; }
   logActivity({ action: 'unlinked records', entityType: 'record_link', entityName: `${tA} ↔ ${tB}`, contextType: 'link' });
   return true;

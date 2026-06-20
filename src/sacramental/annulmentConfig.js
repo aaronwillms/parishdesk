@@ -9,7 +9,7 @@
 // pulls a case into the bottom "Archived" group regardless of its status.
 // judgement_finalized ('yes'/'no') drives the pending-vs-final judgement chip.
 
-import { formatDateDisplay, fmtDate, todayCST } from '../utils.js';
+import { formatDateDisplay, fmtDate, todayCST, docCheckStampHtml } from '../utils.js';
 import { formatPhone } from '../utils/phone.js';
 import { isSacramentCoordinator } from '../roles.js';
 import {
@@ -210,7 +210,8 @@ function docLine(c, d, i, opts = {}) {
   return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;">
     <span style="${boxStyle}" ${boxAttrs}>${d.received ? '✅' : '⬜'}</span>
     <span style="flex:1;${clickable ? 'cursor:pointer;' : ''}color:${d.received ? '#2D6A4F' : 'var(--navy)'};" ${click}>${esc(d.name)}</span>
-    ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : ''}
+    ${docCheckStampHtml(d)}
+    ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;margin-left:8px;" title="Required"></i>` : ''}
   </div>`;
 }
 // Render a baptism doc line for a party with its location block + forward-only lock.

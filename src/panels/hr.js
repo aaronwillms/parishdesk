@@ -10,7 +10,7 @@
 // e.target.closest('[data-action]'). Structural writes lean on Stage 1 RLS
 // (parish-scoped SELECT, is_admin() writes) — no new policies here.
 
-import { sb } from '../supabase.js';
+import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin, isSuperAdmin } from '../roles.js';
 import { closeModal } from '../ui/modal.js';
@@ -631,7 +631,7 @@ async function deletePosition(posId) {
       .in('id', children.map(c => c.id));
     if (rErr) { alert('Reparent failed: ' + rErr.message); return; }
   }
-  const { error } = await sb.from('positions').delete().eq('id', posId);
+  const { error } = await deleteWithRetry(() => sb.from('positions').delete().eq('id', posId));
   if (error) { alert('Delete failed: ' + error.message); return; }
   logActivity({ action: 'deleted position', entityType: 'position', entityName: pos.title });
   await loadHr();
@@ -885,7 +885,7 @@ async function hrEditRecord(type, id) {
 async function hrDeleteRecord(type, id) {
   const meta = RECORD_META[type];
   if (!confirm(`Delete this ${meta.label.toLowerCase()}? This cannot be undone.`)) return;
-  const { error } = await sb.from(meta.table).delete().eq('id', id);
+  const { error } = await deleteWithRetry(() => sb.from(meta.table).delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return; }
   logActivity({ action: `deleted ${meta.label.toLowerCase()}`, entityType: 'hr_record', entityName: meta.label });
   reopenCard();
@@ -1115,7 +1115,7 @@ async function hrAddLink(type, id) {
   hrViewRecord(type, id);   // reopen the originating record's view
 }
 async function hrRemoveLink(linkId, type, id) {
-  const { error } = await sb.from('incident_disciplinary_links').delete().eq('id', linkId);
+  const { error } = await deleteWithRetry(() => sb.from('incident_disciplinary_links').delete().eq('id', linkId));
   if (error) { alert('Remove failed: ' + error.message); return; }
   hrViewRecord(type, id);
 }
@@ -1339,8 +1339,8 @@ function hrEditTemplate(id) {
 }
 async function hrDeleteTemplate(id) {
   if (!confirm('Delete this template? Saved reviews already created from it are unaffected (they keep their own frozen copy).')) return;
-  await sb.from('review_template_positions').delete().eq('template_id', id);
-  const { error } = await sb.from('review_templates').delete().eq('id', id);
+  await deleteWithRetry(() => sb.from('review_template_positions').delete().eq('template_id', id));
+  const { error } = await deleteWithRetry(() => sb.from('review_templates').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return; }
   await refreshTemplates();
   openTemplateManager();
@@ -1494,7 +1494,7 @@ async function hrSaveTemplate() {
     templateId = data.id;
   }
   // Re-sync position assignments (delete-all + insert selected).
-  await sb.from('review_template_positions').delete().eq('template_id', templateId);
+  await deleteWithRetry(() => sb.from('review_template_positions').delete().eq('template_id', templateId));
   const ids = [..._builder.positionIds];
   if (ids.length) {
     await sb.from('review_template_positions').insert(ids.map(pid => ({ template_id: templateId, position_id: pid })));

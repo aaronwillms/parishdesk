@@ -12,7 +12,7 @@
 // it changes the DEFAULTS inherited by FUTURE file assignments and never rewrites
 // church/formation already saved on existing files.
 
-import { sb, withWriteRetry, insertWithRetry } from '../supabase.js';
+import { sb, withWriteRetry, insertWithRetry, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { cohortChurchLocation } from './churchLocation.js';
 import { buildPreparerField, readPreparerValue } from './preparerField.js';
@@ -132,7 +132,7 @@ if (typeof window !== 'undefined') {
   window.cohortMgrDelete = async (panel, id) => {
     const cfg = _reg[panel]; if (!cfg) return;
     if (!confirm(`Delete this cohort? ${cfg.deleteNote || 'Records keep their data but lose the cohort link.'}`)) return;
-    const { error } = await withWriteRetry(() => sb.from('sacramental_cohorts').delete().eq('id', id), { kind: 'update' });
+    const { error } = await deleteWithRetry(() => sb.from('sacramental_cohorts').delete().eq('id', id));
     if (error) { alert('Delete failed: ' + error.message); return; }
     await cfg.reloadCohorts(); cfg.open(buildHtml(cfg)); cfg.refresh();
   };

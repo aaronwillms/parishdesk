@@ -18,7 +18,7 @@
 // supporting two independent filter axes, the move-stage control, and per-file
 // read-only gating that the config-driven shell does not express cleanly.
 
-import { sb, withWriteRetry, serializeWrite, insertWithRetry } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite, insertWithRetry, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { logActivity, reportWriteError, todayCST, formatDateDisplay, daysUntil } from '../utils.js';
 import { isSuperAdmin, canAccessDiscernment } from '../roles.js';
@@ -412,7 +412,7 @@ async function addNote(discernerId) {
 }
 async function deleteNote(noteId) {
   const d = selected(); if (!d || !canWriteDiscerner(d)) return;
-  const { error } = await withWriteRetry(() => sb.from('discernment_notes').delete().eq('id', noteId), { kind: 'update' });
+  const { error } = await deleteWithRetry(() => sb.from('discernment_notes').delete().eq('id', noteId));
   if (error) { reportWriteError('discernment note delete', error); return; }
   _notesByD[d.id] = (_notesByD[d.id] || []).filter(n => n.id !== noteId);
   render();
@@ -443,7 +443,7 @@ async function toggleFollowup(followupId, done) {
 }
 async function deleteFollowup(followupId) {
   const d = selected(); if (!d || !canWriteDiscerner(d)) return;
-  const { error } = await withWriteRetry(() => sb.from('discernment_followups').delete().eq('id', followupId), { kind: 'update' });
+  const { error } = await deleteWithRetry(() => sb.from('discernment_followups').delete().eq('id', followupId));
   if (error) { reportWriteError('discernment follow-up delete', error); return; }
   _followByD[d.id] = (_followByD[d.id] || []).filter(x => x.id !== followupId);
   render();

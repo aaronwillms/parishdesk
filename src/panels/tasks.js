@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity } from '../utils.js';
 import { createContactPicker } from '../ui/contactPicker.js';
@@ -719,7 +719,7 @@ async function saveTask(id) {
 async function deleteTask(id) {
   const t = (store.allTasks || []).find(x => x.id === id);
   if (!confirm(`Delete "${t?.title}"?`)) return;
-  const { error } = await sb.from('tasks').delete().eq('id', id);
+  const { error } = await deleteWithRetry(() => sb.from('tasks').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return; }
   logActivity({ action: 'deleted task', entityType: 'task', entityName: t?.title || 'Unknown' });
   store.allTasks = (store.allTasks || []).filter(x => x.id !== id);

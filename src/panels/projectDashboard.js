@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity } from '../utils.js';
 import { createContactPicker } from '../ui/contactPicker.js';
@@ -268,7 +268,7 @@ function _bindTaskEvents() {
       const taskId = btn.dataset.taskId;
       const t = _tasks.find(x => x.id === taskId);
       if (!confirm(`Delete "${t?.title || 'this task'}"?`)) return;
-      const { error } = await sb.from('tasks').delete().eq('id', taskId);
+      const { error } = await deleteWithRetry(() => sb.from('tasks').delete().eq('id', taskId));
       if (error) { alert('Delete failed: ' + error.message); return; }
       logActivity({ action: 'deleted task', entityType: 'task', entityName: t?.title || 'Unknown' });
       _tasks = _tasks.filter(x => x.id !== taskId);
@@ -644,7 +644,7 @@ async function _saveProjectDetails(e) {
 
 async function _deleteProject() {
   if (!confirm(`Delete "${_project.title}"? This cannot be undone.`)) return;
-  const { error } = await sb.from('projects').delete().eq('id', _projectId);
+  const { error } = await deleteWithRetry(() => sb.from('projects').delete().eq('id', _projectId));
   if (error) { alert('Delete failed: ' + error.message); return; }
   logActivity({ action: 'deleted project', entityType: 'project', entityName: _project.title });
   window.switchPanel('projects');

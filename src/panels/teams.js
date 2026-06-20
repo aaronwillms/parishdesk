@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin } from '../roles.js';
 import { logActivity } from '../utils.js';
@@ -207,7 +207,7 @@ async function saveTeam(id) {
 async function deleteTeam(id) {
   const t = allTeams.find(x => x.id === id);
   if (!confirm(`Delete "${t?.name}"? This will also remove all members. This cannot be undone.`)) return;
-  const { error } = await sb.from('teams').delete().eq('id', id);
+  const { error } = await deleteWithRetry(() => sb.from('teams').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return; }
   logActivity({ action: 'deleted team', entityType: 'team', entityName: t?.name || 'Unknown' });
   closeModal();

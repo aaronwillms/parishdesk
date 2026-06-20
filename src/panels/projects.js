@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, logActivity } from '../utils.js';
 import { notifyUsers, getUserIdsForTeam, getUserIdForPersonnel } from '../notifications.js';
@@ -544,7 +544,7 @@ async function saveProject(id) {
 async function deleteProject(id) {
   const p = store.allProjects.find(x => x.id === id);
   if (!confirm(`Delete "${p?.title}"? This cannot be undone.`)) return;
-  const { error } = await sb.from('projects').delete().eq('id', id);
+  const { error } = await deleteWithRetry(() => sb.from('projects').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return; }
   logActivity({ action: 'deleted project', entityType: 'project', entityName: p?.title || 'Unknown' });
   // Remove from local store + DOM immediately (no refresh needed)

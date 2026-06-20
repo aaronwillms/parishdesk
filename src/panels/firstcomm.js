@@ -1,13 +1,14 @@
-import { sb, withWriteRetry, serializeWrite, insertWithRetry } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite, insertWithRetry, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError, applyDocCheck, docCheckStampHtml } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { registerFamilyPanel, familyAddPickerHtml, getPendingAdd, clearPendingAdd, familyLink } from '../sacramental/familyLink.js';
-import { detailsChurchToggle, detailsCityState, inheritCohortChurch, inheritCohortFormation } from '../sacramental/churchLocation.js';
+import { detailsChurchToggle, detailsCityState, inheritCohortChurch, inheritCohortFormation,
+  institutionAddressAutofill, institutionOptionsHtml, institutionSelectedName, institutionAddressSync } from '../sacramental/churchLocation.js';
 import { registerCohortManager } from '../sacramental/cohortManager.js';
 
 const FC_STATUS = {
@@ -16,7 +17,6 @@ const FC_STATUS = {
   complete:    { label:'Complete',         color:'#2D6A4F', bg:'#D8F3DC', dot:'#2D6A4F' },  // green
   inactive:    { label:'Inactive',         color:'#616A6B', bg:'#F2F3F4', dot:'#AAB7B8' },  // grey
 };
-const GRADES = ['K', '1', '2', '3', '4', '5', '6', '7', '8', 'Other'];
 const COUNTRIES = ['United States of America', 'Mexico', 'Philippines', 'Vietnam', 'Nigeria', 'India', 'Other'];
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
 const FALLBACK_DOCS = [{ name: 'Baptismal Certificate', deletable: false }];
@@ -37,7 +37,7 @@ function nameOf(p) { return (p.first_name || p.last_name) ? `${p.first_name || '
 function lastNameOf(p) { if (p.last_name) return p.last_name; const parts = (p.name || '').trim().split(/\s+/); return parts[parts.length - 1] || ''; }
 function statusOf(p) { return p.status_code || 'enrolled'; }
 function commDate(p) { return p ? (p.communion_date || p.sacrament_date || null) : null; }
-function normDocs(p) { return (p.documents || []).map(d => ({ name: d.name, received: d.received ?? d.done ?? false, deletable: d.deletable ?? !d.auto, auto: !!d.auto })); }
+function normDocs(p) { return (p.documents || []).map(d => ({ name: d.name, received: d.received ?? d.done ?? false, deletable: d.deletable ?? !d.auto, auto: !!d.auto, checked_on: d.checked_on || null })); }
 function notesOf(p) {
   const out = (Array.isArray(p.notes_log) ? p.notes_log : []).map(n => ({ note: n.note || '', by: n.by || null, created_at: n.created_at || null }));
   if (p.notes && String(p.notes).trim()) out.push({ note: String(p.notes).trim(), by: null, created_at: null, legacy: true });
@@ -123,7 +123,7 @@ export async function expandFirstComm(id) {
 async function _patch(id, patch) { const p = allFc.find(x => x.id === id); if (!p) return null; const { error } = await serializeWrite(`firstcomm:${id}`, () => withWriteRetry(() => sb.from('sacramental_firstcomm').update({ ...patch, updated_at: nowIso() }).eq('id', id), { kind: 'update' })); if (error) { alert('Save failed: ' + error.message); return null; } Object.assign(p, patch); return p; }
 async function toggleFcDoc(id, i) {
   const p = allFc.find(x => x.id === id); if (!p) return;
-  const docs = normDocs(p); docs[i].received = !docs[i].received;
+  const docs = normDocs(p); applyDocCheck(docs[i], !docs[i].received);
   const prevAll = normDocs(p).length > 0 && normDocs(p).every(d => d.received);
   const allDone = docs.length > 0 && docs.every(d => d.received);
   const patch = { documents: docs };
@@ -153,6 +153,22 @@ function _input(id, label, val = '', type = 'text') { return `<label>${label}</l
 function _stateSelect(id, val) { return `<label>State</label><select id="${id}"><option value="">—</option>${US_STATES.map(s => `<option${s === val ? ' selected' : ''}>${s}</option>`).join('')}</select>`; }
 function _toggle(id, label, on, onchange = '') { return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:.75rem;"><input type="checkbox" id="${id}" ${on ? 'checked' : ''} ${onchange ? `onchange="${onchange}"` : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />${label}</label>`; }
 function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cardinal);margin:1.4rem 0 .5rem;border-bottom:.5px solid var(--stone);padding-bottom:4px;">${t}</div>`; }
+// Grade dropdown 2–12, default 2. An out-of-range stored grade (legacy K/1/Other)
+// is preserved as a leading option so editing a record never silently drops it.
+const GRADE_OPTS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+function _gradeSelect(id, current) {
+  const cur = current || '2';
+  const extra = (cur && !GRADE_OPTS.includes(cur)) ? `<option selected>${_esc(cur)}</option>` : '';
+  return `<label>Grade Level</label><select id="${id}">${extra}${GRADE_OPTS.map(g => `<option${g === cur ? ' selected' : ''}>${g}</option>`).join('')}</select>`;
+}
+// Institution dropdown ("— Select —" + institutions + "Other…") for a text-stored
+// church/school field. `name` is the stored NAME (preselected by match); the
+// dropdown VALUES are institution ids so institutionAddressAutofill can resolve
+// the address. `onchange` is the window handler that toggles the override + autofills.
+function _instSelect(id, name, onchange) {
+  const { options, isOther } = institutionOptionsHtml(name);
+  return `<select id="${id}" onchange="${onchange}(this.value)"><option value="">— Select —</option>${options}<option value="__other"${isOther ? ' selected' : ''}>Other…</option></select>`;
+}
 
 async function openFcCreate() {
   clearPendingAdd('firstcomm');
@@ -203,7 +219,15 @@ function buildModalHtml(p, opts = {}) {
   h += _row(_input('ff-first', 'First Name', np.first), _input('ff-middle', 'Middle', np.middle), _input('ff-last', 'Last Name', np.last));
   h += `<label>Date of Birth</label><input type="date" id="ff-dob" value="${(p?.dob && /^\d{4}-\d{2}-\d{2}/.test(p.dob)) ? p.dob.slice(0, 10) : ''}" oninput="fcDobChange()" />`;
   h += `<div id="ff-age-note" class="anl-info-box" style="display:${age !== null && age > 13 ? 'block' : 'none'};">For older candidates, consider the Confirmation or OCIA panel.</div>`;
-  h += _row(_input('ff-school', 'School Name', p?.school_name || ''), `<label>Grade Level</label><select id="ff-grade">${GRADES.map(g => `<option${(p?.grade_level || p?.grade) === g ? ' selected' : ''}>${g}</option>`).join('')}</select>`);
+  // School — institution dropdown + Other. Selecting a listed school autofills +
+  // greys its Street/City/State (from the institution record). Name round-trips
+  // via school_name; the address persists to school_street/city/state (school_address migration).
+  const schoolName = p?.school_name || '';
+  const schoolOther = institutionOptionsHtml(schoolName).isOther;
+  h += _row(`<label>School</label>${_instSelect('ff-school-sel', schoolName, 'fcSchoolChange')}`, _gradeSelect('ff-grade', p?.grade_level || p?.grade));
+  h += `<div id="ff-school-other-wrap" style="display:${schoolOther ? 'block' : 'none'};margin-top:6px;">${_input('ff-school-name', 'School name', schoolOther ? schoolName : '')}</div>`;
+  h += _input('ff-school-street', 'School Street Address', p?.school_street || '');
+  h += _row(_input('ff-school-city', 'School City', p?.school_city || ''), _stateSelect('ff-school-state', p?.school_state || ''));
   h += _input('ff-street', 'Mailing Street Address', p?.child_street || '');
   h += _row(_input('ff-city', 'City', p?.child_city || ''), _stateSelect('ff-state', p?.child_state || ''), _input('ff-zip', 'ZIP', p?.child_zip || ''));
 
@@ -214,7 +238,12 @@ function buildModalHtml(p, opts = {}) {
 
   // 5 — Baptism
   h += _sectionHead('Baptism Information');
-  h += _input('ff-bchurch', 'Church of Baptism', p?.baptism_church || '');
+  // Church of Baptism — institution dropdown + Other; a listed church autofills +
+  // greys City/State (name round-trips via baptism_church).
+  const bchName = p?.baptism_church || '';
+  const bchOther = institutionOptionsHtml(bchName).isOther;
+  h += `<label>Church of Baptism</label>${_instSelect('ff-bchurch-sel', bchName, 'fcBaptismChange')}`;
+  h += `<div id="ff-bchurch-other-wrap" style="display:${bchOther ? 'block' : 'none'};margin-top:6px;">${_input('ff-bchurch-name', 'Church name', bchOther ? bchName : '')}</div>`;
   h += _row(_input('ff-bcity', 'City', p?.baptism_city || ''), _stateSelect('ff-bstate', p?.baptism_state || ''));
   h += `<label>Country</label><select id="ff-bcountry">${COUNTRIES.map(co => `<option${(p?.baptism_country || 'United States of America') === co ? ' selected' : ''}>${co}</option>`).join('')}</select>`;
 
@@ -253,13 +282,30 @@ function buildModalHtml(p, opts = {}) {
   return h;
 }
 
-function _hydrate() { renderModalDocs(); }
+function _hydrate() {
+  renderModalDocs();
+  // Lock+fill address fields for any preselected listed institution (onchange only
+  // fires on user interaction). No-op for "Other"/none so manual values persist.
+  institutionAddressSync('ff-school-sel', { street: 'ff-school-street', city: 'ff-school-city', state: 'ff-school-state' });
+  institutionAddressSync('ff-bchurch-sel', { city: 'ff-bcity', state: 'ff-bstate' });
+}
+// School dropdown change — toggle the "Other" name input + autofill/grey address.
+function fcSchoolChange(v) {
+  const wrap = document.getElementById('ff-school-other-wrap'); if (wrap) wrap.style.display = v === '__other' ? 'block' : 'none';
+  institutionAddressAutofill(v, { street: 'ff-school-street', city: 'ff-school-city', state: 'ff-school-state' });
+}
+// Baptism church dropdown change — toggle "Other" name input + autofill/grey City/State.
+function fcBaptismChange(v) {
+  const wrap = document.getElementById('ff-bchurch-other-wrap'); if (wrap) wrap.style.display = v === '__other' ? 'block' : 'none';
+  institutionAddressAutofill(v, { city: 'ff-bcity', state: 'ff-bstate' });
+}
 function renderModalDocs() {
   const el = document.getElementById('ff-docs'); if (!el) return;
   el.innerHTML = _M.docs.map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;">
     <input type="checkbox" ${d.received ? 'checked' : ''} onchange="fcDocReceived(${i},this.checked)" style="width:15px;height:15px;accent-color:var(--cardinal);" />
-    <span style="flex:1;font-size:13px;color:var(--navy);">${_esc(d.name)}</span>
-    ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : `<button onclick="fcRemoveDoc(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">×</button>`}
+    <span style="font-size:13px;color:var(--navy);">${_esc(d.name)}</span>
+    ${docCheckStampHtml(d)}
+    ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;margin-left:8px;" title="Required"></i>` : `<button onclick="fcRemoveDoc(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;margin-left:8px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">×</button>`}
   </div>`).join('') || `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No documents.</div>`;
 }
 
@@ -271,7 +317,7 @@ function fcCohortPick(v) {
 }
 function fcDobChange() { const age = ageOf(document.getElementById('ff-dob').value); document.getElementById('ff-age-note').style.display = (age !== null && age > 13) ? 'block' : 'none'; }
 function fcChurchChange(v) { detailsChurchToggle(v, 'ff'); }
-function fcDocReceived(i, v) { _M.docs[i].received = v; }
+function fcDocReceived(i, v) { applyDocCheck(_M.docs[i], v); renderModalDocs(); }
 function fcRemoveDoc(i) { _M.docs.splice(i, 1); renderModalDocs(); }
 function fcAddDoc() { const inp = document.getElementById('ff-doc-new'); const name = (inp?.value || '').trim(); if (!name) return; _M.docs.push({ name, received: false, deletable: true, auto: false }); inp.value = ''; renderModalDocs(); }
 
@@ -293,10 +339,13 @@ function _fcReadPayload() {
     dob: _v('ff-dob') || null,
     cohort_id: cohortSel || null, cohort_date: coh?.cohort_date || null,
     preparer: readPreparerValue('ff-preparer'),
-    school_name: _v('ff-school') || null, grade_level: document.getElementById('ff-grade')?.value || null,
+    school_name: institutionSelectedName(document.getElementById('ff-school-sel')?.value, 'ff-school-name'),
+    school_street: _v('ff-school-street') || null, school_city: _v('ff-school-city') || null, school_state: _v('ff-school-state') || null,
+    grade_level: document.getElementById('ff-grade')?.value || null,
     child_street: _v('ff-street') || null, child_city: _v('ff-city') || null, child_state: _v('ff-state') || null, child_zip: _v('ff-zip') || null,
     parent1_first: _v('ff-p1first') || null, parent1_last: _v('ff-p1last') || null, parent1_phone: normalizePhone(_v('ff-p1phone')) || null, parent1_email: _v('ff-p1email') || null,
-    baptism_church: _v('ff-bchurch') || null, baptism_city: _v('ff-bcity') || null, baptism_state: _v('ff-bstate') || null, baptism_country: _v('ff-bcountry') || null,
+    baptism_church: institutionSelectedName(document.getElementById('ff-bchurch-sel')?.value, 'ff-bchurch-name'),
+    baptism_city: _v('ff-bcity') || null, baptism_state: _v('ff-bstate') || null, baptism_country: _v('ff-bcountry') || null,
     communion_date: _v('ff-cdate') || null,
     communion_institution_id: churchSel && churchSel !== '__other' ? churchSel : null,
     communion_church_override: churchSel === '__other' ? (_v('ff-church-override') || null) : null,
@@ -362,7 +411,7 @@ export async function fcSaveEdit(id) {
 }
 export async function fcDeleteRec(id) {
   if (!confirm('Permanently delete this record? This cannot be undone.')) return { ok: false };
-  const { error } = await sb.from('sacramental_firstcomm').delete().eq('id', id);
+  const { error } = await deleteWithRetry(() => sb.from('sacramental_firstcomm').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return { ok: false }; }
   allFc = allFc.filter(x => x.id !== id);
   logActivity({ action: 'deleted First Communion record', entityType: 'firstcomm', entityName: id, contextType: 'firstcomm' });
@@ -381,7 +430,7 @@ export async function fcBulkStatus(ids, status) {
 }
 async function fcDeletePerson(id) {
   if (!confirm('Permanently delete this record? This cannot be undone.')) return;
-  const { error } = await sb.from('sacramental_firstcomm').delete().eq('id', id);
+  const { error } = await deleteWithRetry(() => sb.from('sacramental_firstcomm').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return; }
   fcCloseModal(); await loadFcData(); refreshActivePanel();
 }
@@ -430,7 +479,7 @@ Object.assign(window, {
   loadFirstComm, expandFirstComm,
   openFcCreate, openFcEdit, openFcTemplate, fcCloseModal,
   toggleFcDoc, toggleFcPrep, addFcNote,
-  fcCohortPick, fcDobChange, fcChurchChange,
+  fcCohortPick, fcDobChange, fcChurchChange, fcSchoolChange, fcBaptismChange,
   fcDocReceived, fcRemoveDoc, fcAddDoc,
   fcSave, fcDeletePerson,
   fcTplAdd, fcTplRemove, fcTplSave,

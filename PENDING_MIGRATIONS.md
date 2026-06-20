@@ -3,6 +3,20 @@
 These migrations are written but NOT yet applied. Apply each once in the Supabase
 SQL editor, then move it to the "Applied" section below.
 
+## 🚧 BLOCKING — `20260620_school_address.sql` (apply before FC/Confirmation saves)
+
+Adds `school_street` / `school_city` / `school_state` to **`sacramental_firstcomm`**
+and **`sacramental_confirmation`** so the new School institution-dropdown can
+autofill + persist the selected school's address. Additive, idempotent, nullable.
+
+**Why BLOCKING:** the FC and Confirmation save payloads now always include these
+three keys, so until the columns exist PostgREST rejects EVERY First Communion and
+Confirmation insert/update ("column not found"). The school NAME, baptism church,
+and first-communion church conversions need NOTHING new (they round-trip through
+the existing `school_name` / `baptism_church` / `first_communion_church` text
+columns + their existing `*_city`/`*_state` columns) — only the School ADDRESS
+genuinely lacked storage. Apply this, then FC/Confirmation save again.
+
 ## 🚧 BLOCKING — `20260620_record_links.sql` (table created; RLS fix still needed)
 
 Creates `record_links` (cross-panel direct bidirectional pairs: OCIA / Marriage /

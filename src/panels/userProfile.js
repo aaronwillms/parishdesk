@@ -1,4 +1,4 @@
-import { sb } from '../supabase.js';
+import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 
@@ -416,11 +416,11 @@ async function _disconnectGoogle() {
   const statusEl = document.getElementById('up-gcal-status');
   statusEl.textContent = 'Disconnecting…';
 
-  const { error } = await sb.from('calendars')
+  const { error } = await deleteWithRetry(() => sb.from('calendars')
     .delete()
     .eq('user_id', _user.id)
     .eq('type', 'google')
-    .eq('scope', 'personal');
+    .eq('scope', 'personal'));
 
   if (error) { statusEl.textContent = 'Error: ' + error.message; return; }
   _googleCal = null;

@@ -4,7 +4,7 @@
 // existing Confirmation data/cohort/type/status/edit-form/save logic from
 // panels/confirmation.js — nothing reimplemented here.
 
-import { formatDateDisplay, fmtDate } from '../utils.js';
+import { formatDateDisplay, fmtDate, docCheckStampHtml } from '../utils.js';
 import { formatPhone } from '../utils/phone.js';
 import { isSacramentCoordinator } from '../roles.js';
 import { familySectionHtml } from './familyLink.js';
@@ -86,7 +86,8 @@ function documents(p) {
     h += docs.map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
       <span style="font-size:15px;cursor:pointer;" onclick="toggleConfDoc('${p.id}',${i})">${d.received ? '✅' : '⬜'}</span>
       <span style="flex:1;cursor:pointer;color:${d.received ? '#2D6A4F' : 'var(--navy)'};" onclick="toggleConfDoc('${p.id}',${i})">${esc(d.name)}</span>
-      ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : ''}
+      ${docCheckStampHtml(d)}
+      ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;margin-left:8px;" title="Required"></i>` : ''}
     </div>`).join('');
   } else { h += `<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No documents.</div>`; }
   return h;

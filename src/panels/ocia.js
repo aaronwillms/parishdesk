@@ -1,12 +1,13 @@
-import { sb, withWriteRetry, serializeWrite, insertWithRetry } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite, insertWithRetry, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError, applyDocCheck, docCheckStampHtml } from '../utils.js';
 import { expandCase, ensureCaseDisplays, getCaseDisplay } from './annulments.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
-import { inheritCohortFormation } from '../sacramental/churchLocation.js';
+import { inheritCohortFormation,
+  institutionAddressAutofill, institutionOptionsHtml, institutionSelectedName, institutionAddressSync } from '../sacramental/churchLocation.js';
 import { registerCohortManager } from '../sacramental/cohortManager.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 
@@ -86,7 +87,7 @@ function pmResolved(m) {
 }
 function isMinor(p) { const a = ociaAge(p.dob); return a !== null && a < 18; }
 function hasConsent(p) { return !!p.parental_consent; }
-function normDocs(p) { return (p.documents || []).map(d => ({ name: d.name, received: d.received ?? d.done ?? false, deletable: d.deletable ?? !d.auto, auto: !!d.auto })); }
+function normDocs(p) { return (p.documents || []).map(d => ({ name: d.name, received: d.received ?? d.done ?? false, deletable: d.deletable ?? !d.auto, auto: !!d.auto, checked_on: d.checked_on || null })); }
 function notesOf(p) {
   const out = (Array.isArray(p.notes_log) ? p.notes_log : []).map(n => ({ note: n.note || '', by: n.by || null, created_at: n.created_at || null }));
   if (p.notes && String(p.notes).trim()) out.push({ note: String(p.notes).trim(), by: null, created_at: null, legacy: true });
@@ -344,8 +345,13 @@ function buildModalHtml(p, opts = {}) {
 
   // Section 4 — Baptism (candidate only)
   h += `<div id="of-baptism-section" style="display:${_M.type === 'candidate' ? 'block' : 'none'};">`;
-  h += _sectionHead('Baptism');
-  h += _input('of-bchurch', 'Church of Baptism', p?.baptism_church || '');
+  h += _sectionHead('Baptism Information');
+  // Church of Baptism — institution dropdown + Other; a listed church autofills +
+  // greys City/State (name round-trips via baptism_church).
+  const obchName = p?.baptism_church || '';
+  const obchOther = institutionOptionsHtml(obchName).isOther;
+  h += `<label>Church of Baptism</label><select id="of-bchurch-sel" onchange="ociaBaptismChange(this.value)"><option value="">— Select —</option>${institutionOptionsHtml(obchName).options}<option value="__other"${obchOther ? ' selected' : ''}>Other…</option></select>`;
+  h += `<div id="of-bchurch-other-wrap" style="display:${obchOther ? 'block' : 'none'};margin-top:6px;">${_input('of-bchurch-name', 'Church name', obchOther ? obchName : '')}</div>`;
   h += _row(_input('of-bcity', 'City', p?.baptism_city || p?.baptism_city_state || ''), _stateSelect('of-bstate', p?.baptism_state || ''));
   h += `<label>Country</label><select id="of-bcountry">${COUNTRIES.map(co => `<option${(p?.baptism_country || 'United States of America') === co ? ' selected' : ''}>${co}</option>`).join('')}</select>`;
   h += `</div>`;
@@ -405,13 +411,24 @@ function ociaSacramentRows(p) {
   return row('of-sac-baptism', 'Baptism', candidate ? false : val('baptism'), candidate) + row('of-sac-confirmation', 'Confirmation', val('confirmation'), false) + row('of-sac-eucharist', 'First Eucharist', val('eucharist'), false);
 }
 
-function _hydrate() { renderModalDocs(); renderPrior(); renderFamilyChip(); }
+function _hydrate() {
+  renderModalDocs(); renderPrior(); renderFamilyChip();
+  // Lock+fill baptism City/State if a listed church is preselected (candidate only;
+  // no-op when hidden/empty/"Other").
+  institutionAddressSync('of-bchurch-sel', { city: 'of-bcity', state: 'of-bstate' });
+}
+// Baptism church dropdown change — toggle "Other" name input + autofill/grey City/State.
+function ociaBaptismChange(v) {
+  const wrap = document.getElementById('of-bchurch-other-wrap'); if (wrap) wrap.style.display = v === '__other' ? 'block' : 'none';
+  institutionAddressAutofill(v, { city: 'of-bcity', state: 'of-bstate' });
+}
 function renderModalDocs() {
   const el = document.getElementById('of-docs'); if (!el) return;
   el.innerHTML = _M.docs.map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;">
     <input type="checkbox" ${d.received ? 'checked' : ''} onchange="ociaDocReceived(${i},this.checked)" style="width:15px;height:15px;accent-color:var(--cardinal);" />
-    <span style="flex:1;font-size:13px;color:var(--navy);">${_esc(d.name)}</span>
-    ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : `<button onclick="ociaRemoveDoc(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">×</button>`}
+    <span style="font-size:13px;color:var(--navy);">${_esc(d.name)}</span>
+    ${docCheckStampHtml(d)}
+    ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;margin-left:8px;" title="Required"></i>` : `<button onclick="ociaRemoveDoc(${i})" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;margin-left:8px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">×</button>`}
   </div>`).join('') || `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No documents.</div>`;
 }
 function renderPrior() {
@@ -465,7 +482,7 @@ function _syncPrior() { _M.prior = _M.prior.map((m, i) => ({ spouse_name: docume
 function ociaAddPrior() { _syncPrior(); _M.prior.push({ spouse_name: '', how_ended: 'Death', annulment_case_id: null }); renderPrior(); }
 function ociaRemovePrior(i) { _syncPrior(); _M.prior.splice(i, 1); renderPrior(); }
 function ociaPriorEnded(i, v) { document.getElementById(`of-pm-annul-${i}`).style.display = v === 'Annulment' ? 'block' : 'none'; _syncPrior(); }
-function ociaDocReceived(i, v) { _M.docs[i].received = v; }
+function ociaDocReceived(i, v) { applyDocCheck(_M.docs[i], v); renderModalDocs(); }
 function ociaRemoveDoc(i) { _M.docs.splice(i, 1); renderModalDocs(); }
 function ociaAddDoc() { const inp = document.getElementById('of-doc-new'); const name = (inp?.value || '').trim(); if (!name) return; _M.docs.push({ name, received: false, deletable: true, auto: false }); inp.value = ''; renderModalDocs(); }
 
@@ -525,7 +542,7 @@ function _ociaReadPayload() {
     minor_permission_date: minor ? (_v('of-permdate') || null) : null,
     consent_parent_name: minor && _chk('of-consent') ? (_v('of-guardian') || null) : null,
     consent_date: minor && _chk('of-consent') ? (_v('of-permdate') || null) : null,
-    baptism_church: type === 'candidate' ? (_v('of-bchurch') || null) : null,
+    baptism_church: type === 'candidate' ? institutionSelectedName(document.getElementById('of-bchurch-sel')?.value, 'of-bchurch-name') : null,
     baptism_city: type === 'candidate' ? (_v('of-bcity') || null) : null,
     baptism_state: type === 'candidate' ? (_v('of-bstate') || null) : null,
     baptism_country: type === 'candidate' ? (_v('of-bcountry') || null) : null,
@@ -596,7 +613,7 @@ export async function ociaSaveEdit(id) {
 }
 export async function ociaDeleteRec(id) {
   if (!confirm('Permanently delete this record? This cannot be undone.')) return { ok: false };
-  const { error } = await sb.from('sacramental_ocia').delete().eq('id', id);
+  const { error } = await deleteWithRetry(() => sb.from('sacramental_ocia').delete().eq('id', id));
   if (error) { reportWriteError('ocia delete', error); return { ok: false }; }
   allOcia = allOcia.filter(x => x.id !== id); store.allOcia = allOcia;
   logActivity({ action: 'deleted OCIA record', entityType: 'ocia', entityName: id, contextType: 'ocia' });
@@ -649,7 +666,7 @@ async function ociaTplSave() {
 Object.assign(window, {
   expandOcia, expandCase,
   openOciaCreate, openOciaEdit, openOciaTemplates, ociaCloseModal,
-  ociaSetType, ociaDobChange, ociaStatusChange, ociaRecOtherChange, ociaCohortPick,
+  ociaSetType, ociaDobChange, ociaStatusChange, ociaRecOtherChange, ociaCohortPick, ociaBaptismChange,
   ociaPriorToggle, ociaAddPrior, ociaRemovePrior, ociaPriorEnded,
   ociaDocReceived, ociaRemoveDoc, ociaAddDoc,
   ociaFamilySearch, ociaRemoveFamily, ociaAnnulSearch, ociaRemoveAnnul,

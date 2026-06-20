@@ -69,7 +69,7 @@ function documents(p) {
   const prep = `<div style="display:flex;align-items:center;gap:8px;margin-top:8px;padding:4px 0;">
       <span style="font-size:15px;cursor:pointer;" onclick="toggleBapPrep('${p.id}')">${p.preparation_complete ? '✅' : '⬜'}</span>
       <span style="flex:1;cursor:pointer;color:${p.preparation_complete ? '#2D6A4F' : 'var(--navy)'};" onclick="toggleBapPrep('${p.id}')">Parent / Guardian Preparation Complete</span>
-      ${p.preparation_complete && p.preparation_complete_date ? `<span style="font-size:11px;color:#9CA3AF;">${esc(fmtDate(String(p.preparation_complete_date).slice(0, 10)))}</span>` : ''}
+      ${p.preparation_complete && p.preparation_complete_date ? `<span style="font-size:11px;color:#9CA3AF;">${esc(formatDateDisplay(String(p.preparation_complete_date).slice(0, 10)))}</span>` : ''}
     </div>`;
   return docList + prep;
 }

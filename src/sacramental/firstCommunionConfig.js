@@ -3,7 +3,7 @@
 // data/cohort/family-link/status/edit-form/save logic from panels/firstcomm.js —
 // nothing is reimplemented here. See ARCHITECTURE.md for the config schema.
 
-import { formatDateDisplay, fmtDate } from '../utils.js';
+import { formatDateDisplay, fmtDate, docCheckStampHtml } from '../utils.js';
 import { formatPhone } from '../utils/phone.js';
 import { isSacramentCoordinator } from '../roles.js';
 import { familySectionHtml } from './familyLink.js';
@@ -73,13 +73,14 @@ function documents(p) {
     h += docs.map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
       <span style="font-size:15px;cursor:pointer;" onclick="toggleFcDoc('${p.id}',${i})">${d.received ? '✅' : '⬜'}</span>
       <span style="flex:1;cursor:pointer;color:${d.received ? '#2D6A4F' : 'var(--navy)'};" onclick="toggleFcDoc('${p.id}',${i})">${esc(d.name)}</span>
-      ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : ''}
+      ${docCheckStampHtml(d)}
+      ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;margin-left:8px;" title="Required"></i>` : ''}
     </div>`).join('');
   } else { h += `<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No documents.</div>`; }
   h += `<div style="display:flex;align-items:center;gap:8px;margin-top:8px;padding:6px 0 0;border-top:.5px solid #F0EDE8;">
       <span style="font-size:15px;cursor:pointer;" onclick="toggleFcPrep('${p.id}')">${p.preparation_complete ? '✅' : '⬜'}</span>
       <span style="flex:1;cursor:pointer;color:${p.preparation_complete ? '#2D6A4F' : 'var(--navy)'};" onclick="toggleFcPrep('${p.id}')">Parent / Guardian Preparation Complete</span>
-      ${p.preparation_complete && p.preparation_complete_date ? `<span style="font-size:11px;color:#9CA3AF;">${esc(fmtDate(String(p.preparation_complete_date).slice(0, 10)))}</span>` : ''}
+      ${p.preparation_complete && p.preparation_complete_date ? `<span style="font-size:11px;color:#9CA3AF;">${esc(formatDateDisplay(String(p.preparation_complete_date).slice(0, 10)))}</span>` : ''}
     </div>`;
   return h;
 }

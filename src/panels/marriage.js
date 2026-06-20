@@ -1,5 +1,5 @@
-import { sb, withWriteRetry, serializeWrite, insertWithRetry } from '../supabase.js';
-import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
+import { sb, withWriteRetry, serializeWrite, insertWithRetry, deleteWithRetry } from '../supabase.js';
+import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError, applyDocCheck, docCheckStampHtml } from '../utils.js';
 import { store } from '../store.js';
 import { expandCase, ensureCaseDisplays, getCaseDisplay } from './annulments.js';
 import { isAdmin, canAccessSacrament } from '../roles.js';
@@ -82,7 +82,7 @@ function s2Name(c) { return (c.spouse2_first || c.spouse2_last) ? `${c.spouse2_f
 function coupleLabel(c) { return `${s1Name(c) || '?'} & ${s2Name(c) || '?'}`; }
 
 function normDocs(c) {
-  return (c.documents || []).map(d => ({ name: d.name, received: d.received ?? d.done ?? false, deletable: d.deletable ?? !d.auto, auto: !!d.auto }));
+  return (c.documents || []).map(d => ({ name: d.name, received: d.received ?? d.done ?? false, deletable: d.deletable ?? !d.auto, auto: !!d.auto, checked_on: d.checked_on || null }));
 }
 function normSteps(c) { return Array.isArray(c.steps) ? c.steps : []; }
 function normFees(c) { return Array.isArray(c.fees) ? c.fees : []; }
@@ -268,7 +268,7 @@ async function _patch(coupleId, patch) {
 }
 async function toggleCoupleDoc(coupleId, i) {
   const c = allCouples.find(x => x.id === coupleId); if (!c) return;
-  const docs = normDocs(c); docs[i].received = !docs[i].received;
+  const docs = normDocs(c); applyDocCheck(docs[i], !docs[i].received);
   if (await _patch(coupleId, { documents: docs })) refreshActivePanel();
 }
 async function toggleCoupleStep(coupleId, i) {
@@ -549,8 +549,9 @@ function renderModalDocs() {
     </div>${d.baptism ? bInfo(d.baptism) : ''}`).join('');
   const customHtml = _M.docs.map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;">
       <input type="checkbox" ${d.received ? 'checked' : ''} onchange="marDocReceived(${i},this.checked)" style="width:15px;height:15px;accent-color:var(--cardinal);" />
-      <span style="flex:1;font-size:13px;color:var(--navy);">${_esc(d.name)}</span>
-      <button onclick="marRemoveDoc(${i})" title="Remove" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">×</button>
+      <span style="font-size:13px;color:var(--navy);">${_esc(d.name)}</span>
+      ${docCheckStampHtml(d)}
+      <button onclick="marRemoveDoc(${i})" title="Remove" style="background:none;border:none;cursor:pointer;color:#CCC;font-size:13px;margin-left:8px;" onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#CCC'">×</button>
     </div>`).join('');
   el.innerHTML = autoHtml + customHtml || `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No documents.</div>`;
 }
@@ -733,7 +734,7 @@ async function marAnnulSearch(n, i) {
 }
 function marRemoveAnnul(n, i) { const p = n === 1 ? 's1' : 's2'; _syncPriorFromDom(n); _M[`${p}Prior`][i].annulment_case_id = null; document.getElementById(`mf-${p}-pm-annulchip-${i}`).innerHTML = ''; }
 
-function marDocReceived(i, v) { _M.docs[i].received = v; }
+function marDocReceived(i, v) { applyDocCheck(_M.docs[i], v); renderModalDocs(); }
 function marRemoveDoc(i) { _M.docs.splice(i, 1); renderModalDocs(); }
 function marAddDoc() { const inp = document.getElementById('mf-doc-new'); const name = (inp?.value || '').trim(); if (!name) return; _M.docs.push({ name, received: false, deletable: true, auto: false }); inp.value = ''; renderModalDocs(); }
 function marAddStep() { const inp = document.getElementById('mf-step-new'); const step = (inp?.value || '').trim(); if (!step) return; _M.steps.push({ step, completed: false }); inp.value = ''; renderModalSteps(); }
@@ -855,7 +856,7 @@ export function buildMarEditForm(c) {
 export async function marSaveEdit(id) { return _marWriteEdit(id); }
 export async function marDeleteRec(id) {
   if (!confirm('Permanently delete this file? This cannot be undone.')) return { ok: false };
-  const { error } = await sb.from('couples').delete().eq('id', id);
+  const { error } = await deleteWithRetry(() => sb.from('couples').delete().eq('id', id));
   if (error) { reportWriteError('couples delete', error); return { ok: false }; }
   allCouples = allCouples.filter(x => x.id !== id);
   logActivity({ action: 'deleted marriage prep record', entityType: 'marriage', entityName: id, contextType: 'couple' });
@@ -875,7 +876,7 @@ export async function marBulkStatus(ids, status) {
 
 async function marDeleteCouple(id) {
   if (!confirm('Permanently delete this file? This cannot be undone.')) return;
-  const { error } = await sb.from('couples').delete().eq('id', id);
+  const { error } = await deleteWithRetry(() => sb.from('couples').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return; }
   marCloseModal(); await loadCouplesData(); refreshActivePanel();
 }

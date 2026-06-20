@@ -106,6 +106,30 @@ export function daysUntil(iso) {
   return Math.round((new Date(iso + 'T00:00:00') - now) / 86400000);
 }
 
+// ── Document check-date stamp (shared, app-wide) ────────────────────────────
+// Checking a document records the date it was checked (`checked_on`, ISO
+// yyyy-mm-dd); unchecking clears it. The per-doc jsonb entry keeps its existing
+// {name,received,deletable,…} shape — this ONLY adds/removes `checked_on`, so old
+// entries stay valid. Idempotent: re-checking an already-checked doc keeps the
+// original date. Used by every panel's document checklist (live toggles + modal
+// edits) so the behavior is one shared mechanism, not per-panel copies.
+export function applyDocCheck(doc, received) {
+  if (!doc) return doc;
+  doc.received = !!received;
+  if (received) { if (!doc.checked_on) doc.checked_on = todayCST(); }
+  else { delete doc.checked_on; }
+  return doc;
+}
+// The MM/DD/YYYY stamp shown next to a checked document — via the shared
+// formatDateMDY (the app's date standard). Returns the full muted span (or '' when
+// the doc is unchecked / has no date, e.g. legacy docs checked before this existed)
+// so every checklist renders the stamp identically. margin-left:auto right-aligns
+// it in the doc row; #9CA3AF is the muted grey used for note timestamps (theme-safe).
+export function docCheckStampHtml(doc) {
+  if (!doc || !doc.received || !doc.checked_on) return '';
+  return `<span class="doc-stamp" style="font-size:11px;color:#9CA3AF;margin-left:auto;white-space:nowrap;flex-shrink:0;">${formatDateMDY(String(doc.checked_on).slice(0, 10))}</span>`;
+}
+
 export const PANEL_TITLES = {
   dashboard:    "Parish Dashboard",
   marriage:     'Marriage Preparation',

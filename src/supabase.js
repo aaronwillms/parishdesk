@@ -100,6 +100,23 @@ export async function insertWithRetry(table, payload, { attempts = 3, baseDelay 
   return result;
 }
 
+// Transport-retry-safe DELETE (shared, app-wide). Deletes are naturally
+// IDEMPOTENT — in Postgres/PostgREST a DELETE that matches 0 rows is a success,
+// not an error — so unlike inserts there is NO duplicate risk: a transient
+// transport blip ("Load failed" / status 0) can be retried freely, and a retry
+// that finds the row already gone simply returns no error (= success). Real
+// errors (HTTP 4xx/5xx, FK constraint, permission) carry a status/code and
+// surface IMMEDIATELY without retry — same boundary as withWriteRetry.
+//
+// `runQuery` MUST be a thunk building a FRESH delete builder each call (a Supabase
+// builder executes once when awaited, so a retry needs a new one). Returns the
+// Supabase result `{ data, error, status, … }`.
+export function deleteWithRetry(runQuery, { attempts = 3, baseDelay = 300 } = {}) {
+  // kind:'delete' retries on transport failure (like 'update'); only 'insert'
+  // disables retries. One mechanism — this just names the delete semantics.
+  return withWriteRetry(runQuery, { kind: 'delete', attempts, baseDelay });
+}
+
 // Serialize writes per logical key so rapid checkbox toggles don't fire
 // overlapping PATCHes (last-write-wins; keeps requests in order). Minimal, opt-in.
 const _writeChains = new Map();

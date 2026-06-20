@@ -4,7 +4,7 @@
 // upcoming-first. Reuses the existing Marriage queries / four-type / status /
 // edit-form / save logic from panels/marriage.js — nothing reimplemented here.
 
-import { fmtDate, formatDateDisplay } from '../utils.js';
+import { fmtDate, formatDateDisplay, docCheckStampHtml } from '../utils.js';
 import { formatPhone } from '../utils/phone.js';
 import { store } from '../store.js';
 import { isSacramentCoordinator } from '../roles.js';
@@ -170,7 +170,8 @@ function documentsSteps(c) {
     h += docs.map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
       <span style="font-size:15px;cursor:pointer;" onclick="toggleCoupleDoc('${c.id}',${i})">${d.received ? '✅' : '⬜'}</span>
       <span style="flex:1;cursor:pointer;color:${d.received ? '#2D6A4F' : 'var(--navy)'};" onclick="toggleCoupleDoc('${c.id}',${i})">${esc(d.name)}</span>
-      ${!d.deletable ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;" title="Required"></i>` : ''}
+      ${docCheckStampHtml(d)}
+      ${!d.deletable ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;margin-left:8px;" title="Required"></i>` : ''}
     </div>`).join('');
   }
   if (steps.length) {

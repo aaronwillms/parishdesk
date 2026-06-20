@@ -1,4 +1,4 @@
-import { sb, withWriteRetry, insertWithRetry } from '../supabase.js';
+import { sb, withWriteRetry, insertWithRetry, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin, isSuperAdmin, coordinatorChipLabels } from '../roles.js';
 import { logActivity, personTitle, reportWriteError } from '../utils.js';
@@ -447,7 +447,7 @@ async function deleteInstitution(id, name) {
     .update({ institution: null, updated_at: new Date().toISOString() })
     .eq('institution', name);
   if (persErr) { alert('Failed to clear personnel: ' + persErr.message); return; }
-  const { error } = await sb.from('institutions').delete().eq('id', id);
+  const { error } = await deleteWithRetry(() => sb.from('institutions').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return; }
   closeModal();
   await loadPersonnel();

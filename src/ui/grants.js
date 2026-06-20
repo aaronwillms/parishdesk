@@ -6,7 +6,7 @@
 // it. Every grant + revoke logs through logActivity() so history survives row
 // (and message) deletion.
 
-import { sb } from '../supabase.js';
+import { sb, deleteWithRetry } from '../supabase.js';
 import { logActivity } from '../utils.js';
 
 // Grantable record-type registry. record_type values are the Stage 1
@@ -123,7 +123,7 @@ export async function writeGrant({ recordType, recordId, grantedTo, grantedBy, n
 
 export async function revokeGrant(grantId) {
   const { data: row } = await sb.from('record_grants').select('record_type, record_id').eq('id', grantId).maybeSingle();
-  const { error } = await sb.from('record_grants').delete().eq('id', grantId);
+  const { error } = await deleteWithRetry(() => sb.from('record_grants').delete().eq('id', grantId));
   if (!error) {
     _myGrants = null;   // drop cache so a revoked self-grant re-locks next render
     logActivity({ action: 'revoked record access', entityType: 'record_grant',
