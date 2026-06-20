@@ -4,6 +4,7 @@ import { createAvatar } from '../ui/avatar.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { createMentionPicker, renderLinkChips } from '../ui/mentionPicker.js';
 import { createGrantPicker, renderGrantControllers } from '../ui/grantPicker.js';
+import { loadMyGrants } from '../ui/grants.js';
 
 let _msgMentionPicker = null;
 let _msgGrantPicker = null;
@@ -873,6 +874,10 @@ async function _fetchAndRenderMessages() {
       _userProfileMap[p.user_id] = { name: p.personnel?.name || 'User', personnelId: p.personnel_id };
     });
   }
+
+  // Refresh the current user's record_grants before painting so '#' link chips
+  // to newly-granted records render unlocked without a full reload.
+  try { await loadMyGrants(true); } catch (_) { /* non-fatal: chips fall back to role gate */ }
 
   _renderMessages();
   _subscribeToThread(_activeConvId);

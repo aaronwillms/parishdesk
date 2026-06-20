@@ -1,6 +1,7 @@
 import { sb } from '../supabase.js';
 import { isSuperAdmin, isAdmin, canAccessSacrament, canAccessPanel } from '../roles.js';
 import { getUserScope, isVisible } from './userScope.js';
+import { hasMyGrantForLink } from './grants.js';
 import { showToast } from './toast.js';
 
 // ── Record-type registry ─────────────────────────────────────────────────────
@@ -32,17 +33,21 @@ function _esc(s) {
 }
 
 // Can the current user open a linked record of this type? (used by both the
-// search filter and the chip-click gate)
-export function canAccessLink(type) {
+// search filter and the chip-click gate). When `id` is given, an explicit
+// per-record grant (record_grants, written via the '%' picker) also unlocks it
+// — that is how a super-admin grants access to a record the user's role can't see.
+export function canAccessLink(type, id) {
   const cfg = TYPES[type];
   if (!cfg) return true;
   if (cfg.project) return canAccessPanel('projects');
-  return canAccessSacrament(cfg.sacrament);
+  if (canAccessSacrament(cfg.sacrament)) return true;
+  return hasMyGrantForLink(type, id);   // false unless an explicit grant exists
 }
 
-// Which record types may the current user search?
+// Which record types may the current user search? (role-based; grants are
+// per-record so they don't widen the searchable type set)
 function _allowedTypes() {
-  return Object.keys(TYPES).filter(canAccessLink);
+  return Object.keys(TYPES).filter(t => canAccessLink(t));
 }
 
 // Run the permission-filtered search across allowed types; return ≤6 ranked hits.
@@ -230,7 +235,7 @@ export function renderLinkChips(metadata, { mine = false } = {}) {
   const arr = metadata && Array.isArray(metadata.links) ? metadata.links : [];
   if (!arr.length) return '';
   return `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;">` + arr.map(l => {
-    const allowed = canAccessLink(l.type);
+    const allowed = canAccessLink(l.type, l.id);
     // Allowed: navy chip (or translucent on own navy bubble) with the record icon.
     // Denied: muted grey chip with a lock icon — still shows for everyone.
     const bg = allowed ? (mine ? 'rgba(255,255,255,.15)' : '#1C2B3A') : '#6B7280';
@@ -247,7 +252,7 @@ export function renderLinkChips(metadata, { mine = false } = {}) {
 
 // Global dispatcher: open a linked record in its panel — gated by access.
 export function openLinkedRecord(type, id) {
-  if (!canAccessLink(type)) {
+  if (!canAccessLink(type, id)) {
     showToast("You don't have access to this record. Contact an administrator if you need access.", { type: 'error' });
     return;
   }

@@ -5,6 +5,7 @@ import { loadCalendar, loadInit } from './panels/dashboard.js';
 import { initNavigation, renderSidebarProfileWidget, setActiveTeamSubNavItem, applyNavVisibility, resetNavVisibility, applyParishName, renderMinistryNav } from './ui/navigation.js';
 import { loadUserRoles } from './roles.js';
 import { clearUserScope } from './ui/userScope.js';
+import { loadMyGrants } from './ui/grants.js';
 import { initModal } from './ui/modal.js';
 import { loadUserProfile } from './panels/userProfile.js';
 import { loadCoordData } from './ui/coordinator.js';
@@ -141,6 +142,9 @@ async function startApp(user) {
     }
     clearUserScope(); // ensure scope re-fetches with now-loaded profile
     try { await loadUserRoles(); } catch (e) { console.error('[startApp] loadUserRoles failed:', e); }
+    // Prefetch this user's record_grants so '#' link chips to granted records
+    // render unlocked from the first paint (see mentionPicker.canAccessLink).
+    try { await loadMyGrants(true); } catch (e) { console.error('[startApp] loadMyGrants failed:', e); }
     renderSidebarProfileWidget(user);
     applyNavVisibility();
   }
