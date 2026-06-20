@@ -1,4 +1,4 @@
-import { sb, withWriteRetry, serializeWrite } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite, insertWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { expandCase } from './annulments.js';
@@ -137,6 +137,14 @@ export function ociaStatusOf(p) { return p?.status_code || 'inquirer'; }
 export function candTypeOf(p) { return candType(p); }
 export function ociaNotesOf(p) { return notesOf(p); }
 export function ociaIsMinor(p) { return isMinor(p); }
+// "Annulment Needed" flag: any prior marriage ended by "Civil Divorce Only" (civil
+// divorce but no Church annulment/dissolution) with NO annulment case linked to it.
+// The per-prior-marriage `annulment_case_id` IS the OCIA→annulment link (there is no
+// file-level linked_annulment_id column); linking an annulment to that prior marriage
+// resolves the impediment, so the flag clears.
+export function ociaNeedsAnnulment(p) {
+  return (p?.prior_marriages || []).some(m => m.how_ended === 'Civil Divorce Only' && !m.annulment_case_id);
+}
 
 // ── Viewer-editable autosave (notes + minor permission) ─────────────────────
 // Serialize per-record so rapid edits don't overlap; retry transport failures.
@@ -197,9 +205,14 @@ function _ociaSyncPermLock(id) {
   if (note) note.style.display = filled ? 'none' : 'block';
 }
 
-// ── Priority Actions banner — minors missing parent/guardian permission ─────
+// ── Priority Actions banner — minors missing permission; Civil-Divorce-Only prior
+// marriages needing an annulment (same per-file item pattern). ────────────────────
 export function ociaAlertItems(p) {
-  return (isMinor(p) && !p.parental_consent && !p.archived) ? ['Parent/Guardian Permission Needed'] : [];
+  if (p.archived) return [];
+  const items = [];
+  if (isMinor(p) && !p.parental_consent) items.push('Parent/Guardian Permission Needed');
+  if (ociaNeedsAnnulment(p)) items.push('Annulment Needed');
+  return items;
 }
 function renderOciaAlerts() {
   const el = document.getElementById('ocia-alerts'); if (!el) return;
@@ -546,7 +559,7 @@ async function ociaSave() {
   const { payload, familyGroupId, linkTargetToUpdate } = r;
   payload.status_code = document.getElementById('of-status')?.value || 'inquirer';
   payload.archived = false;
-  const { error } = await withWriteRetry(() => sb.from('sacramental_ocia').insert(payload), { kind: 'insert' });
+  const { error } = await insertWithRetry('sacramental_ocia', payload);
   if (error) { reportWriteError('ocia insert', error); return; }
   if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);
   logActivity({ action: 'added OCIA candidate', entityType: 'ocia', entityName: payload.name, contextType: 'ocia' });

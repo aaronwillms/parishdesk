@@ -1,4 +1,4 @@
-import { sb, withWriteRetry } from '../supabase.js';
+import { sb, withWriteRetry, insertWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin, isSuperAdmin, coordinatorChipLabels } from '../roles.js';
 import { logActivity, personTitle, reportWriteError } from '../utils.js';
@@ -502,7 +502,7 @@ async function savePersonnel(id) {
     // `type` is a legacy (now dead) column that may still be NOT NULL — seed a
     // harmless default on insert only so new rows are valid. The directory never
     // reads it; institution/employment are HR-owned and left unset.
-    const { error } = await withWriteRetry(() => sb.from('personnel').insert({ ...payload, type: 'staff' }), { kind: 'insert' });
+    const { error } = await insertWithRetry('personnel', { ...payload, type: 'staff' });
     if (error) { reportWriteError('personnel insert', error); return; }
     logActivity({ action: 'added person to directory', entityType: 'personnel', entityName: payload.name, contextType: 'personnel' });
   }

@@ -1,4 +1,4 @@
-import { sb, withWriteRetry, serializeWrite } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite, insertWithRetry } from '../supabase.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { store } from '../store.js';
 import { expandCase } from './annulments.js';
@@ -832,7 +832,7 @@ async function marSaveCouple() {
   if (st === 'external') st = 'inprogress';
   payload.status_code = st;
   payload.archived = false;
-  const { error } = await withWriteRetry(() => sb.from('couples').insert(payload), { kind: 'insert' });
+  const { error } = await insertWithRetry('couples', payload);
   if (error) { reportWriteError('couples insert', error); return; }
   logActivity({ action: 'created marriage prep record', entityType: 'marriage', entityName: `${payload.groom} & ${payload.bride}`, contextType: 'couple' });
   window.flashSavedThen(async () => { marCloseModal(); await loadCouplesData(); refreshActivePanel(); });

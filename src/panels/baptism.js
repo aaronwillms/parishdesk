@@ -1,4 +1,4 @@
-import { sb, withWriteRetry, serializeWrite } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite, insertWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
@@ -351,7 +351,7 @@ async function bapSave() {
     payload.status_code = 'scheduled';
     payload.archived = false;
     payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-    const { error } = await withWriteRetry(() => sb.from('sacramental_baptism').insert(payload), { kind: 'insert' });
+    const { error } = await insertWithRetry('sacramental_baptism', payload);
     if (error) { reportWriteError('baptism insert', error); return; }
     logActivity({ action: 'added Baptism child', entityType: 'baptism', entityName: name, contextType: 'baptism' });
     const { data: { user } } = await sb.auth.getUser();

@@ -1,4 +1,4 @@
-import { sb, withWriteRetry, serializeWrite } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite, insertWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
@@ -318,7 +318,7 @@ async function fcSave() {
   payload.status_code = 'enrolled';
   payload.archived = false;
   payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-  const { data: ins, error } = await withWriteRetry(() => sb.from('sacramental_firstcomm').insert(payload).select('id').maybeSingle(), { kind: 'insert' });
+  const { data: ins, error } = await insertWithRetry('sacramental_firstcomm', payload);
   if (error) { reportWriteError('firstcomm insert', error); return; }
   // Apply the pending "Link Family Member" pick via the shared rule (mint/join).
   const pend = getPendingAdd('firstcomm');

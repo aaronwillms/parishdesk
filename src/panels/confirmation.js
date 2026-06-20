@@ -1,4 +1,4 @@
-import { sb, withWriteRetry, serializeWrite } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite, insertWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
@@ -404,7 +404,7 @@ async function confSave() {
   payload.service_hours_required = (type === 'youth' && tmpl.service_hours_enabled) ? (tmpl.service_hours_required || 20) : 0;
   payload.service_hours_completed = 0;
   payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-  const { data: ins, error } = await withWriteRetry(() => sb.from('sacramental_confirmation').insert(payload).select('id').maybeSingle(), { kind: 'insert' });
+  const { data: ins, error } = await insertWithRetry('sacramental_confirmation', payload);
   if (error) { reportWriteError('confirmation insert', error); return; }
   const pend = getPendingAdd('confirmation');
   if (pend && ins?.id) { await familyLink('confirmation', ins.id, pend.id); clearPendingAdd('confirmation'); }

@@ -18,12 +18,11 @@ export const sb = createClient(import.meta.env.VITE_SUPA_URL, import.meta.env.VI
 //   • when ambiguous → treated as a REAL error (no retry), to avoid duplicates.
 //
 // INSERT CAUTION: retrying an UPDATE (.update().eq(id)) is idempotent — same row,
-// same values. Retrying an INSERT that actually reached the server would create a
-// DUPLICATE row, and a "Load failed" can NOT prove the row never landed. So
-// `kind:'insert'` DISABLES retries (single attempt; any error surfaces). Our
-// inserts use DB-generated ids, so they are not duplicate-safe under retry; do
-// not enable insert retries unless the insert is made idempotent (client id /
-// upsert on a unique key) — out of scope here (no schema changes).
+// same values. A naive INSERT retry would create a DUPLICATE row, since a "Load
+// failed" can NOT prove the row never landed. `kind:'insert'` on withWriteRetry
+// therefore DISABLES retries. For a duplicate-SAFE retryable insert use
+// insertWithRetry() below, which makes the insert idempotent via a client-generated
+// primary key (a landed-then-lost first attempt becomes a 23505 we treat as success).
 
 function _isTransportFailure(error, status) {
   if (!error) return false;
@@ -53,6 +52,50 @@ export async function withWriteRetry(runQuery, { kind = 'update', attempts = 3, 
     if (attempt >= maxAttempts) return result;                    // out of attempts → surface
     if (!_isTransportFailure(result.error, result.status)) return result;   // real error → surface now
     await _sleep(baseDelay * attempt);                            // 300ms, 600ms, 900ms…
+  }
+  return result;
+}
+
+// Is this a unique-violation (23505) on OUR client-generated primary key? After a
+// transport retry, that can only mean the EARLIER attempt actually landed the row
+// (a fresh random uuid can't collide with a pre-existing row), so it is a success.
+function _isOwnPkViolation(error, id) {
+  if (!error || error.code !== '23505') return false;
+  const blob = `${error.message || ''} ${error.details || ''}`;
+  return /pkey|primary key/i.test(blob) || (!!id && blob.includes(id));
+}
+
+const _uuid = () => (typeof crypto !== 'undefined' && crypto.randomUUID)
+  ? crypto.randomUUID()
+  : `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+
+// Duplicate-SAFE retryable INSERT (single row). Generates a client-side primary key
+// so every retry re-sends the SAME id; thus a transient transport blip is retried
+// transparently and AT MOST ONE row ever lands:
+//   • transport failure (Load failed / status 0) → retry with the same id
+//   • success → return the row (data is the selected row object)
+//   • 23505 on our own PK after a retry → the first attempt landed → return success
+//   • any other real error (incl. a genuine first-attempt unique violation) → surface
+// Returns a Supabase-shaped { data, error, status } where data is the row (or null).
+export async function insertWithRetry(table, payload, { attempts = 3, baseDelay = 300, select = 'id' } = {}) {
+  const row = { ...payload };
+  if (!row.id) row.id = _uuid();              // fixed across retries → idempotent
+  const id = row.id;
+  let result;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      result = await sb.from(table).insert(row).select(select).maybeSingle();
+    } catch (thrown) {
+      result = { data: null, error: thrown, status: 0 };   // thrown fetch = transport
+    }
+    if (!result.error) return result;                                   // success
+    if (attempt > 1 && _isOwnPkViolation(result.error, id)) {           // our row already landed
+      const back = await sb.from(table).select(select).eq('id', id).maybeSingle();
+      return { data: back.data || { id }, error: null, status: 200, idempotentRecovery: true };
+    }
+    if (attempt >= attempts) return result;                            // out of attempts → surface
+    if (!_isTransportFailure(result.error, result.status)) return result;  // real error → surface now
+    await _sleep(baseDelay * attempt);
   }
   return result;
 }

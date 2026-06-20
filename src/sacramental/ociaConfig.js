@@ -14,7 +14,7 @@ import { formatPhone } from '../utils/phone.js';
 import { isSacramentCoordinator } from '../roles.js';
 import {
   getOciaRecords, getOciaRecord, ociaCanManage, OCIA_STATUS,
-  ociaName, ociaLastName, ociaStatusOf, candTypeOf, ociaAge, ociaNotesOf, ociaIsMinor,
+  ociaName, ociaLastName, ociaStatusOf, candTypeOf, ociaAge, ociaNotesOf, ociaIsMinor, ociaNeedsAnnulment,
   cohortKeyOf, ociaCohortName, ociaCohortDateOf,
   buildOciaEditForm, ociaSaveEdit, ociaDeleteRec,
 } from '../panels/ocia.js';
@@ -123,6 +123,14 @@ function permissionChip(p) {
     ? { label: 'Parent/Guardian Permission Needed', tone: 'pending', style: 'background:#FEF9E7;color:#7D6608;' }
     : null;
 }
+// Card flag chip — a prior marriage is Civil-Divorce-Only with no annulment linked.
+// Same attention/pending tone + mechanism as permissionChip; clears once an annulment
+// is linked to the prior marriage (ociaNeedsAnnulment).
+function annulmentChip(p) {
+  return ociaNeedsAnnulment(p)
+    ? { label: 'Annulment Needed', tone: 'pending', style: 'background:#FEF9E7;color:#7D6608;' }
+    : null;
+}
 
 export const ociaConfig = {
   panelKey: 'ocia',
@@ -165,7 +173,7 @@ export const ociaConfig = {
   listItem: (p) => ({
     title: ociaName(p) + (ociaAge(p.dob) !== null ? ` (${ociaAge(p.dob)})` : ''),
     secondary: receptionLine(p) ? `🕊 ${receptionLine(p)}` : '',
-    chips: [statusChip(p), typeChip(p), permissionChip(p)].filter(Boolean),
+    chips: [statusChip(p), typeChip(p), permissionChip(p), annulmentChip(p)].filter(Boolean),
     flags: [],
   }),
 

@@ -1,4 +1,4 @@
-import { sb, withWriteRetry, serializeWrite } from '../supabase.js';
+import { sb, withWriteRetry, serializeWrite, insertWithRetry } from '../supabase.js';
 import { notifyUsers } from '../notifications.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity, reportWriteError } from '../utils.js';
@@ -1032,7 +1032,7 @@ async function anlSaveCase() {
   payload.judgement_finalized = null;
   payload.archived = false;
   payload.timeline = [{ type: 'auto', text: 'Case Opened', created_at: nowIso(), created_by: _curUserId() }];
-  const { error } = await withWriteRetry(() => sb.from('annulment_cases').insert(payload), { kind: 'insert' });
+  const { error } = await insertWithRetry('annulment_cases', payload);
   if (error) { reportWriteError('annulment insert', error); return; }
   await logActivity({ action: 'opened annulment case', entityType: 'annulments', entityName: payload.petitioner || 'New case', contextType: 'annulments' });
   window.flashSavedThen(async () => { anlCloseModal(); await loadCasesData(); refreshActivePanel(); });

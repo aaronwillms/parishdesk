@@ -12,7 +12,7 @@
 // it changes the DEFAULTS inherited by FUTURE file assignments and never rewrites
 // church/formation already saved on existing files.
 
-import { sb, withWriteRetry } from '../supabase.js';
+import { sb, withWriteRetry, insertWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { cohortChurchLocation } from './churchLocation.js';
 import { buildPreparerField, readPreparerValue } from './preparerField.js';
@@ -104,7 +104,7 @@ if (typeof window !== 'undefined') {
     const cfg = _reg[panel]; if (!cfg) return; const P = cfg.idPrefix;
     const fields = _readCohortForm(P);
     if (!fields.cohort_date) { alert(`${cfg.dateLabel} is required.`); return; }
-    const { error } = await withWriteRetry(() => sb.from('sacramental_cohorts').insert({ panel, ...fields }), { kind: 'insert' });
+    const { error } = await insertWithRetry('sacramental_cohorts', { panel, ...fields });
     if (error) { alert('Save failed: ' + error.message); return; }
     await cfg.reloadCohorts(); flashSavedThen(() => cfg.open(buildHtml(cfg)));
   };
