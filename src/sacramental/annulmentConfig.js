@@ -17,7 +17,7 @@ import {
   caseType, petName, respName, petLast, respLast, advocateName, caseDocs,
   buildAnlEditForm, anlSaveEdit, anlDeleteRec, TIMELINE_EVENTS, parseCaseNotes, BAP_STATUS, loadCasesData,
 } from '../panels/annulments.js';
-import { registerFamilyPanel, familyMembers } from './familyLink.js';
+import { registerFamilyPanel, familyMembers, familyLink, familyUnlink, familySearchOptions } from './familyLink.js';
 import { chipHtml, refreshActivePanel } from './panelShell.js';
 
 const esc = (s) => String(s == null ? '' : s)
@@ -360,23 +360,56 @@ registerFamilyPanel('annulments', {
   unlinkAction: 'unlinked annulment case',
   groupContext: 'annulments',
 });
-function linkedCases(c) {
+// Shared linked-cases body: member list (title + [Status][Type] chips + Unlink) and a
+// link picker. `ctx` = 'view' (read-view detailSection; link/unlink full-refresh the
+// panel — no form to lose) | 'edit' (rendered INSIDE the editor's Linked Records
+// section; link/unlink re-render only this block so unsaved form edits are preserved).
+function _linkedCasesBody(c, ctx) {
   const manage = anlCanManage();
   const members = familyMembers(getCaseRecords(), c.case_group_id, c.id, 'case_group_id');
+  const unlinkCall = ctx === 'edit' ? `window.anlCaseUnlink('${c.id}','` : `window.famUnlink('annulments','`;
   const list = members.length
     ? members.map(m => `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;">
         <span style="flex:1;cursor:pointer;color:var(--navy);" onclick="window.expandCase('${m.id}')">${esc(caseTitle(m))}</span>
         <span style="display:flex;gap:4px;flex-shrink:0;">${chipHtml(statusChip(m))}${chipHtml(typeChip(m))}</span>
-        ${manage ? `<button onclick="window.famUnlink('annulments','${m.id}')" style="background:none;border:none;cursor:pointer;color:#C0392B;font-size:12px;flex-shrink:0;">Unlink</button>` : ''}
+        ${manage ? `<button onclick="${unlinkCall}${m.id}')" style="background:none;border:none;cursor:pointer;color:#C0392B;font-size:12px;flex-shrink:0;">Unlink</button>` : ''}
       </div>`).join('')
     : `<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No linked cases.</div>`;
+  const ids = ctx === 'edit'
+    ? { inp: 'am-cl-search', res: 'am-cl-results', onin: `window.anlCaseLinkSearch('${c.id}')` }
+    : { inp: 'fam-search-annulments', res: 'fam-results-annulments', onin: `window.famSearch('annulments','${c.id}')` };
   const picker = manage ? `<div style="position:relative;margin-top:8px;">
-      <input type="text" id="fam-search-annulments" placeholder="Link case (search by name)…" autocomplete="off"
-        oninput="window.famSearch('annulments','${c.id}')"
+      <input type="text" id="${ids.inp}" placeholder="Link case (search by name)…" autocomplete="off" oninput="${ids.onin}"
         style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" />
-      <div id="fam-results-annulments" class="anl-link-results" style="display:none;"></div>
+      <div id="${ids.res}" class="anl-link-results" style="display:none;"></div>
     </div>` : '';
   return list + picker;
+}
+// Read-view detailSection renderer.
+function linkedCases(c) { return _linkedCasesBody(c, 'view'); }
+
+// Editor integration: buildCaseModalHtml drops `window._anlLinkedCasesEditor(c)` into
+// its "Linked Records" section. Edit-safe handlers reuse the family-link core but
+// re-render ONLY the #am-cl-wrap block (loadCasesData refreshes data without rebuilding
+// the open edit form), so the user's unsaved field edits survive a link/unlink.
+if (typeof window !== 'undefined') {
+  window._anlLinkedCasesEditor = (c) => `<div id="am-cl-wrap">${_linkedCasesBody(c, 'edit')}</div>`;
+  const _rerenderEditBlock = (selfId) => { const w = document.getElementById('am-cl-wrap'); const c = getCaseRecord(selfId); if (w && c) w.innerHTML = _linkedCasesBody(c, 'edit'); };
+  window.anlCaseLinkSearch = async (selfId) => {
+    const rows = await familySearchOptions('annulments', document.getElementById('am-cl-search')?.value || '', selfId);
+    const box = document.getElementById('am-cl-results'); if (!box) return;
+    box.innerHTML = rows.length
+      ? rows.map(r => `<div class="anl-link-opt" onmousedown="event.preventDefault();window.anlCaseLinkPick('${selfId}','${r.id}')">${esc(caseTitle(r))}${r.case_group_id ? ' · in a group' : ''}</div>`).join('')
+      : `<div style="padding:.5rem .7rem;font-size:12px;color:#9CA3AF;">No matches</div>`;
+    box.style.display = 'block';
+  };
+  window.anlCaseLinkPick = async (selfId, targetId) => {
+    const box = document.getElementById('am-cl-results'); if (box) box.style.display = 'none';
+    if (await familyLink('annulments', selfId, targetId)) { await loadCasesData(); _rerenderEditBlock(selfId); }
+  };
+  window.anlCaseUnlink = async (selfId, memberId) => {
+    if (await familyUnlink('annulments', memberId)) { await loadCasesData(); _rerenderEditBlock(selfId); }
+  };
 }
 
 // ── Config object ────────────────────────────────────────────────────────────

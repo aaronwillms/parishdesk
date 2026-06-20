@@ -697,6 +697,10 @@ function buildCaseModalHtml(c, opts = {}) {
       <div style="position:relative;"><input type="text" id="am-link-ocia" placeholder="Search OCIA by name…" oninput="anlLinkSearch('ocia')" autocomplete="off" style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" />
       <div id="am-link-ocia-results" class="anl-link-results" style="display:none;"></div></div>
       <div id="am-link-ocia-chip" style="margin-top:6px;"></div>`;
+    // Annulment ↔ annulment linking (shared case group). Edit-safe block rendered by
+    // annulmentConfig; links/unlinks here re-render only this block (form edits kept).
+    h += `<label style="margin-top:.75rem;">Linked annulment cases</label>`;
+    h += (typeof window !== 'undefined' && window._anlLinkedCasesEditor) ? window._anlLinkedCasesEditor(c) : '';
   }
 
   // Actions — only for the create MODAL. The inline edit form lives in the shell's

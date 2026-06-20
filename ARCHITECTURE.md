@@ -447,7 +447,3 @@ as forms are injected — no per-field wiring. Saves pass through `normalizePhon
 displays through `formatPhone` (which degrades gracefully, leaving non-10-digit
 values untouched). No data migration is required — the formatter re-derives from
 digits.
-
-## NOT Used
-
-- **Netlify** — no Netlify config, functions, or redirects. Any `netlify/` or `.netlify/` directories are ignored via `.gitignore`.
