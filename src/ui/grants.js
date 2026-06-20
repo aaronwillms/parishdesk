@@ -53,7 +53,12 @@ export const LINK_TYPE_TO_GRANT = Object.fromEntries(
 export const PRIORITY_TYPES = new Set(['youth_member', 'adult_volunteer']);
 
 export function recordTypeLabel(type) {
-  return GRANTABLE[type]?.label || type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  if (GRANTABLE[type]) return GRANTABLE[type].label;
+  // Sacramental / annulment / discerner — use the registry's proper casing
+  // ("OCIA", "First Communion", "Annulment") rather than naive title-case.
+  const sac = Object.values(SAC_GRANTABLE).find(c => c.gtype === type);
+  if (sac) return sac.typeLabel;
+  return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
 function fmtD(iso) {
@@ -216,19 +221,36 @@ export async function searchGrantableRecords(query) {
   return merged.slice(0, 10);
 }
 
-// Resolve a record_grants row's record to a human label for the audit view.
-// Best-effort: HR types resolve person+type+date; others fall back to type+id.
+// Resolve a record_grants row's record to its DISPLAY NAME for the audit view —
+// the same title shown on the record's card/viewer (e.g. an annulment's
+// "Petitioner v. Respondent", an OCIA/discerner's name). Returns the NAME ONLY
+// (no record_type, no raw id); the audit shows the type label once, separately.
+// Covers ALL grantable types: HR (person + date), sacramental / marriage /
+// annulment / discerner (via SAC_GRANTABLE), else a short id as a last resort.
 export async function labelForGrant(grant) {
-  const cfg = GRANTABLE[grant.record_type];
-  if (!cfg) return `${recordTypeLabel(grant.record_type)} · ${grant.record_id.slice(0, 8)}`;
-  const { data: rec } = await sb.from(cfg.table)
-    .select('id, person_position_id, record_date, created_at').eq('id', grant.record_id).maybeSingle();
-  if (!rec) return `${cfg.label} (deleted)`;
-  let who = '';
-  const { data: pp } = await sb.from('person_positions').select('person_id').eq('id', rec.person_position_id).maybeSingle();
-  if (pp) {
-    const { data: person } = await sb.from('personnel').select('name').eq('id', pp.person_id).maybeSingle();
-    who = person?.name ? person.name + ' — ' : '';
+  // HR record types — the staff person the record is ABOUT, plus the record date.
+  const hr = GRANTABLE[grant.record_type];
+  if (hr) {
+    const { data: rec } = await sb.from(hr.table)
+      .select('id, person_position_id, record_date, created_at').eq('id', grant.record_id).maybeSingle();
+    if (!rec) return '(deleted record)';
+    let who = '';
+    const { data: pp } = await sb.from('person_positions').select('person_id').eq('id', rec.person_position_id).maybeSingle();
+    if (pp) {
+      const { data: person } = await sb.from('personnel').select('name').eq('id', pp.person_id).maybeSingle();
+      who = person?.name || '';
+    }
+    const date = fmtD(rec.record_date || rec.created_at);
+    return [who, date ? `(${date})` : ''].filter(Boolean).join(' ') || '(record)';
   }
-  return `${who}${cfg.label} (${fmtD(rec.record_date || rec.created_at)})`;
+  // Sacramental / marriage / annulment / discerner — resolve to the record's own
+  // display name via SAC_GRANTABLE (keyed by gtype = the record_grants.record_type).
+  const sac = Object.values(SAC_GRANTABLE).find(c => c.gtype === grant.record_type);
+  if (sac) {
+    const { data: rec } = await sb.from(sac.table).select('*').eq('id', grant.record_id).maybeSingle();
+    if (!rec) return '(deleted record)';
+    return sac.label(rec) || '(unnamed)';
+  }
+  // Unknown / not-yet-wired type → short id so the row is still identifiable.
+  return grant.record_id.slice(0, 8);
 }

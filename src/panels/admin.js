@@ -1193,7 +1193,7 @@ function _renderAuditPivot() {
       const g0 = rows[0];
       return `<div class="card" style="margin-bottom:.75rem;padding:.9rem 1rem;">
         <div style="font-size:13.5px;font-weight:600;color:#1C2B3A;margin-bottom:.5rem;">
-          ${_esc(g0._label)} <span style="font-size:11px;color:#9CA3AF;font-weight:400;">${_esc(recordTypeLabel(g0.record_type))}</span>${_priorityBadge(g0.record_type)}
+          ${_esc(g0._label)} <span style="font-size:11px;color:#9CA3AF;font-weight:400;">· ${_esc(recordTypeLabel(g0.record_type))}</span>${_priorityBadge(g0.record_type)}
         </div>
         ${rows.map(g => `
           <div style="display:flex;align-items:center;gap:10px;padding:.4rem 0;border-bottom:.5px solid #F0EDE8;font-size:12px;">
@@ -1220,7 +1220,7 @@ function _renderAuditPivot() {
         ${rows.sort((a, b) => (PRIORITY_TYPES.has(a.record_type) ? 0 : 1) - (PRIORITY_TYPES.has(b.record_type) ? 0 : 1)).map(g => `
           <div style="display:flex;align-items:center;gap:10px;padding:.4rem 0;border-bottom:.5px solid #F0EDE8;font-size:12px;">
             <div style="flex:1;min-width:0;">
-              <span style="color:#1C2B3A;font-weight:500;">${_esc(g._label)}</span>${_priorityBadge(g.record_type)}
+              <span style="color:#1C2B3A;font-weight:500;">${_esc(g._label)}</span> <span style="color:#9CA3AF;font-size:11px;">· ${_esc(recordTypeLabel(g.record_type))}</span>${_priorityBadge(g.record_type)}
               <span style="color:#9CA3AF;"> · by ${_esc(userName(g.granted_by))} · ${_fmtDT(g.granted_at)}</span>
               <div style="font-size:11.5px;margin-top:1px;">${_noteCell(g)}</div>
             </div>

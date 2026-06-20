@@ -17,6 +17,17 @@ the existing `school_name` / `baptism_church` / `first_communion_church` text
 columns + their existing `*_city`/`*_state` columns) — only the School ADDRESS
 genuinely lacked storage. Apply this, then FC/Confirmation save again.
 
+## 🚧 BLOCKING — `20260620_record_grants_grantee_select.sql` (apply so %-grant recipients can OPEN files)
+
+Fixes the "%"-grant recipient being unable to open the granted file. The grant
+WRITE is correct (granted_to = recipient, granted_by = granter), but the
+`record_grants_select` RLS policy was super-admin ONLY, so a non-super-admin
+grantee couldn't read their own grant row → the client gate (loadMyGrants →
+hasMyGrantForLink → canAccessLink) saw zero rows and denied access. The migration
+widens SELECT to `is_super_admin(auth.uid()) OR granted_to = auth.uid()` (grantee
+can read their OWN grants). WRITE policy unchanged (super-admin only). No schema
+change. Idempotent. **Until applied, granted users still can't open files.**
+
 ## 🚧 BLOCKING — `20260620_discernment_revision.sql` (apply before the Discernment revision works)
 
 Adds the revised inline person model to `discerners` (first/middle/last name split,

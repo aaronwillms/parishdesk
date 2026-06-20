@@ -123,7 +123,7 @@ export function createGrantPicker({ textarea, tray }) {
       <div class="modal-title">Grant access</div>
       <div style="font-size:13px;color:var(--navy);font-weight:600;margin-bottom:.6rem;">${_esc(rec.label)}</div>
       <label>Grant to</label>
-      <select id="gp-user">${opts || '<option value="">No grantable users</option>'}</select>
+      <select id="gp-user">${opts ? `<option value="" selected disabled>— Select a recipient —</option>${opts}` : '<option value="">No grantable users</option>'}</select>
       <label>Reason (optional)</label>
       <textarea id="gp-note" rows="2" placeholder="Why this person needs access"></textarea>
       <div style="font-size:11px;color:#9CA3AF;margin-top:.3rem;">A grant is user + file specific. The message link only controls it — deleting the message never removes access.</div>
