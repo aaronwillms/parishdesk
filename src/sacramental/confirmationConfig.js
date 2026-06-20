@@ -18,12 +18,16 @@ import {
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-const STATUS_TONE = { enrolled: 'pending', preparation: 'active', complete: 'active', confirmed: 'complete', inactive: 'neutral' };
+// Explicit chip colors from CONF_STATUS (Enrolled purple · In Preparation yellow ·
+// Complete green · Inactive grey); dark mode slates badges via the shared rule.
+const STATUS_ORDER = ['enrolled', 'preparation', 'complete', 'inactive'];
+const statusRank = (p) => { const i = STATUS_ORDER.indexOf(statusOf(p)); return i < 0 ? 999 : i; };
+const prepKey = (p) => (preparerOf(p) || '').trim().toLowerCase() || '￿';   // no-preparer sorts last
 function initialsOf(name) {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
   return ((parts[0]?.[0] || '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase() || '?';
 }
-function statusChip(p) { const k = statusOf(p); return { label: (CONF_STATUS[k] || {}).label || k, tone: STATUS_TONE[k] || 'neutral' }; }
+function statusChip(p) { const k = statusOf(p), m = CONF_STATUS[k] || {}; return { label: m.label || k, tone: 'neutral', style: `background:${m.bg};color:${m.color};` }; }
 function typeChip(p) { return { label: isYouth(p) ? 'Youth' : 'Adult', tone: 'neutral' }; }
 function flagsOf(p) {
   const out = [];
@@ -122,7 +126,7 @@ export const confirmationConfig = {
   // Two-level grouping: cohort, then youth/adult within each cohort.
   groupBy: (p) => cohortKeyOf(p),
   groupLabel: (key) => cohortName(key),
-  groupCompare: (a, b) => (cohortDateOf(b) || '').localeCompare(cohortDateOf(a) || ''),
+  groupCompare: (a, b) => (cohortDateOf(a) || '').localeCompare(cohortDateOf(b) || ''),   // soonest reception date first
   noneLabel: 'No Cohort',                       // uncohorted top section (not "Unassigned")
   subGroupBy: (p) => isYouth(p) ? 'youth' : 'adult',
   subGroupOrder: ['youth', 'adult'],
@@ -139,20 +143,22 @@ export const confirmationConfig = {
   fetchRecords: async () => getConfRecords(),
   fetchRecord: (id) => getConfRecord(id),
   searchText: (r) => nameOf(r),
-  compare: (a, b) => lastNameOf(a).toLowerCase().localeCompare(lastNameOf(b).toLowerCase()),
+  // Within each cohort/sub-group: status (Enrolled → In Prep → Complete → Inactive) → preparer → last name.
+  compare: (a, b) => statusRank(a) - statusRank(b)
+    || prepKey(a).localeCompare(prepKey(b))
+    || lastNameOf(a).toLowerCase().localeCompare(lastNameOf(b).toLowerCase()),
 
   statusFilters: [
     { key: 'all',         label: 'All',         match: () => true },
     { key: 'enrolled',    label: 'Enrolled',    match: p => statusOf(p) === 'enrolled' && !p.archived },
     { key: 'preparation', label: 'In Prep',     match: p => statusOf(p) === 'preparation' && !p.archived },
-    { key: 'complete',    label: 'Prep Done',   match: p => statusOf(p) === 'complete' && !p.archived },
-    { key: 'confirmed',   label: 'Confirmed',   match: p => statusOf(p) === 'confirmed' && !p.archived },
+    { key: 'complete',    label: 'Complete',    match: p => statusOf(p) === 'complete' && !p.archived },
     { key: 'inactive',    label: 'Inactive',    match: p => statusOf(p) === 'inactive' || p.archived },
   ],
 
   listItem: (p) => ({
     title: nameOf(p) + (ageOf(p.dob) !== null ? ` (${ageOf(p.dob)})` : ''),
-    secondary: confDate(p) ? `🎓 ${formatDateDisplay(confDate(p))}` : '',
+    secondary: [preparerOf(p) ? `Prep: ${preparerOf(p)}` : '', confDate(p) ? `🎓 ${formatDateDisplay(confDate(p))}` : ''].filter(Boolean).join(' · '),
     chips: [statusChip(p), typeChip(p)],
     flags: flagsOf(p),
   }),
@@ -180,8 +186,7 @@ export const confirmationConfig = {
   bulkStatusOptions: [
     { key: 'enrolled',    label: 'Enrolled' },
     { key: 'preparation', label: 'In Preparation' },
-    { key: 'complete',    label: 'Preparation Complete' },
-    { key: 'confirmed',   label: 'Confirmed' },
+    { key: 'complete',    label: 'Complete' },
     { key: 'inactive',    label: 'Inactive' },
   ],
   bulkUpdateStatus: (ids, status) => confBulkStatus(ids, status),

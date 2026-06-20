@@ -14,12 +14,16 @@ import {
 } from '../panels/baptism.js';
 
 const esc = bapEsc;
-const STATUS_TONE = { scheduled: 'pending', complete: 'complete', inactive: 'neutral' };
+// Explicit chip colors (light): Scheduled yellow · Complete green · Inactive grey.
+// Dark mode slates badges via the shared !important rule. Sort rank top→bottom.
+const STATUS_ORDER = ['scheduled', 'complete', 'inactive'];
+const statusRank = (p) => { const i = STATUS_ORDER.indexOf(statusOf(p)); return i < 0 ? 999 : i; };
+const prepKey = (p) => (p?.preparer || '').trim().toLowerCase() || '￿';   // no-preparer sorts last
 function initialsOf(name) {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
   return ((parts[0]?.[0] || '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase() || '?';
 }
-function statusChip(p) { const k = statusOf(p); return { label: (BAP_STATUS[k] || {}).label || k, tone: STATUS_TONE[k] || 'neutral' }; }
+function statusChip(p) { const k = statusOf(p), m = BAP_STATUS[k] || {}; return { label: m.label || k, tone: 'neutral', style: `background:${m.bg};color:${m.color};` }; }
 function flagsOf(p) {
   const out = [];
   if (ageFlag(p))        out.push({ icon: 'fa-triangle-exclamation', tone: 'urgent', label: 'Above age of reason — use OCIA', short: 'Age' });
@@ -102,8 +106,7 @@ export const baptismConfig = {
   panelKey: 'baptism',
   title: 'Child Records',
   newLabel: '+ Add Child',
-  groupBy: null,
-  sortByDate: 'baptism_date',   // shell: upcoming-first + archived-last
+  groupBy: null,   // flat list; archived sinks to the bottom (shell-handled)
 
   canManage: () => bapCanManage(),
   canManageTemplate: () => isSacramentCoordinator('baptism'),
@@ -113,8 +116,10 @@ export const baptismConfig = {
   fetchRecords: async () => getBapRecords(),
   fetchRecord: (id) => getBapRecord(id),
   searchText: (r) => nameOf(r),
-  // Cards sort alphabetically by last name.
-  compare: (a, b) => lastNameOf(a).toLowerCase().localeCompare(lastNameOf(b).toLowerCase()),
+  // Sort: status (Scheduled → Complete → Inactive) → preparer name → last name.
+  compare: (a, b) => statusRank(a) - statusRank(b)
+    || prepKey(a).localeCompare(prepKey(b))
+    || lastNameOf(a).toLowerCase().localeCompare(lastNameOf(b).toLowerCase()),
 
   statusFilters: [
     { key: 'all',       label: 'All',       match: () => true },
@@ -125,7 +130,7 @@ export const baptismConfig = {
 
   listItem: (p) => ({
     title: nameOf(p) + (bapAgeOf(dobOf(p)) !== null ? ` (${bapAgeOf(dobOf(p))})` : ''),
-    secondary: bapDate(p) ? `💧 ${formatDateDisplay(bapDate(p))}` : '',
+    secondary: [p.preparer ? `Prep: ${p.preparer}` : '', bapDate(p) ? `💧 ${formatDateDisplay(bapDate(p))}` : ''].filter(Boolean).join(' · '),
     chips: [statusChip(p)],
     flags: flagsOf(p),
   }),

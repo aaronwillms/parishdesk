@@ -17,12 +17,16 @@ import {
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-const STATUS_TONE = { enrolled: 'pending', preparation: 'active', complete: 'active', received: 'complete', inactive: 'neutral' };
+// Explicit chip colors from FC_STATUS (Enrolled purple · In Preparation yellow ·
+// Complete green · Inactive grey); dark mode slates badges via the shared rule.
+const STATUS_ORDER = ['enrolled', 'preparation', 'complete', 'inactive'];
+const statusRank = (p) => { const i = STATUS_ORDER.indexOf(statusOf(p)); return i < 0 ? 999 : i; };
+const prepKey = (p) => (preparerOf(p) || '').trim().toLowerCase() || '￿';   // no-preparer sorts last
 function initialsOf(name) {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
   return ((parts[0]?.[0] || '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase() || '?';
 }
-function statusChip(p) { const k = statusOf(p); return { label: (FC_STATUS[k] || {}).label || k, tone: STATUS_TONE[k] || 'neutral' }; }
+function statusChip(p) { const k = statusOf(p), m = FC_STATUS[k] || {}; return { label: m.label || k, tone: 'neutral', style: `background:${m.bg};color:${m.color};` }; }
 function flagsOf(p) {
   const out = [];
   const a = ageOf(p.dob);
@@ -112,10 +116,11 @@ export const firstCommunionConfig = {
   title: 'Student Records',
   newLabel: '+ Add Student',
 
-  // Cohort grouping — newest cohort first, "Unassigned" last (shell-handled).
+  // Cohort grouping — cohorts ordered by reception date, SOONEST first; "Unassigned"
+  // last (shell-handled).
   groupBy: (p) => cohortKeyOf(p),
   groupLabel: (key) => cohortName(key),
-  groupCompare: (a, b) => (cohortDateOf(b) || '').localeCompare(cohortDateOf(a) || ''),
+  groupCompare: (a, b) => (cohortDateOf(a) || '').localeCompare(cohortDateOf(b) || ''),
 
   canManage: () => fcCanManage(),
   canManageTemplate: () => isSacramentCoordinator('first_communion') || isSacramentCoordinator('firstcomm'),
@@ -126,20 +131,22 @@ export const firstCommunionConfig = {
   fetchRecords: async () => getFcRecords(),
   fetchRecord: (id) => getFcRecord(id),
   searchText: (r) => nameOf(r),
-  compare: (a, b) => lastNameOf(a).toLowerCase().localeCompare(lastNameOf(b).toLowerCase()),
+  // Within each cohort: status (Enrolled → In Prep → Complete → Inactive) → preparer → last name.
+  compare: (a, b) => statusRank(a) - statusRank(b)
+    || prepKey(a).localeCompare(prepKey(b))
+    || lastNameOf(a).toLowerCase().localeCompare(lastNameOf(b).toLowerCase()),
 
   statusFilters: [
     { key: 'all',         label: 'All',         match: () => true },
     { key: 'enrolled',    label: 'Enrolled',    match: p => statusOf(p) === 'enrolled' && !p.archived },
     { key: 'preparation', label: 'In Prep',     match: p => statusOf(p) === 'preparation' && !p.archived },
-    { key: 'complete',    label: 'Prep Done',   match: p => statusOf(p) === 'complete' && !p.archived },
-    { key: 'received',    label: 'Received',    match: p => statusOf(p) === 'received' && !p.archived },
+    { key: 'complete',    label: 'Complete',    match: p => statusOf(p) === 'complete' && !p.archived },
     { key: 'inactive',    label: 'Inactive',    match: p => statusOf(p) === 'inactive' || p.archived },
   ],
 
   listItem: (p) => ({
     title: nameOf(p) + (ageOf(p.dob) !== null ? ` (${ageOf(p.dob)})` : ''),
-    secondary: commDate(p) ? `🍞 ${formatDateDisplay(commDate(p))}` : '',
+    secondary: [preparerOf(p) ? `Prep: ${preparerOf(p)}` : '', commDate(p) ? `🍞 ${formatDateDisplay(commDate(p))}` : ''].filter(Boolean).join(' · '),
     chips: [statusChip(p)],
     flags: flagsOf(p),
   }),
@@ -166,8 +173,7 @@ export const firstCommunionConfig = {
   bulkStatusOptions: [
     { key: 'enrolled',    label: 'Enrolled' },
     { key: 'preparation', label: 'In Preparation' },
-    { key: 'complete',    label: 'Preparation Complete' },
-    { key: 'received',    label: 'Received First Communion' },
+    { key: 'complete',    label: 'Complete' },
     { key: 'inactive',    label: 'Inactive' },
   ],
   bulkUpdateStatus: (ids, status) => fcBulkStatus(ids, status),

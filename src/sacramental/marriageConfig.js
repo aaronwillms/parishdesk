@@ -270,7 +270,7 @@ export const marriageConfig = {
 
   listItem: (c) => ({
     title: coupleLabel(c),
-    secondary: weddingDateOf(c) ? formatDateDisplay(weddingDateOf(c)) : 'Date not set',
+    secondary: [preparerOf(c) ? `Prep: ${preparerOf(c)}` : '', weddingDateOf(c) ? formatDateDisplay(weddingDateOf(c)) : 'Date not set'].filter(Boolean).join(' · '),
     chips: [statusChip(c), typeChip(c), docsCompleteChip(c), feeChip(c)].filter(Boolean),
     flags: [],
   }),

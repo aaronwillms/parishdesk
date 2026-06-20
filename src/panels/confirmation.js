@@ -11,11 +11,10 @@ import { detailsChurchToggle, detailsCityState, inheritCohortChurch, inheritCoho
 import { registerCohortManager } from '../sacramental/cohortManager.js';
 
 const CONF_STATUS = {
-  enrolled:    { label:'Enrolled',             color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
-  preparation: { label:'In Preparation',       color:'#7D6608', bg:'#FEF9E7', dot:'#D4AC0D' },
-  complete:    { label:'Preparation Complete', color:'#2D6A4F', bg:'#D8F3DC', dot:'#2D6A4F' },
-  confirmed:   { label:'Confirmed',            color:'#1B4F72', bg:'#D6EAF8', dot:'#1B4F72' },
-  inactive:    { label:'Inactive',             color:'#616A6B', bg:'#F2F3F4', dot:'#AAB7B8' },
+  enrolled:    { label:'Enrolled',       color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },  // purple
+  preparation: { label:'In Preparation', color:'#7D6608', bg:'#FEF9E7', dot:'#D4AC0D' },  // yellow
+  complete:    { label:'Complete',       color:'#2D6A4F', bg:'#D8F3DC', dot:'#2D6A4F' },  // green
+  inactive:    { label:'Inactive',       color:'#616A6B', bg:'#F2F3F4', dot:'#AAB7B8' },  // grey
 };
 const GRADES = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'Other'];
 const COUNTRIES = ['United States of America', 'Mexico', 'Philippines', 'Vietnam', 'Nigeria', 'India', 'Other'];

@@ -40,6 +40,11 @@ function statusChip(p) {
   const code = ociaStatusOf(p);
   return { label: (OCIA_STATUS[code] || OCIA_STATUS.inquirer).label, tone: 'neutral', style: STATUS_CHIP_STYLE[code] || STATUS_CHIP_STYLE.inquirer };
 }
+// Sort: status (Inquirer → In Preparation → Preparation Complete → Received → Inactive)
+// → preparer name → last name. (OCIA's own status set — unchanged.)
+const STATUS_ORDER = ['inquirer', 'preparation', 'complete', 'received', 'inactive'];
+const statusRank = (p) => { const i = STATUS_ORDER.indexOf(ociaStatusOf(p)); return i < 0 ? 999 : i; };
+const prepKey = (p) => (p?.preparer || '').trim().toLowerCase() || '￿';   // no-preparer sorts last
 
 // ── Read-detail section renderers (Phase 1 — read-only) ─────────────────────
 function row(label, val) {
@@ -172,7 +177,7 @@ export const ociaConfig = {
   // and defaults it collapsed), independent of status.
   groupBy: (p) => p.archived ? '__archived' : cohortKeyOf(p),
   groupLabel: (key) => key === '__archived' ? 'Archived' : ociaCohortName(key),
-  groupCompare: (a, b) => (ociaCohortDateOf(b) || '').localeCompare(ociaCohortDateOf(a) || ''),
+  groupCompare: (a, b) => (ociaCohortDateOf(a) || '').localeCompare(ociaCohortDateOf(b) || ''),   // soonest reception date first
   noneLabel: 'No Cohort',
   subGroupBy: (p) => candTypeOf(p) === 'candidate' ? 'candidate' : 'catechumen',
   subGroupOrder: ['catechumen', 'candidate'],
@@ -187,7 +192,10 @@ export const ociaConfig = {
   fetchRecords: async () => getOciaRecords(),
   fetchRecord: (id) => getOciaRecord(id),
   searchText: (p) => ociaName(p),
-  compare: (a, b) => ociaLastName(a).toLowerCase().localeCompare(ociaLastName(b).toLowerCase()),
+  // Within each cohort/sub-group: status → preparer name → last name.
+  compare: (a, b) => statusRank(a) - statusRank(b)
+    || prepKey(a).localeCompare(prepKey(b))
+    || ociaLastName(a).toLowerCase().localeCompare(ociaLastName(b).toLowerCase()),
 
   statusFilters: [
     { key: 'all',         label: 'All',                  match: () => true },
@@ -200,7 +208,7 @@ export const ociaConfig = {
 
   listItem: (p) => ({
     title: ociaName(p) + (ociaAge(p.dob) !== null ? ` (${ociaAge(p.dob)})` : ''),
-    secondary: receptionLine(p) ? `🕊 ${receptionLine(p)}` : '',
+    secondary: [p.preparer ? `Prep: ${p.preparer}` : '', receptionLine(p) ? `🕊 ${receptionLine(p)}` : ''].filter(Boolean).join(' · '),
     chips: [statusChip(p), typeChip(p), permissionChip(p), annulmentChip(p)].filter(Boolean),
     flags: [],
   }),
