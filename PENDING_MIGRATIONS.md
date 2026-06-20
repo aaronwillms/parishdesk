@@ -3,9 +3,15 @@
 These migrations are written but NOT yet applied. Apply each once in the Supabase
 SQL editor, then move it to the "Applied" section below.
 
-_(None pending.)_
-
 ## Applied
+
+### ✅ `20260620_annulment_case_group.sql` — APPLIED
+
+Adds `case_group_id uuid` (nullable) to `annulment_cases` for annulment-to-annulment
+linking (shared case group, mirroring `family_group_id`). Verified live on 2026-06-20:
+column exists, and a real link round-trip works — link A-B then B-C → all three share
+one group (transitive); unlink a member drops it; a group dropping to one member is
+retired (lone member cleared). Linked cases display with their [Status][Type] chips.
 
 ### ✅ `20260619_annulment_baptismal_status.sql` — APPLIED
 

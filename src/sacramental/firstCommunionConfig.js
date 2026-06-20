@@ -40,8 +40,13 @@ function row(label, val) {
 function fileDetails(p) {
   const age = ageOf(p.dob);
   const par1 = `${p.parent1_first || ''} ${p.parent1_last || ''}`.trim() || p.parent1 || '';
-  const parLine = par1 ? `${esc(par1)}${p.parent1_phone ? ' · ' + esc(formatPhone(p.parent1_phone)) : ''}` : '';
+  const parLine = par1 ? `${esc(par1)}${p.parent1_phone ? ' · ' + esc(formatPhone(p.parent1_phone)) : ''}${p.parent1_email ? ' · ' + esc(p.parent1_email) : ''}` : '';
   const ck = cohortKeyOf(p);
+  // Communion church + its city/state; baptism location + country (country appended
+  // only alongside an actual location so a defaulted country never shows alone).
+  const commLoc = [communionChurch(p), p.communion_city, p.communion_state].filter(Boolean).map(esc).join(' · ');
+  const bap = [p.baptism_church, p.baptism_city, p.baptism_state].filter(Boolean);
+  if (bap.length && p.baptism_country) bap.push(p.baptism_country);
   return [
     row('Date of birth', p.dob ? `${esc(formatDateDisplay(p.dob))}${age !== null ? ` (age ${age})` : ''}` : ''),
     row('Grade', (p.grade_level || p.grade) ? esc(p.grade_level || p.grade) : ''),
@@ -50,8 +55,8 @@ function fileDetails(p) {
     row('Parent / Guardian', parLine),
     row('Cohort', ck ? esc(cohortName(ck)) : ''),
     row('Linked family', p.family_group_id ? esc(`${lastNameOf(p)} Family`) : ''),
-    row('First Communion', commDate(p) ? `${esc(formatDateDisplay(commDate(p)))}${communionChurch(p) ? ' · ' + esc(communionChurch(p)) : ''}` : ''),
-    row('Baptism', [p.baptism_church, p.baptism_city, p.baptism_state].filter(Boolean).map(esc).join(', ')),
+    row('First Communion', commDate(p) ? `${esc(formatDateDisplay(commDate(p)))}${commLoc ? ' · ' + commLoc : ''}` : ''),
+    row('Baptism', bap.map(esc).join(', ')),
     row('Person Responsible for Formation', preparerOf(p) ? esc(preparerOf(p)) : ''),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
 }
@@ -104,7 +109,7 @@ function emailFamily(p) {
 // ── Config object ───────────────────────────────────────────────────────────
 export const firstCommunionConfig = {
   panelKey: 'firstcommunion',
-  title: 'First Communion',
+  title: 'Student Records',
   newLabel: '+ Add Student',
 
   // Cohort grouping — newest cohort first, "Unassigned" last (shell-handled).

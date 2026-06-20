@@ -54,6 +54,14 @@ function personDetails(p) {
   const ck = cohortKeyOf(p);
   const age = ociaAge(p.dob);
   const contact = [p.phone ? esc(formatPhone(p.phone)) : '', p.email ? esc(p.email) : ''].filter(Boolean).join(' · ');
+  // Candidate baptism location (+ country only alongside a real location).
+  const bap = [p.baptism_church, p.baptism_city, p.baptism_state].filter(Boolean);
+  if (bap.length && p.baptism_country) bap.push(p.baptism_country);
+  // Prior marriages (entered list) — spouse, how it ended, annulment link/needed.
+  const prior = (p.prior_marriages || []).filter(m => m && (m.spouse_name || m.how_ended)).map(m => {
+    const annul = m.annulment_case_id ? ' · annulment linked' : (m.how_ended === 'Civil Divorce Only' ? ' · annulment needed' : '');
+    return `<div>${esc(m.spouse_name || 'Prior spouse')}${m.how_ended ? ` — ${esc(m.how_ended)}` : ''}${annul}</div>`;
+  }).join('');
   return [
     row('Candidate type', candTypeOf(p) === 'candidate' ? 'Candidate' : 'Catechumen'),
     row('Status', esc((OCIA_STATUS[ociaStatusOf(p)] || OCIA_STATUS.inquirer).label)),
@@ -62,6 +70,8 @@ function personDetails(p) {
     row('Place of birth', p.place_of_birth ? esc(p.place_of_birth) : ''),
     row('Contact', contact),
     row('Sponsor', (p.sponsor_name || p.sponsor1) ? esc(p.sponsor_name || p.sponsor1) : ''),
+    row('Baptism', bap.map(esc).join(', ')),
+    row('Prior marriages', prior),
     row('OCIA Prep', p.preparer ? esc(p.preparer) : ''),
     row('Reception', receptionLine(p)),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';

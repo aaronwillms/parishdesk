@@ -15,8 +15,10 @@ import { isSacramentCoordinator } from '../roles.js';
 import {
   getCaseRecords, getCaseRecord, anlCanManage, CASE_STATUS, TYPE_BADGE,
   caseType, petName, respName, petLast, respLast, advocateName, caseDocs,
-  buildAnlEditForm, anlSaveEdit, anlDeleteRec, TIMELINE_EVENTS, parseCaseNotes, BAP_STATUS,
+  buildAnlEditForm, anlSaveEdit, anlDeleteRec, TIMELINE_EVENTS, parseCaseNotes, BAP_STATUS, loadCasesData,
 } from '../panels/annulments.js';
+import { registerFamilyPanel, familyMembers } from './familyLink.js';
+import { chipHtml, refreshActivePanel } from './panelShell.js';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -105,6 +107,10 @@ function statusLabel(c) {
 function caseDetails(c) {
   const phone = c.contact_phone || c.petitioner_cell;
   const email = c.contact_email || c.petitioner_email;
+  const petAddr = [c.petitioner_street, c.petitioner_city, c.petitioner_state, c.petitioner_zip].filter(Boolean).map(esc).join(', ');
+  // Previous annulments (entered list of {spouse_name, diocese}) — one line each.
+  const prevAnn = (c.previous_annulments || []).filter(a => a && (a.spouse_name || a.diocese))
+    .map(a => `<div>${esc(a.spouse_name || 'Prior spouse')}${a.diocese ? ` — ${esc(a.diocese)}` : ''}</div>`).join('');
   return [
     row('Petitioner', petName(c) ? esc(petName(c)) : ''),
     row('Respondent', respName(c) ? esc(respName(c)) : ''),
@@ -113,12 +119,15 @@ function caseDetails(c) {
     c.briefer_process && respName(c) ? row('Co-Petitioner', esc(respName(c))) : '',
     row('Type', c.briefer_process ? 'Briefer Process' : esc(TYPE_BADGE[caseType(c)] || '')),
     row('Status', esc(statusLabel(c))),
+    row('Date of birth', c.petitioner_dob ? esc(formatDateDisplay(c.petitioner_dob)) : ''),
+    row('Address', petAddr),
     row('Tribunal diocese', c.tribunal_diocese ? esc(c.tribunal_diocese) : ''),
     row('Date filed', c.date_filed ? esc(formatDateDisplay(c.date_filed)) : ''),
     row('Date received', c.date_received ? esc(formatDateDisplay(c.date_received)) : ''),
     row('Phone', phone ? esc(formatPhone(phone)) : ''),
     row('Email', email ? esc(email) : ''),
     row('Advocate', advocateName(c) ? esc(advocateName(c)) : ''),
+    row('Previous annulments', prevAnn),
     // Marriage location — church (or its absence when Non-Church Wedding), date,
     // county, city, state (when present), country.
     c.non_church_wedding ? row('Marriage', 'Non-Church Wedding') : row('Church of marriage', c.marriage_church ? esc(c.marriage_church) : ''),
@@ -328,6 +337,48 @@ function notes(c) {
   return body + add;
 }
 
+// ── Linked Cases (annulment ↔ annulment via shared case_group_id) ────────────
+// Reuses the shared family-link mechanism (group create/join/merge/unlink) — same
+// rules, transitive grouping, confirm-before-merge — configured for annulments via
+// the adapter below. Display is annulment-specific: each linked case shows its
+// [Status][Type] chips (identical to its card chips) so the whole group's state is
+// visible at a glance. Link/unlink route through window.famSearch/famPick/famUnlink.
+registerFamilyPanel('annulments', {
+  table: 'annulment_cases',
+  groupCol: 'case_group_id',
+  selectCols: 'id, status_code, judgement_finalized, annulment_type, briefer_process, petitioner, petitioner_last, petitioner_maiden, respondent, respondent_last, respondent_maiden, co_petitioner',
+  nameOf: (c) => caseTitle(c),
+  optionLabel: (c) => caseTitle(c),
+  searchFilter: (safe) => `petitioner.ilike.%${safe}%,respondent.ilike.%${safe}%,petitioner_last.ilike.%${safe}%,respondent_last.ilike.%${safe}%,petitioner_maiden.ilike.%${safe}%,respondent_maiden.ilike.%${safe}%`,
+  getAll: () => getCaseRecords(),
+  refresh: async () => { await loadCasesData(); refreshActivePanel(); },
+  canManage: () => anlCanManage(),
+  groupNoun: 'case group',
+  groupedSuffix: 'in a group',
+  pluralNoun: 'cases',
+  linkAction: 'linked annulment case',
+  unlinkAction: 'unlinked annulment case',
+  groupContext: 'annulments',
+});
+function linkedCases(c) {
+  const manage = anlCanManage();
+  const members = familyMembers(getCaseRecords(), c.case_group_id, c.id, 'case_group_id');
+  const list = members.length
+    ? members.map(m => `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;">
+        <span style="flex:1;cursor:pointer;color:var(--navy);" onclick="window.expandCase('${m.id}')">${esc(caseTitle(m))}</span>
+        <span style="display:flex;gap:4px;flex-shrink:0;">${chipHtml(statusChip(m))}${chipHtml(typeChip(m))}</span>
+        ${manage ? `<button onclick="window.famUnlink('annulments','${m.id}')" style="background:none;border:none;cursor:pointer;color:#C0392B;font-size:12px;flex-shrink:0;">Unlink</button>` : ''}
+      </div>`).join('')
+    : `<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No linked cases.</div>`;
+  const picker = manage ? `<div style="position:relative;margin-top:8px;">
+      <input type="text" id="fam-search-annulments" placeholder="Link case (search by name)…" autocomplete="off"
+        oninput="window.famSearch('annulments','${c.id}')"
+        style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" />
+      <div id="fam-results-annulments" class="anl-link-results" style="display:none;"></div>
+    </div>` : '';
+  return list + picker;
+}
+
 // ── Config object ────────────────────────────────────────────────────────────
 export const annulmentConfig = {
   panelKey: 'annulments',
@@ -377,10 +428,11 @@ export const annulmentConfig = {
   }),
 
   detailSections: [
-    { title: 'Case details', render: caseDetails },
-    { title: 'Documents',    render: documents },
-    { title: 'Timeline',     render: timeline },
-    { title: 'Notes',        render: notes },
+    { title: 'Case details',  render: caseDetails },
+    { title: 'Linked Cases',  render: linkedCases },
+    { title: 'Documents',     render: documents },
+    { title: 'Timeline',      render: timeline },
+    { title: 'Notes',         render: notes },
   ],
 
   // Phase 2: inline type-driven edit form rendered into the shell's detail pane;

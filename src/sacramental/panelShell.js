@@ -38,7 +38,7 @@ function archivedDivider(collapsed) {
 
 // Map a chip/flag tone to an existing badge token class (dark-mode handled in CSS).
 const TONE_CLASS = { pending: 'badge-pending', active: 'badge-active', urgent: 'badge-urgent', complete: 'badge-complete', neutral: 'badge-complete' };
-function chipHtml(c) {
+export function chipHtml(c) {
   // A chip may supply an explicit `style` to override the tone palette (e.g.
   // Marriage's per-status colors). Dark mode's !important badge rule still wins.
   const st = c.style ? ` style="${c.style}"` : '';

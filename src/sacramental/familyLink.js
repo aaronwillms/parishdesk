@@ -27,14 +27,19 @@ const _adapters = {};
 export function registerFamilyPanel(key, adapter) { _adapters[key] = adapter; }
 function _a(key) { return _adapters[key]; }
 
-const SELECT_COLS = 'id, name, first_name, last_name, family_group_id';
-async function _fetchOne(table, id) {
-  const { data } = await sb.from(table).select(SELECT_COLS).eq('id', id).maybeSingle();
+// Group column + select columns are adapter-configurable so the SAME mechanism serves
+// the person panels (family_group_id) and Annulments (case_group_id) without forking.
+// Defaults reproduce the original family behavior exactly.
+const DEFAULT_COLS = 'id, name, first_name, last_name';
+const _gcol = (a) => (a && a.groupCol) || 'family_group_id';
+const _cols = (a) => `${a.selectCols || DEFAULT_COLS}, ${_gcol(a)}`;
+async function _fetchOne(a, id) {
+  const { data } = await sb.from(a.table).select(_cols(a)).eq('id', id).maybeSingle();
   return data || null;
 }
-async function _fetchGroup(table, gid) {
+async function _fetchGroup(a, gid) {
   if (!gid) return [];
-  const { data } = await sb.from(table).select(SELECT_COLS).eq('family_group_id', gid);
+  const { data } = await sb.from(a.table).select(_cols(a)).eq(_gcol(a), gid);
   return data || [];
 }
 
@@ -46,17 +51,19 @@ export function resolveFamilyLink(gidA, gidB) {
   return { action: 'mint' };
 }
 
-// Members of a group from an in-memory record list (excluding one id).
-export function familyMembers(records, gid, excludeId) {
+// Members of a group from an in-memory record list (excluding one id). `groupCol`
+// defaults to family_group_id; pass 'case_group_id' for annulments.
+export function familyMembers(records, gid, excludeId, groupCol = 'family_group_id') {
   if (!gid) return [];
-  return (records || []).filter(r => r.family_group_id === gid && r.id !== excludeId);
+  return (records || []).filter(r => r[groupCol] === gid && r.id !== excludeId);
 }
 
-async function _applyUpdates(table, pairs) {
+async function _applyUpdates(a, pairs) {
+  const col = _gcol(a);
   for (const [id, gid] of pairs) {
-    const { error } = await serializeWrite(`${table}:${id}`, () =>
-      withWriteRetry(() => sb.from(table).update({ family_group_id: gid }).eq('id', id), { kind: 'update' }));
-    if (error) { alert('Family update failed: ' + error.message); return false; }
+    const { error } = await serializeWrite(`${a.table}:${id}`, () =>
+      withWriteRetry(() => sb.from(a.table).update({ [col]: gid }).eq('id', id), { kind: 'update' }));
+    if (error) { alert((a.groupNoun ? a.groupNoun[0].toUpperCase() + a.groupNoun.slice(1) : 'Family') + ' update failed: ' + error.message); return false; }
   }
   return true;
 }
@@ -66,49 +73,53 @@ async function _applyUpdates(table, pairs) {
 // (before the in-memory list reloads). Returns true when something changed.
 export async function familyLink(key, idA, idB) {
   const a = _a(key); if (!a || !idA || !idB || idA === idB) return false;
-  const [X, Y] = await Promise.all([_fetchOne(a.table, idA), _fetchOne(a.table, idB)]);
+  const col = _gcol(a);
+  const [X, Y] = await Promise.all([_fetchOne(a, idA), _fetchOne(a, idB)]);
   if (!X || !Y) return false;
-  const res = resolveFamilyLink(X.family_group_id, Y.family_group_id);
+  const res = resolveFamilyLink(X[col], Y[col]);
   if (res.action === 'noop') return false;
 
+  const gn = a.groupNoun || 'family group';
   let gid, updates;
   if (res.action === 'mint') { gid = uuid(); updates = [[X.id, gid], [Y.id, gid]]; }
-  else if (res.action === 'adopt') { gid = res.gid; const joiner = X.family_group_id ? Y : X; updates = [[joiner.id, gid]]; }
+  else if (res.action === 'adopt') { gid = res.gid; const joiner = X[col] ? Y : X; updates = [[joiner.id, gid]]; }
   else { // conflict — confirm before merging two existing groups, naming both
-    const [mA, mB] = await Promise.all([_fetchGroup(a.table, X.family_group_id), _fetchGroup(a.table, Y.family_group_id)]);
+    const [mA, mB] = await Promise.all([_fetchGroup(a, X[col]), _fetchGroup(a, Y[col])]);
     const ok = window.confirm(
-      `These two files are already in different family groups. Merge them into one?\n\n` +
+      `These two ${a.pluralNoun || 'files'} are already in different ${gn}s. Merge them into one?\n\n` +
       `• ${mA.map(a.nameOf).join(', ')}\n• ${mB.map(a.nameOf).join(', ')}`);
     if (!ok) return false;
-    gid = X.family_group_id;
+    gid = X[col];
     updates = mB.map(r => [r.id, gid]);   // move all of Y's group into X's
   }
-  if (!await _applyUpdates(a.table, updates)) return false;
-  logActivity({ action: 'linked family member', entityType: key, entityName: `${a.nameOf(X)} ↔ ${a.nameOf(Y)}`, contextType: 'family', contextId: gid });
+  if (!await _applyUpdates(a, updates)) return false;
+  logActivity({ action: a.linkAction || 'linked family member', entityType: key, entityName: `${a.nameOf(X)} ↔ ${a.nameOf(Y)}`, contextType: a.groupContext || 'family', contextId: gid });
   return true;
 }
 
 // ── Unlink a member; retire the group if it drops to a single member ──────────
 export async function familyUnlink(key, id) {
   const a = _a(key); if (!a) return false;
-  const rec = await _fetchOne(a.table, id);
-  if (!rec || !rec.family_group_id) return false;
-  if (!window.confirm(`Remove ${a.nameOf(rec)} from this family group?`)) return false;
-  const group = await _fetchGroup(a.table, rec.family_group_id);
+  const col = _gcol(a);
+  const rec = await _fetchOne(a, id);
+  if (!rec || !rec[col]) return false;
+  if (!window.confirm(`Remove ${a.nameOf(rec)} from this ${a.groupNoun || 'family group'}?`)) return false;
+  const group = await _fetchGroup(a, rec[col]);
   const others = group.filter(r => r.id !== id);
   const clears = [[id, null]];
   if (others.length === 1) clears.push([others[0].id, null]);   // last one standing → retire group
-  if (!await _applyUpdates(a.table, clears)) return false;
-  logActivity({ action: 'unlinked family member', entityType: key, entityName: a.nameOf(rec), contextType: 'family', contextId: rec.family_group_id });
+  if (!await _applyUpdates(a, clears)) return false;
+  logActivity({ action: a.unlinkAction || 'unlinked family member', entityType: key, entityName: a.nameOf(rec), contextType: a.groupContext || 'family', contextId: rec[col] });
   return true;
 }
 
-// Shared search (same table, name match), excluding self.
+// Shared search (same table, name match), excluding self. `searchFilter(safe)` lets a
+// panel target its own name columns (annulments search petitioner/respondent).
 export async function familySearchOptions(key, q, excludeId) {
   const a = _a(key); if (!a || (q || '').trim().length < 2) return [];
   const safe = q.replace(/[%_,()'"*]/g, ' ');
-  const { data } = await sb.from(a.table).select(SELECT_COLS)
-    .or(`name.ilike.%${safe}%,last_name.ilike.%${safe}%,first_name.ilike.%${safe}%`).limit(8);
+  const filter = a.searchFilter ? a.searchFilter(safe) : `name.ilike.%${safe}%,last_name.ilike.%${safe}%,first_name.ilike.%${safe}%`;
+  const { data } = await sb.from(a.table).select(_cols(a)).or(filter).limit(8);
   return (data || []).filter(r => r.id !== excludeId);
 }
 
@@ -157,13 +168,13 @@ function _renderAddChip(key) {
 }
 
 // ── Shared option-list renderer for both pickers ──────────────────────────────
-function _renderOptions(boxId, rows, onPickAttr) {
+function _renderOptions(boxId, rows, onPickAttr, opts = {}) {
+  const labelOf = opts.labelOf || _adapterNameFromRow;
+  const groupCol = opts.groupCol || 'family_group_id';
+  const suffix = opts.suffix || 'in a family';
   const box = document.getElementById(boxId); if (!box) return;
   box.innerHTML = rows.length
-    ? rows.map(r => {
-        const nm = _adapterNameFromRow(r);
-        return `<div class="anl-link-opt" onmousedown="event.preventDefault();${onPickAttr(r)}">${esc(nm)}${r.family_group_id ? ' · in a family' : ''}</div>`;
-      }).join('')
+    ? rows.map(r => `<div class="anl-link-opt" onmousedown="event.preventDefault();${onPickAttr(r)}">${esc(labelOf(r))}${r[groupCol] ? ' · ' + esc(suffix) : ''}</div>`).join('')
     : `<div style="padding:.5rem .7rem;font-size:12px;color:#9CA3AF;">No matches</div>`;
   box.style.display = 'block';
 }
@@ -175,8 +186,10 @@ function _adapterNameFromRow(r) {
 if (typeof window !== 'undefined') {
   // Viewer picker: live search → link immediately → refresh detail.
   window.famSearch = async (key, selfId) => {
+    const a = _a(key);
     const rows = await familySearchOptions(key, document.getElementById(`fam-search-${key}`)?.value || '', selfId);
-    _renderOptions(`fam-results-${key}`, rows, (r) => `window.famPick('${key}','${selfId}','${r.id}')`);
+    _renderOptions(`fam-results-${key}`, rows, (r) => `window.famPick('${key}','${selfId}','${r.id}')`,
+      { labelOf: a?.optionLabel, groupCol: _gcol(a), suffix: a?.groupedSuffix });
   };
   window.famPick = async (key, selfId, targetId) => {
     const a = _a(key); const box = document.getElementById(`fam-results-${key}`); if (box) box.style.display = 'none';

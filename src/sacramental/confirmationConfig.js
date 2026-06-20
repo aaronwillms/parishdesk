@@ -42,18 +42,29 @@ function fileDetails(p) {
   const ck = cohortKeyOf(p);
   const candPhone = p.candidate_phone || p.phone;
   const parentName = p.parent_name || p.parent1 || '';
-  const parentLine = parentName ? `${esc(parentName)}${p.parent_phone ? ' · ' + esc(formatPhone(p.parent_phone)) : ''}` : '';
+  const parentLine = parentName ? `${esc(parentName)}${p.parent_phone ? ' · ' + esc(formatPhone(p.parent_phone)) : ''}${p.parent_email ? ' · ' + esc(p.parent_email) : ''}` : '';
+  // Confirmation church + city/state; baptism + First Communion locations + country
+  // (country appended only alongside a real location so a defaulted country never shows alone).
+  const confLoc = [confChurch(p), p.confirmation_city, p.confirmation_state].filter(Boolean).map(esc).join(' · ');
+  const bap = [p.baptism_church, p.baptism_city, p.baptism_state].filter(Boolean);
+  if (bap.length && p.baptism_country) bap.push(p.baptism_country);
+  const fc = [p.first_communion_church, p.first_communion_city, p.first_communion_state].filter(Boolean);
+  if (fc.length && p.first_communion_country) fc.push(p.first_communion_country);
   return [
     row('Type', isYouth(p) ? 'Youth' : 'Adult'),
     row('Cohort', ck ? esc(cohortName(ck)) : ''),
     row('Date of birth', p.dob ? `${esc(formatDateDisplay(p.dob))}${ageOf(p.dob) !== null ? ` (age ${ageOf(p.dob)})` : ''}` : ''),
+    row('School', p.school_name ? esc(p.school_name) : ''),
+    row('Grade', (p.grade_level || p.grade) ? esc(p.grade_level || p.grade) : ''),
     row('Person Responsible for Formation', preparerOf(p) ? esc(preparerOf(p)) : ''),
     row('Sponsor', (p.sponsor_name || p.sponsor) ? esc(p.sponsor_name || p.sponsor) : ''),
     row('Confirmation name', p.confirmation_name ? esc(p.confirmation_name) : ''),
     row('Candidate contact', !isYouth(p) && (candPhone || p.candidate_email) ? `${candPhone ? esc(formatPhone(candPhone)) : ''}${p.candidate_email ? (candPhone ? ' · ' : '') + esc(p.candidate_email) : ''}` : ''),
     row('Parent / Guardian', isYouth(p) ? parentLine : ''),
-    row('Confirmation', confDate(p) ? `${esc(formatDateDisplay(confDate(p)))}${confChurch(p) ? ' · ' + esc(confChurch(p)) : ''}` : ''),
-    row('Baptism', [p.baptism_church, p.baptism_city, p.baptism_state].filter(Boolean).map(esc).join(', ')),
+    row('Permission granted', p.parent_permission_date ? esc(formatDateDisplay(p.parent_permission_date)) : ''),
+    row('Confirmation', confDate(p) ? `${esc(formatDateDisplay(confDate(p)))}${confLoc ? ' · ' + confLoc : ''}` : ''),
+    row('Baptism', bap.map(esc).join(', ')),
+    row('First Communion', fc.map(esc).join(', ')),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
 }
 function serviceHours(p) {   // YOUTH ONLY (gated via section `when`)
@@ -105,7 +116,7 @@ function emailFamily(p) {
 // ── Config object ───────────────────────────────────────────────────────────
 export const confirmationConfig = {
   panelKey: 'confirmation',
-  title: 'Confirmation',
+  title: 'Candidate Records',
   newLabel: '+ Add Candidate',
 
   // Two-level grouping: cohort, then youth/adult within each cohort.

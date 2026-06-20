@@ -37,14 +37,17 @@ function fileDetails(p) {
   const age = bapAgeOf(dobOf(p));
   const par1 = `${p.parent1_first || ''} ${p.parent1_last || ''}`.trim();
   const par2 = `${p.parent2_first || ''} ${p.parent2_last || ''}`.trim();
-  const parLine = (n, nm, phone, cath) => nm ? `${esc(nm)}${cath === false ? ' <span style="color:#854F0B;">(non-Catholic)</span>' : ''}${phone ? ' · ' + esc(formatPhone(phone)) : ''}` : '';
+  const parLine = (nm, phone, email, cath) => nm ? `${esc(nm)}${cath === false ? ' <span style="color:#854F0B;">(non-Catholic)</span>' : ''}${phone ? ' · ' + esc(formatPhone(phone)) : ''}${email ? ' · ' + esc(email) : ''}` : '';
+  const church = [churchName(p), p.baptism_city, p.baptism_state].filter(Boolean).map(esc).join(' · ');
   return [
     row('Date of birth', dobOf(p) ? `${esc(formatDateDisplay(dobOf(p)))}${age !== null ? ` (age ${age})` : ''}` : ''),
     row('Baptism date', bapDate(p) ? esc(formatDateDisplay(bapDate(p))) : ''),
-    row('Church', churchName(p) ? esc(churchName(p)) : ''),
+    row('Church', church),
     row('Address', [p.child_street, p.child_city, p.child_state, p.child_zip].filter(Boolean).map(esc).join(', ')),
-    row('Parent / Guardian 1', parLine(1, par1, p.parent1_phone, p.parent1_catholic)),
-    par2 ? row('Parent / Guardian 2', parLine(2, par2, p.parent2_phone, p.parent2_catholic)) : '',
+    row('Parent / Guardian 1', parLine(par1, p.parent1_phone, p.parent1_email, p.parent1_catholic)),
+    par2 ? row('Parent / Guardian 2', parLine(par2, p.parent2_phone, p.parent2_email, p.parent2_catholic)) : '',
+    row('Birth father', p.birth_father_name ? esc(p.birth_father_name) : ''),
+    row('Birth mother', p.birth_mother_name ? esc(p.birth_mother_name) : ''),
     row('Officiant', officiantName(p) ? esc(officiantName(p)) : ''),
     row('Person Responsible for Formation', p.preparer ? esc(p.preparer) : ''),
   ].filter(Boolean).join('') || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details yet.</div>';
@@ -97,7 +100,7 @@ function emailFamily(p) {
 // ── Config object ───────────────────────────────────────────────────────────
 export const baptismConfig = {
   panelKey: 'baptism',
-  title: 'Baptismal Preparation',
+  title: 'Child Records',
   newLabel: '+ Add Child',
   groupBy: null,
   sortByDate: 'baptism_date',   // shell: upcoming-first + archived-last
