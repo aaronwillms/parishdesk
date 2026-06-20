@@ -688,12 +688,9 @@ function buildCaseModalHtml(c, opts = {}) {
     </div>`;
     h += _toggle('am-archive', 'Archive this case', !!c?.archived);
 
-    // Annulment ↔ annulment linking (shared case group, mechanism A). Edit-safe block
-    // rendered by annulmentConfig; links/unlinks re-render only their block (form kept).
-    h += _sectionHead('Linked Cases');
-    h += (typeof window !== 'undefined' && window._anlLinkedCasesEditor) ? window._anlLinkedCasesEditor(c) : '';
-    // Cross-panel links to OCIA / Marriage (mechanism B, record_links). Supersedes the
-    // old linked_marriage_prep_id / linked_ocia_id pickers (now unified + reciprocal).
+    // Unified "Linked Records": one section + one search over Annulment + OCIA + Marriage.
+    // Picks route by type — annulment → case-group (mechanism A), OCIA/Marriage → direct
+    // record_links pair (mechanism B). Edit-safe (re-renders only its own block).
     h += _sectionHead('Linked Records');
     h += (typeof window !== 'undefined' && window._anlLinkedRecordsEditor) ? window._anlLinkedRecordsEditor(c) : '';
   }

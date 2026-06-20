@@ -17,9 +17,10 @@ import {
   caseType, petName, respName, petLast, respLast, advocateName, caseDocs,
   buildAnlEditForm, anlSaveEdit, anlDeleteRec, TIMELINE_EVENTS, parseCaseNotes, BAP_STATUS, loadCasesData,
 } from '../panels/annulments.js';
-import { registerFamilyPanel, familyMembers, familyLink, familyUnlink, familySearchOptions } from './familyLink.js';
+import { registerFamilyPanel, familyLink, familyUnlink } from './familyLink.js';
 import { chipHtml, refreshActivePanel } from './panelShell.js';
-import { registerLinkPanel, linkSectionHtml, linkRowHtml } from './recordLinks.js';
+import { registerLinkPanel, linkSectionHtml } from './recordLinks.js';
+import { sb } from '../supabase.js';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -375,62 +376,27 @@ registerLinkPanel('annulment', {
   searchFilter: (safe) => `petitioner.ilike.%${safe}%,respondent.ilike.%${safe}%,petitioner_last.ilike.%${safe}%,respondent_last.ilike.%${safe}%`,
   searchTitle: (r) => `${r.petitioner_maiden || r.petitioner_last || '—'} vs ${r.respondent_maiden || r.respondent_last || '—'}`,
   displayCols: 'id, status_code, judgement_finalized, annulment_type, type, briefer_process, petitioner, petitioner_last, petitioner_maiden, respondent, respondent_last, respondent_maiden, co_petitioner, case_group_id',
+  // SAME-TYPE mechanism (annulment↔annulment): the transitive case-group (mechanism A,
+  // case_group_id + familyLink) — NOT record_links. Wired so the unified "Linked
+  // Records" search can route an annulment pick to the group while OCIA/Marriage picks
+  // go to record_links. DB-driven members so the list is correct without a full reload.
+  sameType: {
+    members: async (id) => {
+      const { data: me } = await sb.from('annulment_cases').select('case_group_id').eq('id', id).maybeSingle();
+      if (!me?.case_group_id) return [];
+      const { data: sibs } = await sb.from('annulment_cases').select('id').eq('case_group_id', me.case_group_id).neq('id', id);
+      return (sibs || []).map(s => s.id);
+    },
+    link: async (selfId, otherId) => { const ok = await familyLink('annulments', selfId, otherId); if (ok) await loadCasesData(); return ok; },
+    unlink: async (memberId) => { const ok = await familyUnlink('annulments', memberId); if (ok) await loadCasesData(); return ok; },
+  },
 });
-// Cross-panel "Linked Records" section (mechanism B) for the annulment read view + editor.
+// Unified "Linked Records" section (read view + editor): one search over Annulment +
+// OCIA + Marriage, all links listed together. The shared recordLinks module routes a
+// pick by type — annulment → the case-group mechanism (familyLink, via the adapter's
+// sameType hook above); OCIA/Marriage → direct record_links pairs. Bridge rule applies.
 function linkedRecords(c) { return linkSectionHtml('annulment', c.id); }
 if (typeof window !== 'undefined') window._anlLinkedRecordsEditor = (c) => linkSectionHtml('annulment', c.id);
-// Shared linked-cases body: member list (title + [Status][Type] chips + Unlink) and a
-// link picker. `ctx` = 'view' (read-view detailSection; link/unlink full-refresh the
-// panel — no form to lose) | 'edit' (rendered INSIDE the editor's Linked Records
-// section; link/unlink re-render only this block so unsaved form edits are preserved).
-function _linkedCasesBody(c, ctx) {
-  const manage = anlCanManage();
-  const members = familyMembers(getCaseRecords(), c.case_group_id, c.id, 'case_group_id');
-  // Shared row renderer (navy circle + arrow, title, chips immediately right, clickable).
-  const list = members.length
-    ? members.map(m => linkRowHtml({
-        openCall: `window.expandCase('${m.id}')`,
-        title: esc(caseTitle(m)),
-        chipsHtml: chipHtml(statusChip(m)) + chipHtml(typeChip(m)),
-        unlinkCall: manage ? (ctx === 'edit' ? `window.anlCaseUnlink('${c.id}','${m.id}')` : `window.famUnlink('annulments','${m.id}')`) : '',
-      })).join('')
-    : `<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No linked cases.</div>`;
-  const ids = ctx === 'edit'
-    ? { inp: 'am-cl-search', res: 'am-cl-results', onin: `window.anlCaseLinkSearch('${c.id}')` }
-    : { inp: 'fam-search-annulments', res: 'fam-results-annulments', onin: `window.famSearch('annulments','${c.id}')` };
-  const picker = manage ? `<div style="position:relative;margin-top:8px;">
-      <input type="text" id="${ids.inp}" placeholder="Link case (search by name)…" autocomplete="off" oninput="${ids.onin}"
-        style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;background:#fff;" />
-      <div id="${ids.res}" class="anl-link-results" style="display:none;"></div>
-    </div>` : '';
-  return list + picker;
-}
-// Read-view detailSection renderer.
-function linkedCases(c) { return _linkedCasesBody(c, 'view'); }
-
-// Editor integration: buildCaseModalHtml drops `window._anlLinkedCasesEditor(c)` into
-// its "Linked Records" section. Edit-safe handlers reuse the family-link core but
-// re-render ONLY the #am-cl-wrap block (loadCasesData refreshes data without rebuilding
-// the open edit form), so the user's unsaved field edits survive a link/unlink.
-if (typeof window !== 'undefined') {
-  window._anlLinkedCasesEditor = (c) => `<div id="am-cl-wrap">${_linkedCasesBody(c, 'edit')}</div>`;
-  const _rerenderEditBlock = (selfId) => { const w = document.getElementById('am-cl-wrap'); const c = getCaseRecord(selfId); if (w && c) w.innerHTML = _linkedCasesBody(c, 'edit'); };
-  window.anlCaseLinkSearch = async (selfId) => {
-    const rows = await familySearchOptions('annulments', document.getElementById('am-cl-search')?.value || '', selfId);
-    const box = document.getElementById('am-cl-results'); if (!box) return;
-    box.innerHTML = rows.length
-      ? rows.map(r => `<div class="anl-link-opt" onmousedown="event.preventDefault();window.anlCaseLinkPick('${selfId}','${r.id}')">${esc(caseTitle(r))}${r.case_group_id ? ' · in a group' : ''}</div>`).join('')
-      : `<div style="padding:.5rem .7rem;font-size:12px;color:#9CA3AF;">No matches</div>`;
-    box.style.display = 'block';
-  };
-  window.anlCaseLinkPick = async (selfId, targetId) => {
-    const box = document.getElementById('am-cl-results'); if (box) box.style.display = 'none';
-    if (await familyLink('annulments', selfId, targetId)) { await loadCasesData(); _rerenderEditBlock(selfId); }
-  };
-  window.anlCaseUnlink = async (selfId, memberId) => {
-    if (await familyUnlink('annulments', memberId)) { await loadCasesData(); _rerenderEditBlock(selfId); }
-  };
-}
 
 // ── Config object ────────────────────────────────────────────────────────────
 export const annulmentConfig = {
@@ -482,7 +448,6 @@ export const annulmentConfig = {
 
   detailSections: [
     { title: 'Case details',  render: caseDetails },
-    { title: 'Linked Cases',  render: linkedCases },
     { title: 'Linked Records', render: linkedRecords },
     { title: 'Documents',     render: documents },
     { title: 'Timeline',      render: timeline },

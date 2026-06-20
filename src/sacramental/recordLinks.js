@@ -39,6 +39,10 @@ async function _ensure(type) {
 // Cross-panel targets per source type (same-type excluded; annulment↔annulment is A).
 const CROSS = { ocia: ['marriage', 'annulment'], marriage: ['ocia', 'annulment'], annulment: ['ocia', 'marriage'] };
 export function crossTypesFor(type) { return CROSS[type] || []; }
+// Search scope = cross-panel targets PLUS the panel's own type when it has a same-type
+// group mechanism (annulments → case_group_id). OCIA/Marriage have no sameType → cross
+// only, so their unified search is unchanged. Picks route by type (see _rlPick).
+export function searchTypesFor(type) { return _p(type)?.sameType ? [type, ...crossTypesFor(type)] : crossTypesFor(type); }
 
 const _key = (t, id) => `${t}:${id}`;
 // Normalize endpoint order by "type:id" so a pair is stored once, found from either side.
@@ -73,18 +77,35 @@ export async function unlinkRecords(tA, idA, tB, idB) {
 // being loaded in memory.
 export async function getLinks(type, id) {
   if (!id) return [];
-  const { data, error } = await sb.from('record_links').select('type_a,id_a,type_b,id_b')
-    .or(`and(type_a.eq.${type},id_a.eq.${id}),and(type_b.eq.${type},id_b.eq.${id})`);
+  // BRIDGE — viewer side: if the viewer is an annulment in a case-group, treat the WHOLE
+  // group as "self" so a cross-panel link made to ANY member surfaces on every member.
+  let selfIds = [id];
+  if (type === 'annulment') {
+    const { data: me } = await sb.from('annulment_cases').select('case_group_id').eq('id', id).maybeSingle();
+    if (me?.case_group_id) {
+      const { data: sibs } = await sb.from('annulment_cases').select('id').eq('case_group_id', me.case_group_id);
+      if (sibs?.length) selfIds = sibs.map(s => s.id);
+    }
+  }
+  const ors = selfIds.flatMap(s => [`and(type_a.eq.${type},id_a.eq.${s})`, `and(type_b.eq.${type},id_b.eq.${s})`]).join(',');
+  const { data, error } = await sb.from('record_links').select('type_a,id_a,type_b,id_b').or(ors);
   if (error || !data) return [];
+  const selfSet = new Set(selfIds.map(s => _key(type, s)));
   const out = [], seen = new Set();
-  const add = (t, i, bridged) => { const k = _key(t, i); if (k === _key(type, id) || seen.has(k)) return; seen.add(k); out.push({ type: t, id: i, bridged }); };
+  const add = (t, i, bridged) => { const k = _key(t, i); if (selfSet.has(k) || seen.has(k)) return; seen.add(k); out.push({ type: t, id: i, bridged }); };
   const directAnnIds = [];
   for (const r of data) {
-    const o = (r.type_a === type && r.id_a === id) ? { type: r.type_b, id: r.id_b } : { type: r.type_a, id: r.id_a };
-    add(o.type, o.id, false);
+    const aSelf = (r.type_a === type && selfIds.includes(r.id_a));
+    const usedSelfId = aSelf ? r.id_a : r.id_b;          // which group member this link used
+    const o = aSelf ? { type: r.type_b, id: r.id_b } : { type: r.type_a, id: r.id_a };
+    // Direct (unlink-able here) only when the link is to the case actually being viewed;
+    // links inherited from a group sibling are bridged (managed on that sibling's view).
+    add(o.type, o.id, usedSelfId !== id);
     if (o.type === 'annulment') directAnnIds.push(o.id);
   }
-  if (directAnnIds.length) {                          // bridge rule
+  // BRIDGE — endpoint side: if a linked endpoint is an annulment, expand its group so a
+  // file linked to one case shows all the case's group members (the OCIA/Marriage view).
+  if (directAnnIds.length) {
     const { data: anns } = await sb.from('annulment_cases').select('id, case_group_id').in('id', directAnnIds);
     const groups = [...new Set((anns || []).map(a => a.case_group_id).filter(Boolean))];
     if (groups.length) {
@@ -110,7 +131,7 @@ export function linkRowHtml({ openCall, title, chipsHtml, unlinkCall, typeLabel 
 // ── Read-viewer "Linked Records" section (list + picker, async-populated) ──────
 export function linkSectionHtml(selfType, selfId) {
   const a = _p(selfType); const manage = !a?.canManage || a.canManage();
-  const labels = crossTypesFor(selfType).map(t => _p(t)?.label || (t[0].toUpperCase() + t.slice(1))).join(' / ');
+  const labels = searchTypesFor(selfType).map(t => _p(t)?.label || (t[0].toUpperCase() + t.slice(1))).join(' / ');
   if (typeof window !== 'undefined') setTimeout(() => window._rlPopulate(selfType, selfId), 0);
   const picker = manage ? `<div style="position:relative;margin-top:8px;">
       <input type="text" id="rl-search-${selfType}-${selfId}" placeholder="Link a record (search ${esc(labels)} by name)…" autocomplete="off"
@@ -133,7 +154,10 @@ if (typeof window !== 'undefined') {
   window._rlPopulate = async (selfType, selfId) => {
     const wrap = document.getElementById(`rl-wrap-${selfType}-${selfId}`); if (!wrap) return;
     const a = _p(selfType); const manage = !a?.canManage || a.canManage();
-    const ends = await getLinks(selfType, selfId);
+    // Same-type group members (mechanism A — e.g. annulment case-group), then cross-panel
+    // links (mechanism B + bridge). Unified into one list; routing differs per type.
+    const groupIds = a?.sameType?.members ? await a.sameType.members(selfId) : [];
+    const ends = [...groupIds.map(gid => ({ type: selfType, id: gid, group: true })), ...await getLinks(selfType, selfId)];
     if (!ends.length) { wrap.innerHTML = `<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No linked records.</div>`; return; }
     // Batch-fetch each linked record's display row by type (so chips render without the
     // other panel being loaded), ensuring its adapter is registered first.
@@ -146,13 +170,12 @@ if (typeof window !== 'undefined') {
     }
     const html = ends.map(e => {
       const ad = _p(e.type); const row = rowByKey[_key(e.type, e.id)]; if (!ad || !row) return '';
-      return linkRowHtml({
-        openCall: ad.openCall(e.id),
-        title: esc(ad.recordTitle(row)),
-        typeLabel: ad.label,
-        chipsHtml: ad.chipsHtml(row),
-        unlinkCall: (manage && !e.bridged) ? `window._rlUnlink('${selfType}','${selfId}','${e.type}','${e.id}')` : '',
-      });
+      // Group members unlink via the same-type mechanism; cross-panel via record_links
+      // (bridged rows aren't a direct link → no unlink, managed on the linked member).
+      const unlinkCall = !manage ? ''
+        : e.group ? `window._rlGroupUnlink('${selfType}','${selfId}','${e.id}')`
+        : (!e.bridged ? `window._rlUnlink('${selfType}','${selfId}','${e.type}','${e.id}')` : '');
+      return linkRowHtml({ openCall: ad.openCall(e.id), title: esc(ad.recordTitle(row)), typeLabel: ad.label, chipsHtml: ad.chipsHtml(row), unlinkCall });
     }).join('');
     wrap.innerHTML = html || `<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No linked records.</div>`;
   };
@@ -160,8 +183,8 @@ if (typeof window !== 'undefined') {
     const q = document.getElementById(`rl-search-${selfType}-${selfId}`)?.value || '';
     const box = document.getElementById(`rl-results-${selfType}-${selfId}`); if (!box) return;
     if (q.trim().length < 2) { box.style.display = 'none'; return; }
-    const lists = await Promise.all(crossTypesFor(selfType).map(t => _searchType(t, q)));
-    const rows = lists.flat().slice(0, 12);
+    const lists = await Promise.all(searchTypesFor(selfType).map(t => _searchType(t, q)));
+    const rows = lists.flat().filter(r => !(r.type === selfType && r.id === selfId)).slice(0, 12);   // never offer self
     box.innerHTML = rows.length
       ? rows.map(r => `<div class="anl-link-opt" onmousedown="event.preventDefault();window._rlPick('${selfType}','${selfId}','${r.type}','${r.id}')">${esc(r.title)} <span style="color:#9CA3AF;font-size:11px;">· ${esc(r.label)}</span></div>`).join('')
       : `<div style="padding:.5rem .7rem;font-size:12px;color:#9CA3AF;">No matches</div>`;
@@ -170,9 +193,16 @@ if (typeof window !== 'undefined') {
   window._rlPick = async (selfType, selfId, t, id) => {
     const box = document.getElementById(`rl-results-${selfType}-${selfId}`); if (box) box.style.display = 'none';
     const inp = document.getElementById(`rl-search-${selfType}-${selfId}`); if (inp) inp.value = '';
-    if (await linkRecords(selfType, selfId, t, id)) window._rlPopulate(selfType, selfId);
+    const a = _p(selfType);
+    // Same type → group mechanism (transitive); cross type → direct record_links pair.
+    const ok = (t === selfType && a?.sameType?.link) ? await a.sameType.link(selfId, id) : await linkRecords(selfType, selfId, t, id);
+    if (ok) window._rlPopulate(selfType, selfId);
   };
   window._rlUnlink = async (selfType, selfId, t, id) => {
     if (await unlinkRecords(selfType, selfId, t, id)) window._rlPopulate(selfType, selfId);
+  };
+  window._rlGroupUnlink = async (selfType, selfId, memberId) => {
+    const a = _p(selfType);
+    if (a?.sameType?.unlink && await a.sameType.unlink(memberId)) window._rlPopulate(selfType, selfId);
   };
 }
