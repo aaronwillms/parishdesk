@@ -5,6 +5,7 @@ import { fmtDate, todayCST, logActivity, reportWriteError, applyDocCheck, docChe
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
+import { promptNoteEdit } from '../sacramental/noteEdit.js';
 
 // ── Status (legacy codes preserved for backward compatibility) ───────────────
 export const CASE_STATUS = {
@@ -436,7 +437,7 @@ async function anlDeleteTimelineEntry(caseId, idx) {
 // annulment_cases has no notes_log jsonb (unlike couples), and `notes` is a plain
 // text column. We persist the notes LIST as JSON-encoded text and read it back
 // here, tolerating a legacy single plain-string note (seeded prose) as one entry.
-function _normNote(n) { return { text: n.text || n.note || '', created_at: n.created_at || null, created_by: n.created_by || null }; }
+function _normNote(n) { return { text: n.text || n.note || '', created_at: n.created_at || null, created_by: n.created_by || null, edited_at: n.edited_at || null }; }
 export function parseCaseNotes(c) {
   const raw = c?.notes;
   if (!raw) return [];
@@ -461,6 +462,16 @@ async function anlDeleteNote(caseId, idx) {
   if (idx < 0 || idx >= list.length) return;
   list.splice(idx, 1);
   if (await _anlPatch(caseId, { notes: list.length ? JSON.stringify(list) : null })) refreshActivePanel();
+}
+// Edit a case note in place: overwrite text + stamp edited_at (no history).
+async function anlEditNote(caseId, idx) {
+  const c = allCases.find(x => x.id === caseId); if (!c) return;
+  const list = parseCaseNotes(c);
+  if (idx < 0 || idx >= list.length) return;
+  const text = promptNoteEdit(list[idx].text);
+  if (text === null) return;
+  list[idx] = { ...list[idx], text, edited_at: nowIso() };
+  if (await _anlPatch(caseId, { notes: JSON.stringify(list) })) window.flashSavedThen(() => refreshActivePanel());
 }
 
 
@@ -1159,6 +1170,6 @@ Object.assign(window, {
   anlTplTab, anlTplAddDoc, anlTplRemove, anlTplSave,
   // Phase 2 — viewer-editable documents + timeline + notes (write-retry wrapped).
   toggleCaseDoc, anlAddTimelineEntry, anlDeleteTimelineEntry, anlTlSelChange,
-  anlAddNote, anlDeleteNote, anlSaveBaptismField, anlToggleBaptismAffidavit,
+  anlAddNote, anlEditNote, anlDeleteNote, anlSaveBaptismField, anlToggleBaptismAffidavit,
   expandCase,
 });

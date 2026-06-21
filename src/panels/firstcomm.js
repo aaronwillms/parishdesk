@@ -5,6 +5,7 @@ import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
+import { editNoteLog } from '../sacramental/noteEdit.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { registerFamilyPanel, familyAddPickerHtml, getPendingAdd, clearPendingAdd, familyLink } from '../sacramental/familyLink.js';
 import { detailsChurchToggle, detailsCityState, inheritCohortChurch, inheritCohortFormation,
@@ -38,7 +39,7 @@ function statusOf(p) { return p.status_code || 'enrolled'; }
 function commDate(p) { return p ? (p.communion_date || p.sacrament_date || null) : null; }
 function normDocs(p) { return (p.documents || []).map(d => ({ name: d.name, received: d.received ?? d.done ?? false, deletable: d.deletable ?? !d.auto, auto: !!d.auto, checked_on: d.checked_on || null })); }
 function notesOf(p) {
-  const out = (Array.isArray(p.notes_log) ? p.notes_log : []).map(n => ({ note: n.note || '', by: n.by || null, created_at: n.created_at || null }));
+  const out = (Array.isArray(p.notes_log) ? p.notes_log : []).map(n => ({ note: n.note || '', by: n.by || null, created_at: n.created_at || null, edited_at: n.edited_at || null }));
   if (p.notes && String(p.notes).trim()) out.push({ note: String(p.notes).trim(), by: null, created_at: null, legacy: true });
   return out;
 }
@@ -134,6 +135,13 @@ async function addFcNote(id) {
   const p = allFc.find(x => x.id === id); if (!p) return;
   const log = Array.isArray(p.notes_log) ? JSON.parse(JSON.stringify(p.notes_log)) : [];
   log.push({ note, by: _curUserName(), created_at: nowIso() });
+  if (await _patch(id, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
+}
+// Edit a notes_log note in place (shared shape): overwrite text + stamp edited_at.
+async function fcEditNote(id, idx) {
+  const p = allFc.find(x => x.id === id); if (!p) return;
+  const log = editNoteLog(p.notes_log, idx, nowIso);
+  if (!log) return;
   if (await _patch(id, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
 }
 
@@ -472,7 +480,7 @@ async function fcTplSave() {
 Object.assign(window, {
   loadFirstComm, expandFirstComm,
   openFcCreate, openFcEdit, openFcTemplate, fcCloseModal,
-  toggleFcDoc, addFcNote,
+  toggleFcDoc, addFcNote, fcEditNote,
   fcCohortPick, fcDobChange, fcChurchChange, fcSchoolChange, fcBaptismChange,
   fcDocReceived, fcRemoveDoc, fcAddDoc,
   fcSave, fcDeletePerson,

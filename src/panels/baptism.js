@@ -4,6 +4,7 @@ import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } f
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
+import { editNoteLog } from '../sacramental/noteEdit.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { normalizePhone } from '../utils/phone.js';
 
@@ -121,7 +122,14 @@ async function addBapNote(id) {
   const p = allBap.find(x => x.id === id); if (!p) return;
   const log = Array.isArray(p.notes_log) ? JSON.parse(JSON.stringify(p.notes_log)) : [];
   log.push({ note, by: _curUserName(), created_at: nowIso() });
-  if (await _patch(id, { notes_log: log })) refreshActivePanel();
+  if (await _patch(id, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
+}
+// Edit a notes_log note in place (shared shape): overwrite text + stamp edited_at.
+async function bapEditNote(id, idx) {
+  const p = allBap.find(x => x.id === id); if (!p) return;
+  const log = editNoteLog(p.notes_log, idx, nowIso);
+  if (!log) return;
+  if (await _patch(id, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
 }
 
 // ── Big modal ────────────────────────────────────────────────────────────────
@@ -467,7 +475,7 @@ async function bapTplSave() {
 Object.assign(window, {
   loadBaptism, expandBaptism,
   openBapCreate, openBapEdit, openBapTemplate, bapCloseModal,
-  toggleBapPrep, addBapNote,
+  toggleBapPrep, addBapNote, bapEditNote,
   bapInstChange, bapParentCathChange, bapToggleParent2, bapAdoptChange, bapOfficiantChange,
   bapToggleGp2, bapGpChange, bapValidate,
   bapSave, bapDeletePerson,

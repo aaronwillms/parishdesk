@@ -19,6 +19,7 @@ import {
 } from '../panels/annulments.js';
 import { registerFamilyPanel, familyLink, familyUnlink } from './familyLink.js';
 import { chipHtml, refreshActivePanel } from './panelShell.js';
+import { noteEditedMarker } from './noteEdit.js';
 import { registerLinkPanel, linkSectionHtml } from './recordLinks.js';
 import { sb } from '../supabase.js';
 
@@ -275,13 +276,18 @@ function documents(c) {
 // immediately to the right of the label. Bullets are UNIFORM — auto-milestones and
 // manual entries look identical (type is still stored, just not shown). The classes
 // are panel-agnostic (sac-tl-*) so the same pattern carries to other panels.
-function tlEntry(text, when, delHandler, canManage) {
+function tlEntry(text, when, delHandler, canManage, opts = {}) {
+  // opts (notes only): { editHandler, editedAt }. Timeline calls omit opts, so they
+  // render exactly as before — no edit affordance, no "edited" marker.
+  const edited = opts.editedAt ? noteEditedMarker(opts.editedAt) : '';
+  const editBtn = (canManage && opts.editHandler)
+    ? `<button class="sac-tl-x" title="Edit" onclick="${opts.editHandler}" style="font-size:12px;">✎</button>` : '';
   return `<div class="sac-tl-entry">
     <div class="sac-tl-row">
       <span class="sac-tl-text">${esc(text)}</span>
-      ${canManage && delHandler ? `<button class="sac-tl-x" title="Delete" onclick="${delHandler}">×</button>` : ''}
+      ${canManage && delHandler ? `${editBtn}<button class="sac-tl-x" title="Delete" onclick="${delHandler}">×</button>` : ''}
     </div>
-    ${when ? `<div class="sac-tl-time">${esc(when)}</div>` : ''}
+    ${(when || edited) ? `<div class="sac-tl-time">${esc(when)}${edited}</div>` : ''}
   </div>`;
 }
 const tlWhen = (e) => (e.created_at || e.date) ? fmtDate(String(e.created_at || e.date).slice(0, 10)) : '';
@@ -324,7 +330,7 @@ function notes(c) {
   const canManage = anlCanManage();
   const list = parseCaseNotes(c);
   const body = list.length
-    ? `<div class="sac-tl">${list.map((n, i) => tlEntry(n.text || '', tlWhen(n), `anlDeleteNote('${c.id}',${i})`, canManage)).join('')}</div>`
+    ? `<div class="sac-tl">${list.map((n, i) => tlEntry(n.text || '', tlWhen(n), `anlDeleteNote('${c.id}',${i})`, canManage, { editHandler: `anlEditNote('${c.id}',${i})`, editedAt: n.edited_at })).join('')}</div>`
     : '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No notes yet.</div>';
 
   let add = '';

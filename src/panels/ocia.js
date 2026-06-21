@@ -8,6 +8,7 @@ import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { inheritCohortFormation, setFieldLocked,
   institutionAddressAutofill, institutionOptionsHtml, institutionSelectedName, institutionAddressSync } from '../sacramental/churchLocation.js';
+import { promptNoteEdit } from '../sacramental/noteEdit.js';
 import { registerCohortManager } from '../sacramental/cohortManager.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 
@@ -184,7 +185,7 @@ function isMinor(p) { const a = ociaAge(p.dob); return a !== null && a < 18; }
 function hasConsent(p) { return !!p.parental_consent; }
 function normDocs(p) { return (p.documents || []).map(d => ({ name: d.name, received: d.received ?? d.done ?? false, deletable: d.deletable ?? !d.auto, auto: !!d.auto, checked_on: d.checked_on || null })); }
 function notesOf(p) {
-  const out = (Array.isArray(p.notes_log) ? p.notes_log : []).map(n => ({ note: n.note || '', by: n.by || null, created_at: n.created_at || null }));
+  const out = (Array.isArray(p.notes_log) ? p.notes_log : []).map(n => ({ note: n.note || '', by: n.by || null, created_at: n.created_at || null, edited_at: n.edited_at || null }));
   if (p.notes && String(p.notes).trim()) out.push({ note: String(p.notes).trim(), by: null, created_at: null, legacy: true });
   return out;
 }
@@ -269,6 +270,16 @@ async function ociaDeleteNote(id, idx) {
   if (idx < 0 || idx >= log.length) return;
   log.splice(idx, 1);
   if (await _ociaPatch(id, { notes_log: log })) refreshActivePanel();
+}
+// Edit a notes_log note in place: overwrite text + stamp edited_at (no history).
+async function ociaEditNote(id, idx) {
+  const p = allOcia.find(x => x.id === id); if (!p) return;
+  const log = Array.isArray(p.notes_log) ? JSON.parse(JSON.stringify(p.notes_log)) : [];
+  if (idx < 0 || idx >= log.length) return;   // legacy `notes` text isn't editable here
+  const text = promptNoteEdit(log[idx].note);
+  if (text === null) return;
+  log[idx] = { ...log[idx], note: text, edited_at: nowIso() };
+  if (await _ociaPatch(id, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
 }
 
 // ── Minor parent/guardian permission (viewer inline + lock-gate) ────────────
@@ -857,6 +868,6 @@ Object.assign(window, {
   ociaFamilySearch, ociaRemoveFamily, ociaAnnulSearch, ociaRemoveAnnul,
   ociaSave, ociaDeletePerson,
   // Viewer-editable notes + minor permission (write-retry wrapped).
-  ociaAddNote, ociaDeleteNote, ociaSavePermField, ociaTogglePermission,
+  ociaAddNote, ociaEditNote, ociaDeleteNote, ociaSavePermField, ociaTogglePermission,
   ociaTplTab, ociaTplAdd, ociaTplRemove, ociaTplSave,
 });

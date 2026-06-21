@@ -5,6 +5,7 @@
 // panels/confirmation.js — nothing reimplemented here.
 
 import { formatDateDisplay, fmtDate, docCheckStampHtml } from '../utils.js';
+import { noteEditedMarker } from './noteEdit.js';
 import { formatPhone } from '../utils/phone.js';
 import { isSacramentCoordinator } from '../roles.js';
 import { familySectionHtml } from './familyLink.js';
@@ -100,7 +101,7 @@ function activity(p) {
       <button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="addConfNote('${p.id}')">Add</button>
     </div>` : '';
   const list = notes.length
-    ? notes.map(n => `<div style="font-size:13px;color:#555;margin-bottom:6px;padding:8px 12px;background:#FFF8EE;border-left:3px solid var(--gold);border-radius:3px;"><div style="white-space:pre-wrap;">${esc(n.note)}</div>${(n.by || n.created_at) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${n.created_at ? esc(fmtDate(String(n.created_at).slice(0, 10))) : ''}${n.by ? ' · ' + esc(n.by) : ''}</div>` : ''}</div>`).join('')
+    ? notes.map((n, i) => `<div style="font-size:13px;color:#555;margin-bottom:6px;padding:8px 12px;background:#FFF8EE;border-left:3px solid var(--gold);border-radius:3px;"><div style="display:flex;gap:8px;align-items:flex-start;"><div style="white-space:pre-wrap;flex:1;">${esc(n.note)}</div>${confCanManage() && !n.legacy ? `<button title="Edit" onclick="confEditNote('${p.id}',${i})" style="background:none;border:none;cursor:pointer;color:#C0A062;font-size:12px;line-height:1.2;padding:0;">✎</button>` : ''}</div>${(n.by || n.created_at || n.edited_at) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${n.created_at ? esc(fmtDate(String(n.created_at).slice(0, 10))) : ''}${n.by ? ' · ' + esc(n.by) : ''}${noteEditedMarker(n.edited_at)}</div>` : ''}</div>`).join('')
     : '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No notes yet.</div>';
   return add + list;
 }

@@ -5,6 +5,7 @@
 // edit-form / save logic from panels/marriage.js — nothing reimplemented here.
 
 import { fmtDate, formatDateDisplay, docCheckStampHtml } from '../utils.js';
+import { noteEditedMarker } from './noteEdit.js';
 import { formatPhone } from '../utils/phone.js';
 import { store } from '../store.js';
 import { isSacramentCoordinator } from '../roles.js';
@@ -204,7 +205,7 @@ function activity(c) {
       <button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="addCoupleNoteLog('${c.id}')">Add</button>
     </div>` : '';
   const list = notes.length
-    ? notes.map(n => `<div style="font-size:13px;color:#555;margin-bottom:6px;padding:8px 12px;background:#FFF8EE;border-left:3px solid var(--gold);border-radius:3px;"><div style="white-space:pre-wrap;">${esc(n.note)}</div>${(n.by || n.created_at) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${n.created_at ? esc(fmtDate(String(n.created_at).slice(0, 10))) : ''}${n.by ? ' · ' + esc(n.by) : ''}</div>` : ''}</div>`).join('')
+    ? notes.map((n, i) => `<div style="font-size:13px;color:#555;margin-bottom:6px;padding:8px 12px;background:#FFF8EE;border-left:3px solid var(--gold);border-radius:3px;"><div style="display:flex;gap:8px;align-items:flex-start;"><div style="white-space:pre-wrap;flex:1;">${esc(n.note)}</div>${marCanManage() && !n.legacy ? `<button title="Edit" onclick="coupleEditNoteLog('${c.id}',${i})" style="background:none;border:none;cursor:pointer;color:#C0A062;font-size:12px;line-height:1.2;padding:0;">✎</button>` : ''}</div>${(n.by || n.created_at || n.edited_at) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${n.created_at ? esc(fmtDate(String(n.created_at).slice(0, 10))) : ''}${n.by ? ' · ' + esc(n.by) : ''}${noteEditedMarker(n.edited_at)}</div>` : ''}</div>`).join('')
     : '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No notes yet.</div>';
   return add + list;
 }

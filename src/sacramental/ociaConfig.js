@@ -20,6 +20,7 @@ import {
   buildOciaEditForm, ociaSaveEdit, ociaDeleteRec,
 } from '../panels/ocia.js';
 import { chipHtml } from './panelShell.js';
+import { noteEditedMarker } from './noteEdit.js';
 import { registerLinkPanel, linkSectionHtml } from './recordLinks.js';
 
 const esc = (s) => String(s == null ? '' : s)
@@ -93,8 +94,8 @@ function notes(p) {
   const list = ociaNotesOf(p);
   const body = list.length
     ? `<div class="sac-tl">${list.map((n, i) => `<div class="sac-tl-entry">
-        <div class="sac-tl-row"><span class="sac-tl-text" style="white-space:pre-wrap;">${esc(n.note)}</span>${canManage ? `<button class="sac-tl-x" title="Delete" onclick="ociaDeleteNote('${p.id}',${i})">×</button>` : ''}</div>
-        ${(n.by || n.created_at) ? `<div class="sac-tl-time">${n.created_at ? esc(fmtDate(String(n.created_at).slice(0, 10))) : ''}${n.by ? ' · ' + esc(n.by) : ''}</div>` : ''}
+        <div class="sac-tl-row"><span class="sac-tl-text" style="white-space:pre-wrap;">${esc(n.note)}</span>${canManage ? `${!n.legacy ? `<button class="sac-tl-x" title="Edit" onclick="ociaEditNote('${p.id}',${i})" style="font-size:12px;">✎</button>` : ''}<button class="sac-tl-x" title="Delete" onclick="ociaDeleteNote('${p.id}',${i})">×</button>` : ''}</div>
+        ${(n.by || n.created_at || n.edited_at) ? `<div class="sac-tl-time">${n.created_at ? esc(fmtDate(String(n.created_at).slice(0, 10))) : ''}${n.by ? ' · ' + esc(n.by) : ''}${noteEditedMarker(n.edited_at)}</div>` : ''}
       </div>`).join('')}</div>`
     : '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No notes yet.</div>';
   let add = '';

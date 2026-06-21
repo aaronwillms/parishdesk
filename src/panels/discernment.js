@@ -26,8 +26,9 @@ import { chipHtml } from '../sacramental/panelShell.js';
 import { ensureIdentities, userName, fetchGrantRow, loadMyGrants, hasMyGrantForLink } from '../ui/grants.js';
 import { institutionAddressAutofill, institutionOptionsHtml, institutionSelectedName, institutionAddressSync } from '../sacramental/churchLocation.js';
 import { buildOfficiantField, readOfficiantValue } from '../sacramental/officiantField.js';
+import { noteEditedMarker, promptNoteEdit } from '../sacramental/noteEdit.js';
 import {
-  ALL_STAGES, STAGE_LADDER, TERMINAL_STAGES, STARTING_STAGE, stageChipStyle, stageRank,
+  ALL_STAGES, STAGE_LADDER, TERMINAL_STAGES, STARTING_STAGE, stageChipStyle,
   VOCATION_TYPES, vocationLabel, currentStage as deriveStage, nextFollowup as deriveNextFollowup,
   isOverdue, canViewDiscernerCore, canWriteDiscernerCore,
 } from '../discernment/derive.js';
@@ -35,9 +36,19 @@ import {
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+// 50-state dropdown — same list + 2-letter-code value format the sacramental
+// panels use (baptism/firstcomm/confirmation/ocia/annulment _stateSelect), so the
+// stored value stays consistent across the app. Returns the <select> only (the
+// caller supplies its own <label>).
+const US_STATES = ['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'DC'];
+function _stateSelect(id, val) {
+  return `<select id="${id}"><option value="">—</option>${US_STATES.map(s => `<option${s === val ? ' selected' : ''}>${s}</option>`).join('')}</select>`;
+}
+
 // ── Module state ─────────────────────────────────────────────────────────────
 let _discerners = [];
 let _notesByD = {}, _transByD = {}, _followByD = {};
+let _pins = new Set();   // discerner ids the CURRENT user has pinned (per-user)
 let _authUserId = null;
 let _selectedId = null;
 let _stageFilter = 'all', _vocFilter = 'all', _search = '', _showArchived = false;
@@ -56,6 +67,19 @@ function discernerName(d) {
 }
 function discernerContact(d) { return [d.phone || '', d.email || ''].filter(Boolean).join(' · '); }
 function isArchived(d) { return !!d.archived_at; }
+// Last name for the card sort (last_name field; else the last token of the
+// combined name). Cards sort by last name ONLY (no status/stage/vocation order).
+function discernerLastName(d) {
+  if (d.last_name) return d.last_name;
+  const parts = String(d.name || '').trim().split(/\s+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : '';
+}
+function byLastName(a, b) {
+  return discernerLastName(a).toLowerCase().localeCompare(discernerLastName(b).toLowerCase())
+    || discernerName(a).toLowerCase().localeCompare(discernerName(b).toLowerCase());
+}
+// Per-user pin (the current user's pins only; from discernment_pins).
+function isPinned(d) { return _pins.has(d.id); }
 function parentsOf(d) { return Array.isArray(d.parents) ? d.parents.filter(p => p && (p.first || p.last || p.phone || p.email)) : []; }
 // Auto-calculated age from DOB (parish timezone), or null.
 function ageOf(dob) {
@@ -143,6 +167,12 @@ export async function loadDiscernmentData() {
     (tr.data || []).forEach(t => (_transByD[t.discerner_id] = _transByD[t.discerner_id] || []).push(t));
     (fu.data || []).forEach(f => (_followByD[f.discerner_id] = _followByD[f.discerner_id] || []).push(f));
   }
+  // This user's pins only (per-user). Pre-migration this errors → empty set.
+  _pins = new Set();
+  if (_authUserId) {
+    const { data: pins } = await sb.from('discernment_pins').select('discerner_id').eq('user_id', _authUserId);
+    (pins || []).forEach(p => _pins.add(p.discerner_id));
+  }
   return _discerners;
 }
 
@@ -215,12 +245,7 @@ function visibleDiscerners() {
     }
     if (q && !discernerName(d).toLowerCase().includes(q)) return false;
     return true;
-  }).sort((a, b) => {
-    if (isArchived(a) !== isArchived(b)) return isArchived(a) ? 1 : -1;          // archived last
-    const ra = stageRank(currentStageOf(a)), rb = stageRank(currentStageOf(b));
-    if (ra !== rb) return ra - rb;                                                // by ladder progress
-    return discernerName(a).localeCompare(discernerName(b));
-  });
+  }).sort(byLastName);   // LAST NAME only — no status/stage/vocation ordering
 }
 
 function listHtml() {
@@ -246,10 +271,13 @@ function listHtml() {
 }
 
 function listBodyHtml() {
-  const rows = visibleDiscerners();
-  return rows.length
-    ? rows.map(cardHtml).join('')
-    : `<div style="font-size:13px;color:#6B7280;padding:.5rem;">${_discerners.length ? 'No discerners match.' : 'No discernment files yet.'}</div>`;
+  const rows = visibleDiscerners();   // already last-name-sorted
+  if (!rows.length) return `<div style="font-size:13px;color:#6B7280;padding:.5rem;">${_discerners.length ? 'No discerners match.' : 'No discernment files yet.'}</div>`;
+  // Pinned float to the top (last-name-sorted among themselves, since `rows` is
+  // already sorted); the unpinned rest follow, also last-name-sorted.
+  const pinned = rows.filter(isPinned);
+  const rest = rows.filter(d => !isPinned(d));
+  return [...pinned, ...rest].map(cardHtml).join('');
 }
 
 function cardHtml(d) {
@@ -274,12 +302,19 @@ function cardHtml(d) {
   } else {
     next = `<div style="font-size:11.5px;margin-top:3px;color:#9CA3AF;font-style:italic;">No follow-up scheduled</div>`;
   }
+  const pinned = isPinned(d);
+  const pinBtn = `<button data-act="toggle-pin" data-id="${d.id}" title="${pinned ? 'Unpin' : 'Pin to top'}" aria-label="${pinned ? 'Unpin' : 'Pin to top'}" style="background:none;border:none;cursor:pointer;padding:2px 4px;flex-shrink:0;align-self:flex-start;line-height:1;">
+    <i class="fa-solid fa-thumbtack" style="font-size:12px;color:${pinned ? 'var(--cardinal)' : '#C9C2B6'};${pinned ? '' : 'transform:rotate(45deg);'}"></i>
+  </button>`;
   return `<div class="sac-item${sel ? ' selected' : ''}" data-act="open" data-id="${d.id}">
-    <div class="sac-item-row"><div style="flex:1;min-width:0;">
-      <div class="sac-item-title">${esc(title)}</div>
-      <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:5px;">${chips.map(chipHtml).join('')}</div>
-      ${next}
-    </div></div>
+    <div class="sac-item-row">
+      <div style="flex:1;min-width:0;">
+        <div class="sac-item-title">${esc(title)}</div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:5px;">${chips.map(chipHtml).join('')}</div>
+        ${next}
+      </div>
+      ${pinBtn}
+    </div>
   </div>`;
 }
 
@@ -355,8 +390,8 @@ function notesSection(d, write) {
   const list = notesOf(d);
   const body = list.length
     ? `<div class="sac-tl">${list.map(n => `<div class="sac-tl-entry">
-        <div class="sac-tl-row"><span class="sac-tl-text" style="white-space:pre-wrap;">${n.subject ? `<strong>${esc(n.subject)}</strong> — ` : ''}${esc(n.body || '')}</span>${write ? `<button class="sac-tl-x" title="Delete" data-act="del-note" data-id="${n.id}">×</button>` : ''}</div>
-        <div class="sac-tl-time">${esc(formatDateDisplay(n.note_date || (n.created_at || '').slice(0, 10)))}${n.author_id ? ' · ' + esc(userName(n.author_id)) : ''}</div>
+        <div class="sac-tl-row"><span class="sac-tl-text" style="white-space:pre-wrap;">${n.subject ? `<strong>${esc(n.subject)}</strong> — ` : ''}${esc(n.body || '')}</span>${write ? `<button class="sac-tl-x" title="Edit" data-act="edit-note" data-id="${n.id}" style="font-size:12px;">✎</button><button class="sac-tl-x" title="Delete" data-act="del-note" data-id="${n.id}">×</button>` : ''}</div>
+        <div class="sac-tl-time">${esc(formatDateDisplay(n.note_date || (n.created_at || '').slice(0, 10)))}${n.author_id ? ' · ' + esc(userName(n.author_id)) : ''}${noteEditedMarker(n.edited_at)}</div>
       </div>`).join('')}</div>`
     : '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No notes yet.</div>';
   if (!write) return body;
@@ -391,10 +426,12 @@ function followupsSection(d, write) {
         return `<div style="display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-bottom:.5px solid #F0EDE8;">
           <input type="checkbox" ${f.done ? 'checked' : ''} ${write ? '' : 'disabled'} data-act="toggle-followup" data-id="${f.id}" style="width:15px;height:15px;accent-color:var(--cardinal);margin-top:2px;flex-shrink:0;${write ? 'cursor:pointer;' : ''}" />
           <div style="flex:1;min-width:0;">
-            <div style="font-size:13px;color:var(--navy);${f.done ? 'text-decoration:line-through;opacity:.6;' : ''}">${esc(f.note || 'Follow up')}</div>
+            <div class="sac-tl-row">
+              <span class="sac-tl-text" style="${f.done ? 'text-decoration:line-through;opacity:.6;' : ''}">${esc(f.note || 'Follow up')}</span>
+              ${write ? `<button class="sac-tl-x" style="opacity:1;" title="Delete" data-act="del-followup" data-id="${f.id}">×</button>` : ''}
+            </div>
             <div style="font-size:11.5px;color:${over ? 'var(--cardinal)' : '#9CA3AF'};font-weight:${over ? '600' : '400'};">${f.due_date ? esc(formatDateDisplay(f.due_date)) : 'No date'}${over ? ' · overdue' : ''}${f.done && f.done_at ? ' · done ' + esc(formatDateDisplay((f.done_at || '').slice(0, 10))) : ''}</div>
           </div>
-          ${write ? `<button class="sac-tl-x" style="opacity:1;" title="Delete" data-act="del-followup" data-id="${f.id}">×</button>` : ''}
         </div>`; }).join('')}</div>`
     : '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No follow-ups scheduled.</div>';
   if (!write) return body;
@@ -453,7 +490,9 @@ async function onShellClick(e) {
     case 'move-stage': openMoveStage(selected()); break;
     case 'toggle-archive': await toggleArchive(selected()); break;
     case 'delete': await deleteDiscerner(selected()); break;
+    case 'toggle-pin': await togglePin(id); break;
     case 'add-note': await addNote(id); break;
+    case 'edit-note': await editNote(id); break;
     case 'del-note': await deleteNote(id); break;
     case 'del-transition': await deleteTransition(id); break;
     case 'add-followup': await addFollowup(id); break;
@@ -478,12 +517,37 @@ async function addNote(discernerId) {
   logActivity({ action: 'added discernment note', entityType: 'discerner', entityName: discernerName(d), contextType: 'discernment', contextId: discernerId });
   window.flashSavedThen(() => render());
 }
+async function editNote(noteId) {
+  const d = selected(); if (!d || !canWriteDiscerner(d)) return;
+  const n = (_notesByD[d.id] || []).find(x => x.id === noteId); if (!n) return;
+  const text = promptNoteEdit(n.body);
+  if (text === null) return;   // cancelled / unchanged
+  const patch = { body: text, edited_at: nowIso() };
+  const { error } = await withWriteRetry(() => sb.from('discernment_notes').update(patch).eq('id', noteId), { kind: 'update' });
+  if (error) { reportWriteError('discernment note edit', error); return; }
+  Object.assign(n, patch);
+  window.flashSavedThen(() => render());
+}
 async function deleteNote(noteId) {
   const d = selected(); if (!d || !canWriteDiscerner(d)) return;
   const { error } = await deleteWithRetry(() => sb.from('discernment_notes').delete().eq('id', noteId));
   if (error) { reportWriteError('discernment note delete', error); return; }
   _notesByD[d.id] = (_notesByD[d.id] || []).filter(n => n.id !== noteId);
   render();
+}
+// Per-user pin / unpin (writes discernment_pins; only this user sees their pins).
+async function togglePin(discernerId) {
+  const d = _discerners.find(x => x.id === discernerId); if (!d) return;
+  if (_pins.has(discernerId)) {
+    const { error } = await deleteWithRetry(() => sb.from('discernment_pins').delete().eq('user_id', _authUserId).eq('discerner_id', discernerId));
+    if (error) { reportWriteError('discernment unpin', error); return; }
+    _pins.delete(discernerId);
+  } else {
+    const { error } = await insertWithRetry('discernment_pins', { user_id: _authUserId, discerner_id: discernerId, parish_id: d.parish_id });
+    if (error) { reportWriteError('discernment pin', error); return; }
+    _pins.add(discernerId);
+  }
+  renderListBody();   // re-order the card column (pinned float to top)
 }
 async function addFollowup(discernerId) {
   const d = selected(); if (!d || !canWriteDiscerner(d)) return;
@@ -639,7 +703,7 @@ function openIntake(d = null) {
     <label>Street</label><input type="text" id="disc-street" value="${esc(d?.street || '')}" />
     <div style="display:flex;gap:8px;">
       <div style="flex:2;"><label>City</label><input type="text" id="disc-city" value="${esc(d?.city || '')}" /></div>
-      <div style="flex:1;"><label>State</label><input type="text" id="disc-state" maxlength="2" value="${esc(d?.state || '')}" /></div>
+      <div style="flex:1;"><label>State</label>${_stateSelect('disc-state', d?.state || '')}</div>
       <div style="flex:1;"><label>Zip</label><input type="text" id="disc-zip" value="${esc(d?.zip || '')}" /></div>
     </div>
 
@@ -653,7 +717,7 @@ function openIntake(d = null) {
     <div id="disc-school-other-wrap" style="display:${school.isOther ? 'block' : 'none'};margin-top:6px;"><label>School name</label><input type="text" id="disc-school-name" value="${esc(school.isOther ? (d?.school_name || '') : '')}" /></div>
     <div style="display:flex;gap:8px;">
       <div style="flex:2;"><label>School city</label><input type="text" id="disc-school-city" value="${esc(d?.school_city || '')}" /></div>
-      <div style="flex:1;"><label>School state</label><input type="text" id="disc-school-state" maxlength="2" value="${esc(d?.school_state || '')}" /></div>
+      <div style="flex:1;"><label>School state</label>${_stateSelect('disc-school-state', d?.school_state || '')}</div>
     </div>
 
     ${head('Parent / Guardian')}

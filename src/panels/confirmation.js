@@ -5,6 +5,7 @@ import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
+import { editNoteLog } from '../sacramental/noteEdit.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { registerFamilyPanel, familyAddPickerHtml, getPendingAdd, clearPendingAdd, familyLink } from '../sacramental/familyLink.js';
 import { detailsChurchToggle, detailsCityState, inheritCohortChurch, inheritCohortFormation,
@@ -145,6 +146,13 @@ async function addConfNote(id) {
   const p = allConf.find(x => x.id === id); if (!p) return;
   const log = Array.isArray(p.notes_log) ? JSON.parse(JSON.stringify(p.notes_log)) : [];
   log.push({ note, by: _curUserName(), created_at: nowIso() });
+  if (await _patch(id, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
+}
+// Edit a notes_log note in place (shared shape): overwrite text + stamp edited_at.
+async function confEditNote(id, idx) {
+  const p = allConf.find(x => x.id === id); if (!p) return;
+  const log = editNoteLog(p.notes_log, idx, nowIso);
+  if (!log) return;
   if (await _patch(id, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
 }
 
@@ -548,7 +556,7 @@ async function confTplSave() {
 Object.assign(window, {
   loadConfirmation, expandConfirmation,
   openConfCreate, openConfEdit, openConfTemplates, confCloseModal,
-  toggleConfDoc, addConfNote,
+  toggleConfDoc, addConfNote, confEditNote,
   confSetType, confCohortPick, confDobChange, confChurchChange,
   confSchoolChange, confBaptismChange, confFcChurchChange,
   confDocReceived, confRemoveDoc, confAddDoc,

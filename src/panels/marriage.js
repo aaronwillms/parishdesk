@@ -6,6 +6,7 @@ import { isAdmin, canAccessSacrament } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
+import { editNoteLog } from '../sacramental/noteEdit.js';
 import { buildPreparerField, readPreparerValue, clergyNames } from '../sacramental/preparerField.js';
 import { buildOfficiantField, readOfficiantValue, officiantIsOther } from '../sacramental/officiantField.js';
 import { getInstitutionAddress } from '../ui/directory.js';
@@ -101,7 +102,7 @@ function progressOf(c) {
   return Math.round((done / total) * 100);
 }
 function notesOf(c) {
-  const out = (Array.isArray(c.notes_log) ? c.notes_log : []).map(n => ({ note: n.note || '', by: n.by || null, created_at: n.created_at || null }));
+  const out = (Array.isArray(c.notes_log) ? c.notes_log : []).map(n => ({ note: n.note || '', by: n.by || null, created_at: n.created_at || null, edited_at: n.edited_at || null }));
   if (c.notes && String(c.notes).trim()) out.push({ note: String(c.notes).trim(), by: null, created_at: null, legacy: true });
   return out;
 }
@@ -313,6 +314,13 @@ async function addCoupleNoteLog(coupleId) {
   const c = allCouples.find(x => x.id === coupleId); if (!c) return;
   const log = Array.isArray(c.notes_log) ? JSON.parse(JSON.stringify(c.notes_log)) : [];
   log.push({ note, by: _curUserName(), created_at: nowIso() });
+  if (await _patch(coupleId, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
+}
+// Edit a notes_log note in place (shared shape): overwrite text + stamp edited_at.
+async function coupleEditNoteLog(coupleId, idx) {
+  const c = allCouples.find(x => x.id === coupleId); if (!c) return;
+  const log = editNoteLog(c.notes_log, idx, nowIso);
+  if (!log) return;
   if (await _patch(coupleId, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
 }
 
@@ -936,7 +944,7 @@ async function marTplSave() {
 
 Object.assign(window, {
   openCoupleAdd, openCoupleEdit,
-  toggleCoupleDoc, toggleCoupleStep, toggleCoupleFee, toggleCoupleDelegation, toggleCoupleWeddingComplete, toggleCoupleRecordsPlaced, addCoupleNoteLog,
+  toggleCoupleDoc, toggleCoupleStep, toggleCoupleFee, toggleCoupleDelegation, toggleCoupleWeddingComplete, toggleCoupleRecordsPlaced, addCoupleNoteLog, coupleEditNoteLog,
   marCloseModal, marSaveCouple, marDeleteCouple,
   marOnExternalToggle, marOnTypeChange, marOnNonChurchToggle, marOnInstitutionChange, marOnOfficiantOtherToggle, marOnStatusChange, marOnWeddingCompleteToggle,
   marSpouseToggle, marPriorToggle, marAddPrior, marRemovePrior, marPriorEndedChange,

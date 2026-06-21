@@ -77,6 +77,26 @@ The table was created, but RLS was left ON with no policy → all access blocked
 (re-running the whole migration is safe — everything is idempotent). Until then,
 cross-panel link/unlink/list silently fail. Annulment↔annulment grouping is unaffected.
 
+## ✅ APPLIED — `20260620_discernment_pins_and_note_edit.sql` (applied 2026-06-20)
+
+Per-user Discernment card **pins** + editable-note timestamp.
+
+1. **`discernment_pins` table** — one row per `(user_id, discerner_id)`; pin =
+   insert, unpin = delete. Client-gated (RLS DISABLED, like the other discernment
+   tables); the app reads only the CURRENT user's pins via `.eq('user_id', auth-uid)`.
+   PER USER (each user sees only their own), NOT a global boolean on the record.
+2. **`discernment_notes.edited_at`** column — Discernment notes are a TABLE, so the
+   "edited MM/DD/YYYY" marker needs a real column. Edit overwrites `body` + stamps it.
+
+**RLS GOTCHA reminder:** this project re-enables RLS on new tables, so the inline
+`DISABLE ROW LEVEL SECURITY` may not have stuck for `discernment_pins`. If pinning a
+card silently fails, re-run `ALTER TABLE discernment_pins DISABLE ROW LEVEL SECURITY;`
+as a separate statement (same wall hit by `discerners` / `record_links`).
+
+The editable-notes feature in the OTHER panels (OCIA / FC / Confirmation / Baptism /
+Marriage / Annulments) needed NO schema change — those `edited_at` stamps live inside
+the existing `notes_log` jsonb / annulment text-JSON.
+
 ## ✅ APPLIED — `20260620_discernment.sql` (verified live 2026-06-20)
 
 Stands up the entire **Discernment** module (private, pastor-facing vocations
