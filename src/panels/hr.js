@@ -521,8 +521,7 @@ async function hrSaveMove(posId) {
   const { error } = await sb.from('positions').update({ parent_position_id: newParent, updated_at: new Date().toISOString() }).eq('id', posId);
   if (error) { alert('Move failed: ' + error.message); return; }
   if (newParent) _collapsed.delete(newParent);   // reveal the moved node
-  closeModal();
-  await loadHr();
+  window.flashSavedThen(async () => { closeModal(); await loadHr(); });
 }
 
 // ── PHASE 4 — occupancy link / unlink / contractor fast-add ─────────────────
@@ -565,8 +564,7 @@ async function hrSaveLink(posId) {
   if (error) { alert('Link failed: ' + error.message); return; }
   _collapsed.delete(posId);   // reveal the position the person was linked to
   logActivity({ action: 'linked person to position', entityType: 'person_position', entityName: _ctx.posById.get(posId)?.title || '' });
-  closeModal();
-  await loadHr();
+  window.flashSavedThen(async () => { closeModal(); await loadHr(); });
 }
 
 async function unlinkOccupancy(occId) {
@@ -914,7 +912,7 @@ async function hrSaveMemo(id) {
   if (id) ({ error } = await sb.from('memos').update({ ...fields, updated_at: nowIso() }).eq('id', id));
   else    ({ error } = await sb.from('memos').insert({ ...fields, person_position_id: _card.ppId, author_id: _authUserId }));
   if (error) { alert('Save failed: ' + error.message); return; }
-  reopenCard();
+  window.flashSavedThen(() => reopenCard());
 }
 async function viewMemo(rec) {
   const gh = await granteeHeaderHtml('memo', rec);
@@ -950,7 +948,7 @@ async function hrSaveIncident(id) {
   if (id) ({ error } = await sb.from('incident_reports').update({ description, record_date, updated_at: nowIso() }).eq('id', id));
   else    ({ error } = await sb.from('incident_reports').insert({ description, record_date, person_position_id: _card.ppId, author_id: _authUserId }));
   if (error) { alert('Save failed: ' + error.message); return; }
-  reopenCard();
+  window.flashSavedThen(() => reopenCard());
 }
 async function viewIncident(rec) {
   const [linked, gh] = await Promise.all([fetchLinks('incident', rec.id), granteeHeaderHtml('incident', rec)]);
@@ -1012,7 +1010,7 @@ async function hrSaveDisciplinary(id) {
   if (id) ({ error } = await sb.from('disciplinary_records').update({ ...fields, updated_at: nowIso() }).eq('id', id));
   else    ({ error } = await sb.from('disciplinary_records').insert({ ...fields, person_position_id: _card.ppId, author_id: _authUserId }));
   if (error) { alert('Save failed: ' + error.message); return; }
-  reopenCard();
+  window.flashSavedThen(() => reopenCard());
 }
 async function viewDisciplinary(rec) {
   const [linked, gh] = await Promise.all([fetchLinks('disciplinary', rec.id), granteeHeaderHtml('disciplinary', rec)]);
@@ -1112,7 +1110,7 @@ async function hrAddLink(type, id) {
     : { disciplinary_id: id, incident_id: targetId };
   const { error } = await sb.from('incident_disciplinary_links').insert(row);
   if (error) { alert('Link failed: ' + error.message); return; }
-  hrViewRecord(type, id);   // reopen the originating record's view
+  window.flashSavedThen(() => hrViewRecord(type, id));   // reopen the originating record's view
 }
 async function hrRemoveLink(linkId, type, id) {
   const { error } = await deleteWithRetry(() => sb.from('incident_disciplinary_links').delete().eq('id', linkId));
@@ -1245,7 +1243,7 @@ async function hrSaveReview() {
     }));
   }
   if (error) { alert('Save failed: ' + error.message); return; }
-  reopenCard();
+  window.flashSavedThen(() => reopenCard());
 }
 
 function renderAnswer(f, a) {
@@ -1501,8 +1499,7 @@ async function hrSaveTemplate() {
   }
   logActivity({ action: _builder.id ? 'updated review template' : 'created review template', entityType: 'review_template', entityName: name });
   _builder = null;
-  await refreshTemplates();
-  openTemplateManager();
+  window.flashSavedThen(async () => { await refreshTemplates(); openTemplateManager(); });
 }
 
 // ── Expose modal-button + record handlers (tree actions use delegation) ─────

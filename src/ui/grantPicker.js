@@ -143,8 +143,7 @@ export function createGrantPicker({ textarea, tray }) {
       if (error) { alert('Grant failed: ' + error.message); return; }
       grants.push({ grant_id: data.id, record_type: rec.record_type, record_id: rec.record_id, granted_to: grantedTo, label: rec.label });
       renderTray();
-      closeModal();
-      textarea.focus();
+      window.flashSavedThen(() => { closeModal(); textarea.focus(); });
     });
   }
 

@@ -33,13 +33,17 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         runtimeCaching: [
           {
+            // Supabase API = live, mutable data. NEVER cache it or subject it to a
+            // network-timeout fallback. The old NetworkFirst + networkTimeoutSeconds:10
+            // raced every Supabase GET against a 10-second timer and, when the network
+            // leg stalled (cold connection after a service-worker takeover, or a flaky
+            // link), the post-save RELOAD reads that a save awaits hung the FULL 10s
+            // before falling back to (often empty) cache — i.e. "saving takes ~10s".
+            // (cacheableResponse:[0,200] also cached status-0/opaque failures.) Writes
+            // already bypass the SW (routes are GET-only); NetworkOnly sends reads
+            // straight to the network with no timeout and no caching.
             urlPattern: /^https:\/\/[a-z0-9]+\.supabase\.co\/.*/i,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'supabase-cache',
-              networkTimeoutSeconds: 10,
-              cacheableResponse: { statuses: [0, 200] },
-            },
+            handler: 'NetworkOnly',
           },
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
