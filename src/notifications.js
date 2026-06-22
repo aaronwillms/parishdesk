@@ -1,5 +1,6 @@
 import { sb } from './supabase.js';
 import { store } from './store.js';
+import { deriveParishStaffPersonnelIds } from './ui/parishStaff.js';
 
 let currentUserId = null;
 let realtimeChannel = null;
@@ -56,9 +57,17 @@ export async function getUserIdsForSacrament(sacrament) {
 
 // Fetch all user IDs who are members of a specific team (via personnel link).
 export async function getUserIdsForTeam(teamId) {
-  const { data: members } = await sb.from('team_members').select('personnel_id').eq('team_id', teamId);
-  if (!members?.length) return [];
-  const personnelIds = members.map(m => m.personnel_id).filter(Boolean);
+  // Parish Staff (the protected team) is DERIVED from HR — its recipients are the
+  // current HR-derived staff, not a stored team_members list (which is unused there).
+  const { data: team } = await sb.from('teams').select('is_protected').eq('id', teamId).maybeSingle();
+  let personnelIds;
+  if (team?.is_protected) {
+    personnelIds = await deriveParishStaffPersonnelIds();
+  } else {
+    const { data: members } = await sb.from('team_members').select('personnel_id').eq('team_id', teamId);
+    personnelIds = (members || []).map(m => m.personnel_id).filter(Boolean);
+  }
+  if (!personnelIds.length) return [];
   const { data: profiles } = await sb.from('user_profiles').select('user_id').in('personnel_id', personnelIds);
   return (profiles || []).map(p => p.user_id).filter(Boolean);
 }

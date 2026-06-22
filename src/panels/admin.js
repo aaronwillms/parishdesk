@@ -6,6 +6,7 @@ import { createContactPicker } from '../ui/contactPicker.js';
 import { fetchAllGrants, revokeGrant, setGrantNote, labelForGrant, userName, ensureIdentities, recordTypeLabel, PRIORITY_TYPES } from '../ui/grants.js';
 import { personTitle } from '../utils.js';
 import { computePermissionBasis } from '../roles.js';
+import { deriveParishStaffPersonnelIds } from '../ui/parishStaff.js';
 
 const SACRAMENTS = ['baptism', 'first_communion', 'confirmation', 'ocia', 'marriage', 'annulments'];
 const SACRAMENT_LABELS = { baptism: 'Baptism', first_communion: 'First Communion', confirmation: 'Confirmation', ocia: 'OCIA', marriage: 'Marriage', annulments: 'Annulments' };
@@ -105,6 +106,13 @@ async function _loadUsers() {
   Object.values(map).forEach(u => {
     const pid = u.profile?.personnel_id;
     u.coordinatorSacraments = pid ? (coordByPersonnel[pid] || []) : [];
+  });
+
+  // "Parish Staff" membership is DERIVED from HR (not team_members), so the badge
+  // must come from the same derivation to stay in sync.
+  const parishStaffIds = new Set(await deriveParishStaffPersonnelIds());
+  Object.values(map).forEach(u => {
+    u.isParishStaff = !!(u.profile?.personnel_id && parishStaffIds.has(u.profile.personnel_id));
   });
 
   const lastName = name => {
@@ -229,8 +237,7 @@ function _userRow(u) {
   const isExpanded = _expandedUserId === u.userId;
   const isUnlinked = !u.profile?.personnel_id;
 
-  const parishStaffTeam = (store.teams || []).find(t => t.name === 'Parish Staff');
-  const isParishStaff = parishStaffTeam && (u.teamIds || []).includes(parishStaffTeam.id);
+  const isParishStaff = u.isParishStaff;
 
   const roleLabel = u.roles.includes('super_admin') ? 'Super Admin'
                   : u.roles.includes('admin')       ? 'Admin'

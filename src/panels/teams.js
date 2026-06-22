@@ -2,6 +2,7 @@ import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin } from '../roles.js';
 import { logActivity } from '../utils.js';
+import { deriveParishStaffPersonnelIds } from '../ui/parishStaff.js';
 
 let allTeams = [];
 
@@ -45,6 +46,11 @@ export async function loadTeams() {
     ...t,
     memberCount: members.filter(m => m.team_id === t.id).length,
   }));
+
+  // Parish Staff (protected) membership is derived from HR, not team_members, so
+  // its count must come from the same derivation (keeps the badge in sync with HR).
+  const protectedTeam = allTeams.find(t => t.is_protected);
+  if (protectedTeam) protectedTeam.memberCount = (await deriveParishStaffPersonnelIds()).length;
 
   // Parish Staff always first, then alphabetical
   allTeams.sort((a, b) => {

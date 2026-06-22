@@ -6,6 +6,7 @@ import { isTeamAdmin, isSuperAdmin, isAdmin } from '../roles.js';
 import { notifyUsers, getUserIdForPersonnel } from '../notifications.js';
 import { createAvatar } from '../ui/avatar.js';
 import { renderDiscussionThread } from '../ui/discussionThread.js';
+import { deriveParishStaffPersonnelIds } from '../ui/parishStaff.js';
 import { STATUS, GROUP_ORDER, projectCard, openNewProjectModal } from './projects.js';
 import { taskRow, openAddTask as _openAddTask } from './tasks.js';
 
@@ -36,21 +37,27 @@ export async function renderTeamDashboard(container, teamId) {
 // ── Data ───────────────────────────────────────────────────────────────────
 
 async function _loadData() {
-  const [teamRes, membersRes] = await Promise.all([
-    sb.from('teams').select('*').eq('id', _currentTeamId).single(),
-    sb.from('team_members')
+  const teamRes = await sb.from('teams').select('*').eq('id', _currentTeamId).single();
+  if (teamRes.error) console.error('[teamDashboard] team load:', teamRes.error);
+  _team = teamRes.data || null;
+
+  if (_team?.is_protected) {
+    // Parish Staff is DERIVED from HR at read time — never a stored member list.
+    // Recompute the membership from the current HR occupancy state on every view.
+    const ids = await deriveParishStaffPersonnelIds();
+    const { data: people } = ids.length
+      ? await sb.from('personnel').select('id,name,phone,email,institution,employment').in('id', ids)
+      : { data: [] };
+    _members = (people || []).map(p => ({ id: `hr:${p.id}`, personnel_id: p.id, role: null, personnel: p }));
+  } else {
+    const membersRes = await sb.from('team_members')
       .select('*, personnel(id,name,phone,email,institution,employment)')
       .eq('team_id', _currentTeamId)
-      .order('sort_order', { nullsFirst: false }),
-  ]);
-  if (teamRes.error) console.error('[teamDashboard] team load:', teamRes.error);
-  if (membersRes.error) console.error('[teamDashboard] members load:', membersRes.error);
-  _team = teamRes.data || null;
-  _members = (membersRes.data || []).sort((a, b) => {
-    const aName = a.personnel?.name || '';
-    const bName = b.personnel?.name || '';
-    return aName.localeCompare(bName);
-  });
+      .order('sort_order', { nullsFirst: false });
+    if (membersRes.error) console.error('[teamDashboard] members load:', membersRes.error);
+    _members = membersRes.data || [];
+  }
+  _members.sort((a, b) => (a.personnel?.name || '').localeCompare(b.personnel?.name || ''));
   // personnel.title was retired in the HR Stage 1 collapse — derive the
   // directory title from current HR positions so the member rows still show it.
   _members.forEach(m => { if (m.personnel) m.personnel.title = personTitle(m.personnel.id); });
@@ -229,10 +236,16 @@ function _renderTabContent() {
 
 function _renderMembers(el) {
   _members.sort((a, b) => (a.personnel?.name || '').localeCompare(b.personnel?.name || ''));
+  // Parish Staff: membership is derived from HR and not manually editable — note it
+  // lightly and render the list read-only (no add/remove controls).
+  const derivedNote = _team?.is_protected
+    ? `<div style="font-size:11.5px;color:#9CA3AF;font-style:italic;margin-bottom:.85rem;line-height:1.5;"><i class="fa-solid fa-circle-info" style="margin-right:5px;"></i>Membership is derived from HR — current Full-Time, Part-Time, and clergy staff at the primary institution. Update a person's position in the <strong>Human Resources</strong> panel to change this list.</div>`
+    : '';
   if (!_members.length) {
-    el.innerHTML = `<div style="font-size:13px;color:#9CA3AF;font-style:italic;margin-bottom:1rem;">No members yet.</div>`;
+    el.innerHTML = `${derivedNote}<div style="font-size:13px;color:#9CA3AF;font-style:italic;margin-bottom:1rem;">No members yet.</div>`;
   } else {
     el.innerHTML = `
+      ${derivedNote}
       <div id="td-member-list">
         ${_members.map(m => _memberRow(m)).join('')}
       </div>
@@ -240,6 +253,8 @@ function _renderMembers(el) {
     _bindMemberRowEvents();
   }
 
+  // Parish Staff is read-only (derived from HR) — no manual add/remove.
+  if (_team?.is_protected) return;
   // Add member button + picker area — team admins only
   if (!isTeamAdmin(_currentTeamId)) return;
   const addArea = document.createElement('div');
