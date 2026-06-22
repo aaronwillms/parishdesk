@@ -30,10 +30,22 @@ const _p = (t) => _panels[t];
 // Adapters register when their config module evaluates; lazy-load a config on demand so
 // a foreign type resolves even before that panel was visited. (Cycle-safe: runs at
 // runtime, long after recordLinks itself has finished evaluating.)
-const _CONFIG = { ocia: './ociaConfig.js', marriage: './marriageConfig.js', annulment: './annulmentConfig.js' };
+//
+// Each loader uses a LITERAL dynamic import so Vite/Rollup can statically rewrite it
+// to the hashed chunk path. A VARIABLE import — `import(_CONFIG[type])` — is NOT
+// analyzable, so in the production bundle it fetched a non-existent
+// `/assets/annulmentConfig.js` → "Failed to fetch dynamically imported module"; the
+// adapter never registered and cross-panel links rendered as "No linked records"
+// until the foreign panel was opened another way. (Dev's unbundled ESM masked it,
+// since `./annulmentConfig.js` resolves to the real source path there.)
+const _CONFIG = {
+  ocia:      () => import('./ociaConfig.js'),
+  marriage:  () => import('./marriageConfig.js'),
+  annulment: () => import('./annulmentConfig.js'),
+};
 async function _ensure(type) {
   if (_p(type) || !_CONFIG[type]) return;
-  try { await import(_CONFIG[type]); } catch (e) { console.error('[recordLinks] adapter load failed:', type, e); }
+  try { await _CONFIG[type](); } catch (e) { console.error('[recordLinks] adapter load failed:', type, e); }
 }
 
 // Cross-panel targets per source type (same-type excluded; annulment↔annulment is A).
