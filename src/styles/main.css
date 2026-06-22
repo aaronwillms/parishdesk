@@ -199,7 +199,7 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 .sac-tl-text{font-size:13px;color:var(--navy);}
 .sac-tl-time{font-size:11px;color:#9CA3AF;margin-top:2px;}
 .sac-tl-x{opacity:0;transition:opacity .12s,color .12s;cursor:pointer;color:#C9C2B6;background:none;border:none;font-size:14px;line-height:1;padding:0;flex-shrink:0;}
-.sac-tl-entry:hover .sac-tl-x{opacity:1;}
+.sac-tl-entry:hover .sac-tl-x,.disc-fu-item:hover .sac-tl-x{opacity:1;}
 .sac-tl-x:hover{color:#E74C3C;}
 /* Add-Event / Add-Note control block (below the file), with a small heading */
 .sac-add-block{margin-top:12px;border-top:.5px solid var(--stone);padding-top:10px;}

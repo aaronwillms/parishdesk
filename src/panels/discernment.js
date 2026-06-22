@@ -423,12 +423,12 @@ function followupsSection(d, write) {
   const body = list.length
     ? `<div style="display:flex;flex-direction:column;gap:6px;">${list.map(f => {
         const over = !f.done && isOverdue(f.due_date, today);
-        return `<div style="display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-bottom:.5px solid #F0EDE8;">
+        return `<div class="disc-fu-item" style="display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-bottom:.5px solid #F0EDE8;">
           <input type="checkbox" ${f.done ? 'checked' : ''} ${write ? '' : 'disabled'} data-act="toggle-followup" data-id="${f.id}" style="width:15px;height:15px;accent-color:var(--cardinal);margin-top:2px;flex-shrink:0;${write ? 'cursor:pointer;' : ''}" />
           <div style="flex:1;min-width:0;">
             <div class="sac-tl-row">
               <span class="sac-tl-text" style="${f.done ? 'text-decoration:line-through;opacity:.6;' : ''}">${esc(f.note || 'Follow up')}</span>
-              ${write ? `<button class="sac-tl-x" style="opacity:1;" title="Delete" data-act="del-followup" data-id="${f.id}">×</button>` : ''}
+              ${write ? `<button class="sac-tl-x" title="Delete" data-act="del-followup" data-id="${f.id}">×</button>` : ''}
             </div>
             <div style="font-size:11.5px;color:${over ? 'var(--cardinal)' : '#9CA3AF'};font-weight:${over ? '600' : '400'};">${f.due_date ? esc(formatDateDisplay(f.due_date)) : 'No date'}${over ? ' · overdue' : ''}${f.done && f.done_at ? ' · done ' + esc(formatDateDisplay((f.done_at || '').slice(0, 10))) : ''}</div>
           </div>

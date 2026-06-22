@@ -5,6 +5,10 @@ import { logActivity, personTitle, reportWriteError } from '../utils.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { getInstitutionAddress, isPrincipalInstitution } from '../ui/directory.js';
 
+// Shared 50-state list (same set the sacramental panels + Discernment address use)
+// for the institution-address State dropdown — stores the two-letter code.
+const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+
 // Institution membership and employment are DERIVED from HR (person_positions →
 // positions.institution_id, plus person_positions.employment_type). HR is the
 // sole owner of assignment; the directory only reads it. These are the HR
@@ -324,7 +328,7 @@ function _instAddressFieldsHtml(inst = null, { principal = false, addr = null } 
     <label>Street</label><input id="if-street" value="${v(a.street)}" placeholder="123 Main St" ${dis} style="${bg}" />
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <div style="flex:2;min-width:120px;"><label>City</label><input id="if-city" value="${v(a.city)}" ${dis} style="${bg}" /></div>
-      <div style="flex:1;min-width:70px;"><label>State</label><input id="if-state" value="${v(a.state)}" maxlength="2" placeholder="MS" ${dis} style="${bg}" /></div>
+      <div style="flex:1;min-width:70px;"><label>State</label><select id="if-state" ${dis} style="${bg}"><option value="">—</option>${US_STATES.map(s => `<option${s === (a.state || '') ? ' selected' : ''}>${s}</option>`).join('')}</select></div>
       <div style="flex:1;min-width:80px;"><label>ZIP</label><input id="if-zip" value="${v(a.zip)}" ${dis} style="${bg}" /></div>
     </div>`;
 }
