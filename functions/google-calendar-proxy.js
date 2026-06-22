@@ -113,7 +113,9 @@ export async function onRequestPost(context) {
     const cals = await calRes.json();
     if (!cals?.length) return new Response('No Google Calendar connected', { status: 404 });
     calRow = cals[0];
-    effCalendarId = calendarId || 'primary';
+    // Personal WRITE/single target = the user's chosen write calendar (calRow.url),
+    // defaulting to 'primary' for connections made before Phase 2 (backward compatible).
+    effCalendarId = calendarId || calRow.url || 'primary';
   }
 
   let accessToken;
@@ -135,13 +137,25 @@ export async function onRequestPost(context) {
   if (action === 'list') {
     const timeMinParam = timeMin || new Date().toISOString();
     const timeMaxParam = timeMax || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    const gcalRes = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(effCalendarId)}/events` +
-      `?timeMin=${encodeURIComponent(timeMinParam)}&timeMax=${encodeURIComponent(timeMaxParam)}&singleEvents=true&orderBy=startTime&maxResults=50`,
-      { headers: { 'Authorization': `Bearer ${accessToken}` } }
-    );
-    if (!gcalRes.ok) return new Response(await gcalRes.text(), { status: gcalRes.status });
-    return new Response(await gcalRes.text(), { headers: { 'Content-Type': 'application/json' } });
+    // Personal READ overlays MULTIPLE calendars the user selected (calRow.selected_calendars);
+    // global reads the single designated calendar. No selection → just the single effCalendarId
+    // (= 'primary' for pre-Phase-2 connections) — backward compatible. Merge results, tagging
+    // each event with its source calendar so the client can group/colour them.
+    const calIds = (target !== 'global' && Array.isArray(calRow.selected_calendars) && calRow.selected_calendars.length)
+      ? calRow.selected_calendars
+      : [effCalendarId];
+    const fetchOne = async (cid) => {
+      const r = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cid)}/events` +
+        `?timeMin=${encodeURIComponent(timeMinParam)}&timeMax=${encodeURIComponent(timeMaxParam)}&singleEvents=true&orderBy=startTime&maxResults=50`,
+        { headers: { 'Authorization': `Bearer ${accessToken}` } }
+      );
+      if (!r.ok) return [];
+      const d = await r.json();
+      return (d.items || []).map(it => ({ ...it, _sourceCalendarId: cid }));
+    };
+    const items = (await Promise.all(calIds.map(fetchOne))).flat();
+    return _json({ items });
 
   } else if (action === 'create') {
     if (!event) return new Response('Missing event', { status: 400 });

@@ -27,7 +27,7 @@ export async function loadUserProfile() {
     .eq('user_id', user.id);
   console.log('[userProfile] calendars (user_id only) — rows:', allCalRows, '| error:', allCalErr);
   const { data: gcalRows, error: gcalErr } = await sb.from('calendars')
-    .select('*')
+    .select('id, user_id, type, scope, name, url, active, color')   // never token_data (server-only)
     .eq('user_id', user.id)
     .eq('type', 'google');
   console.log('[userProfile] calendars (user_id + type=google) — rows:', gcalRows, '| error:', gcalErr);
@@ -161,7 +161,9 @@ function _render() {
                 font-size:12.5px;color:#9CA3AF;background:none;border:.5px solid #E2DDD6;
                 border-radius:5px;padding:.3rem .75rem;cursor:pointer;font-family:'Inter',sans-serif;
               ">Disconnect</button>
-            </div>`
+            </div>
+            <div style="font-size:12px;color:#6B7280;margin-top:.85rem;line-height:1.5;">Choose which calendars to <strong>show</strong> on your dashboard, and which one new events are <strong>added</strong> to.</div>
+            <div id="up-gcal-picker" style="margin-top:.6rem;font-size:13px;color:#9CA3AF;">Loading your calendars…</div>`
           : `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
               <span style="font-size:13px;color:#6B7280;">Not connected</span>
               <button id="up-gcal-connect" style="
@@ -245,6 +247,7 @@ function _bindEvents() {
   // Google Calendar
   document.getElementById('up-gcal-connect')?.addEventListener('click', _connectGoogle);
   document.getElementById('up-gcal-disconnect')?.addEventListener('click', _disconnectGoogle);
+  if (_googleCal) _renderGcalPicker();
 
   // Mobile Settings: show only on narrow viewports
   const mobileSection = document.getElementById('up-mobile-settings');
@@ -409,6 +412,71 @@ async function _connectGoogle() {
     console.error('[connectGoogle] failed:', e);
     statusEl.textContent = 'Error: ' + e.message;
   }
+}
+
+// Phase 2 — let the user pick which of their Google calendars to DISPLAY (multiple)
+// and which ONE to WRITE new events to. Reuses the proxy's listCalendars action.
+// Read set → calendars.selected_calendars (jsonb); write target → calendars.url.
+async function _renderGcalPicker() {
+  const box = document.getElementById('up-gcal-picker');
+  if (!box || !_googleCal) return;
+  let items;
+  try {
+    const res = await fetch('/google-calendar-proxy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: _user.id, action: 'listCalendars' }),
+    });
+    if (!res.ok) { box.innerHTML = `<span style="color:#9CA3AF;">Could not load your calendars (${res.status}).</span>`; return; }
+    ({ items } = await res.json());
+  } catch (e) { box.innerHTML = '<span style="color:#9CA3AF;">Could not load your calendars.</span>'; return; }
+  if (!items?.length) { box.innerHTML = '<span style="color:#9CA3AF;">No calendars found.</span>'; return; }
+
+  // Current selection (jsonb column may not exist pre-migration → treat as none).
+  let selected = [];
+  const { data: selRow } = await sb.from('calendars').select('selected_calendars').eq('id', _googleCal.id).maybeSingle();
+  if (Array.isArray(selRow?.selected_calendars)) selected = selRow.selected_calendars;
+  const primaryId = items.find(c => c.primary)?.id || items[0]?.id;
+  // Backward compatible default: no saved selection → just the primary calendar.
+  const readSet = new Set(selected.length ? selected : [primaryId]);
+  // Write target = the saved url if it's a real selected calendar, else the primary
+  // (covers pre-Phase-2 rows where url is the sentinel 'primary').
+  const writeId = readSet.has(_googleCal.url) ? _googleCal.url : primaryId;
+
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:auto 1fr auto;gap:6px 10px;align-items:center;font-size:11px;color:#9CA3AF;margin-bottom:4px;">
+      <span>Show</span><span></span><span>Add events here</span>
+    </div>
+    ${items.map(c => `
+      <div style="display:grid;grid-template-columns:auto 1fr auto;gap:6px 10px;align-items:center;padding:.25rem 0;">
+        <input type="checkbox" class="up-cal-read" data-id="${esc(c.id)}" ${readSet.has(c.id) ? 'checked' : ''} style="width:auto;accent-color:#1C2B3A;cursor:pointer;" />
+        <span style="font-size:13px;color:#1C2B3A;">${esc(c.summary)}${c.primary ? ' <span style="color:#9CA3AF;font-size:11px;">(primary)</span>' : ''}</span>
+        <input type="radio" name="up-cal-write" class="up-cal-write" data-id="${esc(c.id)}" ${c.id === writeId ? 'checked' : ''} style="width:auto;accent-color:#8B1A2F;cursor:pointer;" />
+      </div>`).join('')}
+    <div style="display:flex;align-items:center;gap:10px;margin-top:.7rem;">
+      <button id="up-cal-save" class="btn-primary" style="padding:.35rem .9rem;font-size:12.5px;">Save calendars</button>
+      <span id="up-cal-save-status" style="font-size:12px;color:#6B7280;"></span>
+    </div>`;
+
+  document.getElementById('up-cal-save')?.addEventListener('click', async () => {
+    const status = document.getElementById('up-cal-save-status');
+    const reads = [...document.querySelectorAll('.up-cal-read:checked')].map(e => e.dataset.id);
+    if (!reads.length) { status.style.color = '#E74C3C'; status.textContent = 'Pick at least one calendar to show.'; return; }
+    let write = document.querySelector('.up-cal-write:checked')?.dataset.id;
+    if (!write || !reads.includes(write)) write = reads[0];   // write must be one you also show
+    status.style.color = '#6B7280'; status.textContent = 'Saving…';
+    const { error } = await sb.from('calendars').update({ selected_calendars: reads, url: write }).eq('id', _googleCal.id);
+    if (error) {
+      status.style.color = '#E74C3C';
+      status.textContent = /column .* selected_calendars|schema cache/i.test(error.message)
+        ? 'Apply the 20260622_personal_calendar_selection.sql migration first.'
+        : 'Save failed: ' + error.message;
+      return;
+    }
+    _googleCal.url = write;
+    status.style.color = '#2D6A4F'; status.textContent = 'Saved.';
+    window.flashSaved?.();
+  });
 }
 
 async function _disconnectGoogle() {
