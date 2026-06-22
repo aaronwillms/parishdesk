@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS discernment_pins (
   created_at   timestamptz NOT NULL DEFAULT now(),
   UNIQUE (user_id, discerner_id)
 );
-ALTER TABLE discernment_pins DISABLE ROW LEVEL SECURITY;
+ALTER TABLE discernment_pins DISABLE ROW LEVEL SECURITY;   -- see RLS GOTCHA below
 CREATE INDEX IF NOT EXISTS idx_discernment_pins_user ON discernment_pins (user_id);
 
 -- ── Editable notes ──────────────────────────────────────────────────────────
@@ -27,3 +27,12 @@ CREATE INDEX IF NOT EXISTS idx_discernment_pins_user ON discernment_pins (user_i
 -- so it gets a real column. Editing overwrites `body` and stamps `edited_at`;
 -- no prior versions are kept.
 ALTER TABLE discernment_notes ADD COLUMN IF NOT EXISTS edited_at timestamptz;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- ⚠️ RLS GOTCHA — RUN THIS AS A SEPARATE STEP, AFTER the CREATE above.
+-- This project auto-RE-ENABLES row-level security on every new table, so the
+-- inline DISABLE on line 21 does NOT stick (confirmed 3×: discerners,
+-- record_links, discernment_pins). New tables come up with RLS ON and the
+-- anon/client gate hits "violates row-level security policy" on INSERT until
+-- RLS is explicitly disabled in its own execution. Re-run this line on its own:
+ALTER TABLE discernment_pins DISABLE ROW LEVEL SECURITY;
