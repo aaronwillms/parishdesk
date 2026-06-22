@@ -9,6 +9,7 @@ import { loadMyGrants } from './ui/grants.js';
 import { initModal } from './ui/modal.js';
 import { loadUserProfile } from './panels/userProfile.js';
 import { loadCoordData } from './ui/coordinator.js';
+import './ui/scheduleCalendar.js';   // registers window.openScheduleModal (sacramental Schedule button)
 import { loadPersonnel } from './panels/personnel.js';
 import { loadTeams, loadTeamsStore } from './panels/teams.js';
 import { ensurePanel } from './panels/registry.js';

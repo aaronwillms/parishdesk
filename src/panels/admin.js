@@ -665,6 +665,20 @@ async function _renderCalendarsTab() {
           <button id="gpc-connect" style="padding:.45rem 1rem;background:#1C2B3A;color:#fff;border:none;border-radius:5px;font-size:13px;cursor:pointer;font-weight:500;">Connect parish Google account</button>
         `}
       </div>
+      <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:7px;padding:1rem 1.1rem;margin-bottom:1.5rem;${writer ? '' : 'opacity:.55;'}">
+        <div style="font-size:13px;font-weight:600;color:#1C2B3A;margin-bottom:.35rem;">Application Work Calendars</div>
+        <div style="font-size:12px;color:#6B7280;margin-bottom:.85rem;line-height:1.5;">This is where all Sacramental, Project and Team events will be added.${writer ? '' : ' <strong>Set the Global Parish Calendar above first.</strong>'}</div>
+        ${writer ? `
+          <label style="font-size:11px;color:#6B7280;display:block;margin-bottom:3px;">Work calendar (may be the same as the global calendar)</label>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select id="awc-calendar" style="flex:1;min-width:0;padding:.4rem .6rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:12.5px;background:#fff;cursor:pointer;"><option>Loading calendars…</option></select>
+            <button id="awc-save" class="btn-primary" style="padding:.4rem .9rem;font-size:12.5px;white-space:nowrap;">Save</button>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:.7rem;gap:8px;">
+            <span id="awc-status" style="font-size:12px;color:#6B7280;"></span>
+            <button id="awc-new" style="background:none;border:none;color:#8FA8BF;font-size:12px;cursor:pointer;white-space:nowrap;">+ Create a new calendar</button>
+          </div>` : ''}
+      </div>
       <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.75rem;">Read-only feeds</div>
       <div style="display:flex;justify-content:flex-end;margin-bottom:1rem;">
         <button id="cal-add-btn" style="
@@ -767,6 +781,7 @@ async function _renderCalendarsTab() {
     await _renderCalendarsTab();
   });
   if (writer) _populateParishCalendarPicker(writer);
+  if (writer) _populateWorkCalendarPicker(writer, ps);
 
   // Show/hide internal sub-section when internal calendar changes
   document.getElementById('ps-internal-cal')?.addEventListener('change', function () {
@@ -876,6 +891,69 @@ async function _populateParishCalendarPicker(writer) {
     if (error) { if (status) { status.style.color = '#E74C3C'; status.textContent = 'Save failed.'; } return; }
     if (status) { status.style.color = '#2D6A4F'; status.textContent = 'Saved.'; }
     window.flashSaved?.();
+  });
+}
+
+// Application Work Calendar picker — same connected account as the global writer.
+// Lets the admin select (or create) which calendar receives panel-originated events.
+// Stored on parish_settings.work_calendar_id.
+async function _populateWorkCalendarPicker(writer, ps) {
+  const sel = document.getElementById('awc-calendar');
+  const status = document.getElementById('awc-status');
+  if (!sel) return;
+  const { data: { user } } = await sb.auth.getUser();
+  const fill = (items) => {
+    const cur = ps?.work_calendar_id || writer.url;
+    sel.innerHTML = (items || [])
+      .map(c => `<option value="${c.id}" ${c.id === cur ? 'selected' : ''}>${c.summary}${c.primary ? ' (primary)' : ''}</option>`)
+      .join('') || '<option value="">No calendars found</option>';
+  };
+  try {
+    const res = await fetch('/google-calendar-proxy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: user?.id, action: 'listCalendars', target: 'global' }),
+    });
+    if (!res.ok) { sel.innerHTML = `<option>Could not load calendars (${res.status})</option>`; return; }
+    fill((await res.json()).items);
+  } catch (e) { sel.innerHTML = '<option>Error loading calendars</option>'; return; }
+
+  document.getElementById('awc-save')?.addEventListener('click', async () => {
+    const calendarId = sel.value;
+    if (!calendarId) return;
+    if (status) { status.style.color = '#6B7280'; status.textContent = 'Saving…'; }
+    const { data: psRow } = await sb.from('parish_settings').select('id').limit(1).maybeSingle();
+    const { error } = await sb.from('parish_settings').update({ work_calendar_id: calendarId }).eq('id', psRow.id);
+    if (error) {
+      if (status) {
+        status.style.color = '#E74C3C';
+        status.textContent = /work_calendar_id|schema cache/i.test(error.message)
+          ? 'Apply the 20260622_work_calendar.sql migration first.' : 'Save failed.';
+      }
+      return;
+    }
+    if (store.parishSettings) store.parishSettings.work_calendar_id = calendarId;
+    if (status) { status.style.color = '#2D6A4F'; status.textContent = 'Saved.'; }
+    window.flashSaved?.();
+  });
+
+  document.getElementById('awc-new')?.addEventListener('click', async () => {
+    const name = prompt('Name for the new calendar:', 'Parish Events');
+    if (!name) return;
+    if (status) { status.style.color = '#6B7280'; status.textContent = 'Creating…'; }
+    const res = await fetch('/google-calendar-proxy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: user?.id, action: 'createCalendar', target: 'global', calendarName: name.trim() }),
+    });
+    if (!res.ok) { if (status) { status.style.color = '#E74C3C'; status.textContent = 'Create failed (' + res.status + ').'; } return; }
+    const created = await res.json();
+    // Reload the list and select the new calendar.
+    const listRes = await fetch('/google-calendar-proxy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: user?.id, action: 'listCalendars', target: 'global' }),
+    });
+    if (listRes.ok) fill((await listRes.json()).items);
+    sel.value = created.id;
+    if (status) { status.style.color = '#2D6A4F'; status.textContent = 'Created — click Save to use it.'; }
   });
 }
 

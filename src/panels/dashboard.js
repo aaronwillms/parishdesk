@@ -1,8 +1,8 @@
 import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, todayCST, logActivity } from '../utils.js';
+import { fmtDate, todayCST, logActivity, PANEL_TITLES } from '../utils.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
-import { isSuperAdmin, isAdmin, canWriteGlobalCalendar } from '../roles.js';
+import { isSuperAdmin, isAdmin, canWriteGlobalCalendar, canSeeWorkEvent } from '../roles.js';
 import { parseICS } from '../utils/icsParser.js';
 import { createAvatar } from '../ui/avatar.js';
 import { notifyUsers, getAllUserIds, getUserIdsForTeam } from '../notifications.js';
@@ -174,6 +174,34 @@ export async function loadCalendar() {
         console.warn('[calendar] ICS fetch/parse failed:', cal.name, e);
       }
     }));
+
+    // Work calendar (Phase 3) — panel-originated events. VISIBILITY is governed by the
+    // ORIGINATING PANEL (extendedProperties pd_panel), not the calendar: each user only
+    // sees a work event if they can access the panel that created it (canSeeWorkEvent).
+    if (store.parishSettings?.work_calendar_id) {
+      try {
+        const wr = await fetch('/google-calendar-proxy', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: currentUserId, action: 'list', target: 'work', timeMin: startOfDay, timeMax: endOfDay }),
+        });
+        if (wr.ok) {
+          for (const item of ((await wr.json()).items || [])) {
+            const panel = item.extendedProperties?.private?.pd_panel;
+            if (!panel || !canSeeWorkEvent(panel)) continue;
+            const startRaw = item.start?.dateTime || item.start?.date;
+            if (!startRaw) continue;
+            allEvents.push({
+              title: item.summary || '(No title)',
+              start: new Date(startRaw),
+              allDay: !item.start?.dateTime,
+              _calName: PANEL_TITLES[panel] || panel,
+              _calColor: '#8B1A2F',
+              _priority: 2,
+            });
+          }
+        }
+      } catch (e) { console.warn('[calendar] work calendar fetch failed:', e); }
+    }
 
     // Sort by priority first so higher-priority sources win deduplication
     allEvents.sort((a, b) => (a._priority || 9) - (b._priority || 9));

@@ -76,6 +76,26 @@ async function _isAdmin(user_id, supaUrl, serviceKey) {
   return (rows || []).some(r => r.role === 'admin' || r.role === 'super_admin');
 }
 
+// The designated WORK calendar id (on the global-writer's account) — where panel
+// events are posted. Stored on parish_settings.
+async function _workCalendarId(supaUrl, serviceKey) {
+  const res = await fetch(`${supaUrl}/rest/v1/parish_settings?select=work_calendar_id&limit=1`, { headers: _sbHeaders(serviceKey) });
+  if (!res.ok) return null;
+  const rows = await res.json();
+  return rows?.[0]?.work_calendar_id || null;
+}
+
+// A real app user (has a user_profiles row). Work-calendar WRITES require this;
+// the granular per-panel write gate is enforced client-side (roles.js), consistent
+// with this app's client-gated access model.
+async function _isAppUser(user_id, supaUrl, serviceKey) {
+  if (!user_id) return false;
+  const res = await fetch(`${supaUrl}/rest/v1/user_profiles?user_id=eq.${user_id}&select=user_id&limit=1`, { headers: _sbHeaders(serviceKey) });
+  if (!res.ok) return false;
+  const rows = await res.json();
+  return !!rows?.length;
+}
+
 const _json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json' } });
 
 export async function onRequestPost(context) {
@@ -85,7 +105,7 @@ export async function onRequestPost(context) {
   try { body = await request.json(); }
   catch (e) { return _json({ error: 'Invalid JSON body' }, 400); }
 
-  const { user_id, action, target = 'personal', calendarId, event, timeMin, timeMax } = body;
+  const { user_id, action, target = 'personal', calendarId, event, timeMin, timeMax, panelFilter, calendarName } = body;
   if (!action) return _json({ error: 'Missing action' }, 400);
 
   const supaUrl = env.VITE_SUPA_URL;
@@ -98,10 +118,27 @@ export async function onRequestPost(context) {
     if (!calRow) return new Response('No global parish calendar configured', { status: 404 });
     effCalendarId = calendarId || calRow.url || 'primary';
     // Writes (and calendar-list during setup) require an admin; reads are open to all.
-    if (action === 'create' || action === 'listCalendars') {
+    if (action === 'create' || action === 'listCalendars' || action === 'createCalendar') {
       if (!await _isAdmin(user_id, supaUrl, serviceKey)) {
         return new Response('Not authorized to write the parish calendar', { status: 403 });
       }
+    }
+  } else if (target === 'work') {
+    // Application Work Calendar — panel-originated Sacramental/Project/Team events.
+    // Uses the global-writer's token (same connected account) targeting the chosen
+    // work calendarId. READ is open (the client filters by the user's panel access);
+    // WRITE requires a real app user (per-panel write gate is enforced client-side).
+    calRow = await _globalWriterRow(supaUrl, serviceKey);
+    if (!calRow) return new Response('No global parish calendar configured', { status: 404 });
+    const workId = await _workCalendarId(supaUrl, serviceKey);
+    if (!workId && action !== 'listCalendars' && action !== 'createCalendar') {
+      return new Response('No work calendar configured', { status: 404 });
+    }
+    effCalendarId = calendarId || workId || calRow.url || 'primary';
+    if (action === 'create' || action === 'delete') {
+      if (!await _isAppUser(user_id, supaUrl, serviceKey)) return new Response('Not authorized', { status: 403 });
+    } else if (action === 'createCalendar') {
+      if (!await _isAdmin(user_id, supaUrl, serviceKey)) return new Response('Not authorized', { status: 403 });
     }
   } else {
     if (!user_id) return _json({ error: 'Missing user_id' }, 400);
@@ -141,13 +178,16 @@ export async function onRequestPost(context) {
     // global reads the single designated calendar. No selection → just the single effCalendarId
     // (= 'primary' for pre-Phase-2 connections) — backward compatible. Merge results, tagging
     // each event with its source calendar so the client can group/colour them.
-    const calIds = (target !== 'global' && Array.isArray(calRow.selected_calendars) && calRow.selected_calendars.length)
+    const calIds = (target === 'personal' && Array.isArray(calRow.selected_calendars) && calRow.selected_calendars.length)
       ? calRow.selected_calendars
       : [effCalendarId];
+    // Work-calendar reads can filter to a single originating panel (the Schedule view);
+    // events.list returns extendedProperties so the client can also filter by panel access.
+    const pf = panelFilter ? `&privateExtendedProperty=${encodeURIComponent('pd_panel=' + panelFilter)}` : '';
     const fetchOne = async (cid) => {
       const r = await fetch(
         `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cid)}/events` +
-        `?timeMin=${encodeURIComponent(timeMinParam)}&timeMax=${encodeURIComponent(timeMaxParam)}&singleEvents=true&orderBy=startTime&maxResults=50`,
+        `?timeMin=${encodeURIComponent(timeMinParam)}&timeMax=${encodeURIComponent(timeMaxParam)}&singleEvents=true&orderBy=startTime&maxResults=250${pf}`,
         { headers: { 'Authorization': `Bearer ${accessToken}` } }
       );
       if (!r.ok) return [];
@@ -156,6 +196,17 @@ export async function onRequestPost(context) {
     };
     const items = (await Promise.all(calIds.map(fetchOne))).flat();
     return _json({ items });
+
+  } else if (action === 'createCalendar') {
+    // Create a brand-new calendar on the writer's account (admin "link a new calendar").
+    const r = await fetch('https://www.googleapis.com/calendar/v3/calendars', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ summary: calendarName || 'ParishDesk Work Calendar' }),
+    });
+    if (!r.ok) return new Response(await r.text(), { status: r.status });
+    const c = await r.json();
+    return _json({ id: c.id, summary: c.summary });
 
   } else if (action === 'create') {
     if (!event) return new Response('Missing event', { status: 400 });
@@ -168,6 +219,15 @@ export async function onRequestPost(context) {
       }
     );
     return new Response(await gcalRes.text(), { status: gcalRes.status, headers: { 'Content-Type': 'application/json' } });
+
+  } else if (action === 'delete') {
+    const eventId = body.eventId;
+    if (!eventId) return new Response('Missing eventId', { status: 400 });
+    const r = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(effCalendarId)}/events/${encodeURIComponent(eventId)}`,
+      { method: 'DELETE', headers: { 'Authorization': `Bearer ${accessToken}` } }
+    );
+    return new Response('', { status: r.ok || r.status === 410 ? 204 : r.status });
 
   } else {
     return new Response('Unknown action', { status: 400 });

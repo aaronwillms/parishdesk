@@ -191,6 +191,19 @@ export function canAccessPanel(panel) {
   return r.panelGrants.includes(panel);
 }
 
+// ── Work-calendar event visibility (Phase 3) ────────────────────────────────
+// A work-calendar event records its originating PANEL (Google extendedProperties
+// pd_panel). Visibility is governed by the PANEL, not the calendar: a user sees a
+// work-calendar event only if they can access the panel that created it. Write
+// access is the SAME — if you can access the panel, you can schedule for it.
+export function canSeeWorkEvent(panel) {
+  if (!panel) return false;
+  return canAccessPanel(panel);
+}
+export function canScheduleForPanel(panel) {
+  return canAccessPanel(panel);
+}
+
 // ── Permission basis model (Admin > Users) ──────────────────────────────────
 // A team / institution(panel) / sacrament permission can be held on more than
 // one BASIS at once. Tracking WHY a permission is held keeps locks and removals
