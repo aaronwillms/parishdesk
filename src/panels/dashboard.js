@@ -195,7 +195,7 @@ export async function loadCalendar() {
               start: new Date(startRaw),
               allDay: !item.start?.dateTime,
               _calName: PANEL_TITLES[panel] || panel,
-              _calColor: '#8B1A2F',
+              _calColor: store.parishSettings?.work_calendar_color || '#8B1A2F',
               _priority: 2,
             });
           }

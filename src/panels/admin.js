@@ -566,17 +566,17 @@ async function _saveUser(userId) {
 
 // ── Calendars tab ──────────────────────────────────────────────────────────
 
-function _calColorPickers(selectedColor) {
+function _calColorPickers(selectedColor, name = 'cal-color') {
   const sel = selectedColor || CAL_PRESETS[0];
   return CAL_PRESETS.map(c => `
     <label style="display:inline-flex;align-items:center;margin:0;cursor:pointer;" title="${c}">
-      <input type="radio" name="cal-color" value="${c}" ${sel === c ? 'checked' : ''} style="display:none;" />
+      <input type="radio" name="${name}" value="${c}" ${sel === c ? 'checked' : ''} style="display:none;" />
       <span style="
         display:block;width:20px;height:20px;border-radius:50%;background:${c};
         outline:${sel === c ? '2.5px solid #C9A84C' : '2.5px solid transparent'};
         outline-offset:2px;cursor:pointer;transition:outline .1s;
       " onclick="this.previousElementSibling.click();
-        document.querySelectorAll('[name=cal-color]').forEach(r=>{
+        document.querySelectorAll('[name=${name}]').forEach(r=>{
           r.nextElementSibling.style.outline=r.checked?'2.5px solid #C9A84C':'2.5px solid transparent';
         })"></span>
     </label>`).join('');
@@ -625,21 +625,6 @@ async function _renderCalendarsTab() {
       " title="Delete" onmouseover="this.style.color='#8B1A2F'" onmouseout="this.style.color='#D1D5DB'">✕</button>
     </div>`).join('');
 
-  // Parish calendar assignment section
-  const calOptions = cals.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
-  const noneOpt    = `<option value="">— None —</option>`;
-
-  const postTeams      = ps.calendar_post_teams      !== false;
-  const postProjects   = ps.calendar_post_projects   !== false;
-  const postSacrament  = ps.calendar_post_sacramental !== false;
-  const hasInternal    = !!ps.internal_calendar_id;
-
-  const _calSelect = (id, selectedId, placeholder = true) =>
-    `<select id="${id}" style="width:100%;padding:.35rem .6rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:12.5px;font-family:'Inter',sans-serif;color:#1C2B3A;background:#fff;cursor:pointer;">
-      ${placeholder ? noneOpt : ''}
-      ${cals.map(c => `<option value="${c.id}" ${c.id === selectedId ? 'selected' : ''}>${c.name}</option>`).join('')}
-    </select>`;
-
   el.innerHTML = `
     <div style="max-width:620px;">
       <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:7px;padding:1rem 1.1rem;margin-bottom:1.5rem;">
@@ -654,6 +639,7 @@ async function _renderCalendarsTab() {
             <select id="gpc-calendar" style="flex:1;min-width:0;padding:.4rem .6rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:12.5px;background:#fff;cursor:pointer;"><option>Loading calendars…</option></select>
             <button id="gpc-save" class="btn-primary" style="padding:.4rem .9rem;font-size:12.5px;white-space:nowrap;">Save</button>
           </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:.7rem;"><span style="font-size:11px;color:#6B7280;">Event color</span><div style="display:flex;gap:8px;">${_calColorPickers(writer.color, 'gpc-color')}</div></div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-top:.7rem;gap:8px;">
             <span id="gpc-status" style="font-size:12px;color:#6B7280;"></span>
             <div style="white-space:nowrap;">
@@ -674,6 +660,7 @@ async function _renderCalendarsTab() {
             <select id="awc-calendar" style="flex:1;min-width:0;padding:.4rem .6rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:12.5px;background:#fff;cursor:pointer;"><option>Loading calendars…</option></select>
             <button id="awc-save" class="btn-primary" style="padding:.4rem .9rem;font-size:12.5px;white-space:nowrap;">Save</button>
           </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:.7rem;"><span style="font-size:11px;color:#6B7280;">Event color</span><div style="display:flex;gap:8px;">${_calColorPickers(ps.work_calendar_color, 'awc-color')}</div></div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-top:.7rem;gap:8px;">
             <span id="awc-status" style="font-size:12px;color:#6B7280;"></span>
             <button id="awc-new" style="background:none;border:none;color:#8FA8BF;font-size:12px;cursor:pointer;white-space:nowrap;">+ Create a new calendar</button>
@@ -691,59 +678,6 @@ async function _renderCalendarsTab() {
         ${rows || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;padding:.5rem 0;">No parish calendars yet.</div>'}
       </div>
 
-      ${cals.length ? `
-      <div style="border-top:.5px solid #E2DDD6;padding-top:1.25rem;margin-bottom:.5rem;">
-        <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:1rem;">Calendar Assignments</div>
-
-        <!-- Public parish calendar -->
-        <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:7px;padding:1rem 1.1rem;margin-bottom:.85rem;">
-          <div style="font-size:13px;font-weight:600;color:#1C2B3A;margin-bottom:.4rem;">Public Parish Calendar</div>
-          <div style="font-size:12px;color:#6B7280;margin-bottom:.7rem;">Events from this calendar are displayed on the dashboard for all users.</div>
-          ${_calSelect('ps-public-cal', ps.public_calendar_id)}
-        </div>
-
-        <!-- Internal parish calendar -->
-        <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:7px;padding:1rem 1.1rem;margin-bottom:.85rem;">
-          <div style="font-size:13px;font-weight:600;color:#1C2B3A;margin-bottom:.4rem;">Internal Parish Calendar</div>
-          <div style="font-size:12px;color:#6B7280;margin-bottom:.7rem;">ParishDesk posts team, project, and sacramental events to this calendar.</div>
-          ${_calSelect('ps-internal-cal', ps.internal_calendar_id)}
-          <div id="ps-internal-sub" style="margin-top:.85rem;display:${hasInternal ? 'block' : 'none'};">
-            <div style="font-size:11.5px;font-weight:600;color:#6B7280;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.05em;">Post to this calendar</div>
-            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-bottom:.4rem;cursor:pointer;">
-              <input type="checkbox" id="ps-post-teams" ${postTeams ? 'checked' : ''} style="accent-color:#8B1A2F;" onchange="window._calSubToggle()">
-              Team events
-            </label>
-            <div id="ps-teams-alt" style="display:${!postTeams ? 'flex' : 'none'};align-items:center;gap:8px;margin-bottom:.5rem;padding-left:1.5rem;">
-              <span style="font-size:12px;color:#6B7280;white-space:nowrap;">Use separate calendar:</span>
-              ${_calSelect('ps-teams-cal', ps.teams_calendar_id)}
-            </div>
-            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-bottom:.4rem;cursor:pointer;">
-              <input type="checkbox" id="ps-post-projects" ${postProjects ? 'checked' : ''} style="accent-color:#8B1A2F;" onchange="window._calSubToggle()">
-              Project events
-            </label>
-            <div id="ps-projects-alt" style="display:${!postProjects ? 'flex' : 'none'};align-items:center;gap:8px;margin-bottom:.5rem;padding-left:1.5rem;">
-              <span style="font-size:12px;color:#6B7280;white-space:nowrap;">Use separate calendar:</span>
-              ${_calSelect('ps-projects-cal', ps.projects_calendar_id)}
-            </div>
-            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-bottom:.4rem;cursor:pointer;">
-              <input type="checkbox" id="ps-post-sacramental" ${postSacrament ? 'checked' : ''} style="accent-color:#8B1A2F;" onchange="window._calSubToggle()">
-              Sacramental events
-            </label>
-            <div id="ps-sacramental-alt" style="display:${!postSacrament ? 'flex' : 'none'};align-items:center;gap:8px;margin-bottom:.5rem;padding-left:1.5rem;">
-              <span style="font-size:12px;color:#6B7280;white-space:nowrap;">Use separate calendar:</span>
-              ${_calSelect('ps-sacramental-cal', ps.sacramental_calendar_id)}
-            </div>
-          </div>
-        </div>
-
-        <div style="display:flex;justify-content:flex-end;">
-          <button id="ps-cal-save-btn" style="
-            padding:.4rem 1.1rem;background:#8B1A2F;color:#fff;border:none;border-radius:5px;
-            font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
-          ">Save Assignments</button>
-          <span id="ps-cal-save-status" style="font-size:12px;color:#6B7280;align-self:center;margin-left:10px;"></span>
-        </div>
-      </div>` : ''}
     </div>
   `;
 
@@ -782,57 +716,6 @@ async function _renderCalendarsTab() {
   });
   if (writer) _populateParishCalendarPicker(writer);
   if (writer) _populateWorkCalendarPicker(writer, ps);
-
-  // Show/hide internal sub-section when internal calendar changes
-  document.getElementById('ps-internal-cal')?.addEventListener('change', function () {
-    const sub = document.getElementById('ps-internal-sub');
-    if (sub) sub.style.display = this.value ? 'block' : 'none';
-  });
-
-  // Sub-toggle visibility
-  window._calSubToggle = () => {
-    ['teams', 'projects', 'sacramental'].forEach(key => {
-      const cb  = document.getElementById(`ps-post-${key}`);
-      const alt = document.getElementById(`ps-${key}-alt`);
-      if (cb && alt) alt.style.display = cb.checked ? 'none' : 'flex';
-    });
-  };
-
-  // Save assignments
-  document.getElementById('ps-cal-save-btn')?.addEventListener('click', async () => {
-    const statusEl = document.getElementById('ps-cal-save-status');
-    statusEl.textContent = 'Saving…'; statusEl.style.color = '#6B7280';
-
-    const publicId     = document.getElementById('ps-public-cal')?.value   || null;
-    const internalId   = document.getElementById('ps-internal-cal')?.value || null;
-    const postTeamsV   = document.getElementById('ps-post-teams')?.checked ?? true;
-    const postProjV    = document.getElementById('ps-post-projects')?.checked ?? true;
-    const postSacV     = document.getElementById('ps-post-sacramental')?.checked ?? true;
-    const teamsCal     = document.getElementById('ps-teams-cal')?.value     || null;
-    const projectsCal  = document.getElementById('ps-projects-cal')?.value  || null;
-    const sacramentalCal = document.getElementById('ps-sacramental-cal')?.value || null;
-
-    const payload = {
-      public_calendar_id:       publicId   || null,
-      internal_calendar_id:     internalId || null,
-      calendar_post_teams:      postTeamsV,
-      calendar_post_projects:   postProjV,
-      calendar_post_sacramental: postSacV,
-      teams_calendar_id:        postTeamsV    ? null : (teamsCal    || null),
-      projects_calendar_id:     postProjV     ? null : (projectsCal || null),
-      sacramental_calendar_id:  postSacV      ? null : (sacramentalCal || null),
-    };
-
-    const { error } = ps.id
-      ? await sb.from('parish_settings').update(payload).eq('id', ps.id)
-      : await sb.from('parish_settings').insert(payload);
-
-    if (error) { statusEl.textContent = 'Failed.'; statusEl.style.color = '#E74C3C'; return; }
-    store.parishSettings = { ...store.parishSettings, ...payload };
-    statusEl.textContent = 'Saved.'; statusEl.style.color = '#2D6A4F';
-    window.flashSaved();
-    setTimeout(() => { statusEl.textContent = ''; }, 2500);
-  });
 
   document.getElementById('cal-add-btn').addEventListener('click', () => _openCalendarModal());
 }
@@ -885,9 +768,10 @@ async function _populateParishCalendarPicker(writer) {
   document.getElementById('gpc-save')?.addEventListener('click', async () => {
     const calendarId = sel.value;
     const name = sel.options[sel.selectedIndex]?.textContent?.replace(/ \(primary\)$/, '') || 'Parish Google Calendar';
+    const color = document.querySelector('[name="gpc-color"]:checked')?.value || writer.color || CAL_PRESETS[1];
     if (!calendarId) return;
     if (status) { status.style.color = '#6B7280'; status.textContent = 'Saving…'; }
-    const { error } = await sb.from('calendars').update({ url: calendarId, name }).eq('id', writer.id);
+    const { error } = await sb.from('calendars').update({ url: calendarId, name, color }).eq('id', writer.id);
     if (error) { if (status) { status.style.color = '#E74C3C'; status.textContent = 'Save failed.'; } return; }
     if (status) { status.style.color = '#2D6A4F'; status.textContent = 'Saved.'; }
     window.flashSaved?.();
@@ -919,19 +803,20 @@ async function _populateWorkCalendarPicker(writer, ps) {
 
   document.getElementById('awc-save')?.addEventListener('click', async () => {
     const calendarId = sel.value;
+    const color = document.querySelector('[name="awc-color"]:checked')?.value || ps.work_calendar_color || CAL_PRESETS[1];
     if (!calendarId) return;
     if (status) { status.style.color = '#6B7280'; status.textContent = 'Saving…'; }
     const { data: psRow } = await sb.from('parish_settings').select('id').limit(1).maybeSingle();
-    const { error } = await sb.from('parish_settings').update({ work_calendar_id: calendarId }).eq('id', psRow.id);
+    const { error } = await sb.from('parish_settings').update({ work_calendar_id: calendarId, work_calendar_color: color }).eq('id', psRow.id);
     if (error) {
       if (status) {
         status.style.color = '#E74C3C';
-        status.textContent = /work_calendar_id|schema cache/i.test(error.message)
-          ? 'Apply the 20260622_work_calendar.sql migration first.' : 'Save failed.';
+        status.textContent = /work_calendar_id|work_calendar_color|schema cache/i.test(error.message)
+          ? 'Apply the calendar migrations first.' : 'Save failed.';
       }
       return;
     }
-    if (store.parishSettings) store.parishSettings.work_calendar_id = calendarId;
+    if (store.parishSettings) { store.parishSettings.work_calendar_id = calendarId; store.parishSettings.work_calendar_color = color; }
     if (status) { status.style.color = '#2D6A4F'; status.textContent = 'Saved.'; }
     window.flashSaved?.();
   });
