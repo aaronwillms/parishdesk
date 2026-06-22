@@ -6,6 +6,11 @@ import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js
 import { normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { promptNoteEdit } from '../sacramental/noteEdit.js';
+// Cross-panel display resolvers (DB-backed, by id) so an annulment's linked
+// Marriage/OCIA labels render even if those panels were never opened. Function
+// imports only (called at runtime) — the panel↔panel cycle is safe.
+import { ensureOciaDisplays, getOciaDisplay } from './ocia.js';
+import { ensureCoupleDisplays, getCoupleDisplay } from './marriage.js';
 
 // ── Status (legacy codes preserved for backward compatibility) ───────────────
 export const CASE_STATUS = {
@@ -212,6 +217,10 @@ export async function loadCasesData() {
   rows.sort((a, b) => petLast(a).toLowerCase().localeCompare(petLast(b).toLowerCase()));
   allCases = rows;
   store.allCases = allCases;
+  // Warm the cross-panel display caches for every legacy linked Marriage/OCIA record
+  // so their labels resolve by id without the Marriage/OCIA panels being loaded.
+  await ensureCoupleDisplays(allCases.map(c => c.linked_marriage_prep_id));
+  await ensureOciaDisplays(allCases.map(c => c.linked_ocia_id));
   renderAnnulmentAlerts();
   updateAnnulmentStats();
   return allCases;
@@ -568,8 +577,10 @@ function openCaseEdit(id) {
   _hydrateModal();
 }
 
-function _coupleLabel(id) { const r = (store.allCouples || []).find(x => x.id === id); return r ? `${r.groom || ''} & ${r.bride || ''}`.trim() : 'Marriage record'; }
-function _ociaLabel(id)   { const r = (store.allOcia || []).find(x => x.id === id); return r ? (r.name || 'OCIA record') : 'OCIA record'; }
+// Resolve linked Marriage/OCIA labels by id from the DB-backed display caches
+// (warmed in loadCasesData) so they render even if those panels were never opened.
+function _coupleLabel(id) { const r = getCoupleDisplay(id); return r ? `${r.groom || ''} & ${r.bride || ''}`.trim() : 'Marriage record'; }
+function _ociaLabel(id)   { const r = getOciaDisplay(id); return r ? (r.name || 'OCIA record') : 'OCIA record'; }
 
 // Advocate option source: the SAME people the shared formation helper offers —
 // parish clergy (personnel.clergy) ∪ the Annulments program coordinator(s) — but

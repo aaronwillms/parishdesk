@@ -388,10 +388,30 @@ function computeTemplateDocs(type) {
   if (type === 'candidate' && !base.some(d => /baptismal certificate/i.test(d.name))) base.unshift({ name: 'Baptismal Certificate', received: false, deletable: false, auto: true });
   return base;
 }
-function _ociaLabel(id) { const r = (store.allOcia || []).find(x => x.id === id); return r ? (r.name || 'OCIA') : 'OCIA'; }
+function _ociaLabel(id) { const r = getOciaDisplay(id); return r ? (r.name || 'OCIA') : 'OCIA'; }
 // Resolve by id from the cross-panel display cache (DB-backed) so the chip label
 // renders even if the Annulments panel was never opened (cache warmed on load).
 function _caseLabel(id) { const r = getCaseDisplay(id); return r ? `${r.petitioner || ''}${r.respondent ? ' v. ' + r.respondent : ''}` : 'Annulment case'; }
+
+// ── Cross-panel OCIA display cache ──────────────────────────────────────────
+// Marriage/Annulment records reference OCIA records by id (spouse "In OCIA",
+// annulment linked_ocia_id). Their labels must render even if the OCIA panel was
+// never opened this session, so we resolve those OCIA records by id DIRECTLY from
+// the DB into a small cache — mirroring annulments.js ensureCaseDisplays/getCaseDisplay.
+const _ociaDisplayCache = new Map();   // id -> { id, name }
+export async function ensureOciaDisplays(ids) {
+  const want = [...new Set((ids || []).filter(Boolean))];
+  if (!want.length) return;
+  for (const p of allOcia) if (p?.id) _ociaDisplayCache.set(p.id, p);   // reuse loaded list
+  const miss = want.filter(id => !_ociaDisplayCache.has(id));
+  if (!miss.length) return;
+  const { data } = await sb.from('sacramental_ocia').select('id, name').in('id', miss);
+  (data || []).forEach(r => _ociaDisplayCache.set(r.id, r));
+}
+// Sync read: cache first, then the panel's in-memory list (either source works).
+export function getOciaDisplay(id) {
+  return _ociaDisplayCache.get(id) || allOcia.find(x => x.id === id) || (store.allOcia || []).find(x => x.id === id) || null;
+}
 
 function _nameParts(p) {
   const parts = (p?.name || '').trim().split(/\s+/);

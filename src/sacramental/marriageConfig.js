@@ -17,6 +17,7 @@ import {
 } from '../panels/marriage.js';
 import { chipHtml } from './panelShell.js';
 import { registerLinkPanel, linkSectionHtml } from './recordLinks.js';
+import { getOciaDisplay } from '../panels/ocia.js';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -120,7 +121,7 @@ function spouseDetail(c, n) {
   const dob = c[`spouse${n}_dob`];
   const unbap = c[`spouse${n}_unbaptized`], noncath = c[`spouse${n}_non_catholic`], inOcia = c[`spouse${n}_in_ocia`];
   const ociaId = c[`spouse${n}_ocia_id`];
-  const ociaName = ociaId ? ((store.allOcia || []).find(x => x.id === ociaId)?.name || '') : '';
+  const ociaName = ociaId ? (getOciaDisplay(ociaId)?.name || '') : '';
   const baptism = unbap ? '' : [c[`spouse${n}_baptism_church`], c[`spouse${n}_baptism_city`], c[`spouse${n}_baptism_state`]].filter(Boolean).map(esc).join(', ');
   const statusBits = [
     unbap ? 'Unbaptized' : null,

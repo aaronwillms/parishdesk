@@ -2,6 +2,7 @@ import { sb, withWriteRetry, serializeWrite, insertWithRetry, deleteWithRetry } 
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError, applyDocCheck, docCheckStampHtml } from '../utils.js';
 import { store } from '../store.js';
 import { expandCase, ensureCaseDisplays, getCaseDisplay } from './annulments.js';
+import { ensureOciaDisplays, getOciaDisplay } from './ocia.js';
 import { isAdmin, canAccessSacrament } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
@@ -142,6 +143,9 @@ export async function loadCouplesData() {
   // resolve by id without the Annulments panel being loaded.
   await ensureCaseDisplays(allCouples.flatMap(c =>
     [...(c.spouse1_prior_marriages || []), ...(c.spouse2_prior_marriages || [])].map(m => m.annulment_case_id)));
+  // Likewise warm the OCIA display cache for every spouse "In OCIA" link, so the
+  // OCIA name resolves by id without the OCIA panel being loaded.
+  await ensureOciaDisplays(allCouples.flatMap(c => [c.spouse1_ocia_id, c.spouse2_ocia_id]));
   updateCoupleStats();
   renderMarriageAlerts();
   return allCouples;
@@ -382,11 +386,33 @@ function spouseState(c, n) {
     ocia: c[`spouse${n}_ocia_id`] ? { id: c[`spouse${n}_ocia_id`], label: _ociaLabel(c[`spouse${n}_ocia_id`]) } : null,
   };
 }
-function _ociaLabel(id) { const r = (store.allOcia || []).find(x => x.id === id); return r ? (r.name || 'OCIA record') : 'OCIA record'; }
+// Resolve by id from the DB-backed OCIA display cache (warmed in loadCouplesData)
+// so the spouse "In OCIA" label renders even if the OCIA panel was never opened.
+function _ociaLabel(id) { const r = getOciaDisplay(id); return r ? (r.name || 'OCIA record') : 'OCIA record'; }
 // Resolve by id from the cross-panel display cache (DB-backed) so the chip label
 // renders even if the Annulments panel was never opened. ensureCaseDisplays() is
 // called when couples load and on edit-form hydrate, so the cache is warm here.
 function _caseLabel(id) { const r = getCaseDisplay(id); return r ? `${r.petitioner || ''}${r.respondent ? ' v. ' + r.respondent : ''}` : 'Annulment case'; }
+
+// ── Cross-panel couple display cache ────────────────────────────────────────
+// Annulment records reference couples by id (linked_marriage_prep_id). That label
+// must render even if the Marriage panel was never opened this session, so we
+// resolve those couples by id DIRECTLY from the DB into a small cache — mirroring
+// annulments.js ensureCaseDisplays/getCaseDisplay.
+const _coupleDisplayCache = new Map();   // id -> { id, groom, bride }
+export async function ensureCoupleDisplays(ids) {
+  const want = [...new Set((ids || []).filter(Boolean))];
+  if (!want.length) return;
+  for (const c of allCouples) if (c?.id) _coupleDisplayCache.set(c.id, c);   // reuse loaded list
+  const miss = want.filter(id => !_coupleDisplayCache.has(id));
+  if (!miss.length) return;
+  const { data } = await sb.from('couples').select('id, groom, bride').in('id', miss);
+  (data || []).forEach(r => _coupleDisplayCache.set(r.id, r));
+}
+// Sync read: cache first, then the panel's in-memory list (either source works).
+export function getCoupleDisplay(id) {
+  return _coupleDisplayCache.get(id) || allCouples.find(x => x.id === id) || (store.allCouples || []).find(x => x.id === id) || null;
+}
 
 function buildCoupleModalHtml(c, opts = {}) {
   const inline = !!opts.inline;
