@@ -29,6 +29,21 @@ function _fmtEventDate(date) {
   return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+// Normalize a Google Calendar event to the common {start, end, allDay} shape used
+// across ALL sources (ICS already produces this). Google marks ALL-DAY events with a
+// date-only `start.date`/`end.date` (no time); timed events use `start.dateTime`. So
+// allDay = no dateTime, and start/end come from whichever field is present — giving
+// the same shape the ICS parser yields, so the renderer applies one set of rules.
+function _gcalTimes(item) {
+  const sRaw = item.start?.dateTime || item.start?.date || null;
+  const eRaw = item.end?.dateTime || item.end?.date || null;
+  return {
+    start: sRaw ? new Date(sRaw) : null,
+    end:   eRaw ? new Date(eRaw) : null,
+    allDay: !item.start?.dateTime,
+  };
+}
+
 async function _fetchICS(url) {
   const proxyUrl = '/calendar?url=' + encodeURIComponent(url);
   const res = await fetch(proxyUrl);
@@ -56,12 +71,12 @@ function _renderCalendarEvents() {
     const isNow   = !ev.allDay && now >= start && now <= end;
 
     if (ev.allDay) {
-      // All-day: tinted background, bold title, no dot
-      const hex = ev._calColor || '#1C2B3A';
-      const r = parseInt(hex.slice(1, 3), 16);
-      const g = parseInt(hex.slice(3, 5), 16);
-      const b = parseInt(hex.slice(5, 7), 16);
-      return `<div class="sched-item" style="background:rgba(${r},${g},${b},0.12);">
+      // All-day events (ANY source) get a uniform DARK-GREY band — NOT a tint of the
+      // calendar colour. The old code tinted by _calColor, so the all-day highlight
+      // looked grey only while the global calendar was a dark-grey ICS feed; once it
+      // became a coloured Google calendar the band turned that colour. Fixed grey now.
+      // (rgba so it reads on both the light card and the dark-mode card.)
+      return `<div class="sched-item" style="background:rgba(75,85,99,0.2);">
         <div style="flex:1;min-width:0;">
           <div class="sched-desc" style="font-weight:600;">${ev.title}</div>
           <div style="font-size:11.5px;color:#9CA3AF;margin-top:1px;">${_fmtEventDate(ev.start)} · All Day</div>
@@ -142,14 +157,11 @@ export async function loadCalendar() {
           if (!proxyRes.ok) throw new Error(await proxyRes.text());
           const gcalData = await proxyRes.json();
           for (const item of (gcalData.items || [])) {
-            const startRaw = item.start?.dateTime || item.start?.date;
-            if (!startRaw) continue;
-            const start = new Date(startRaw);
-            const allDay = !item.start?.dateTime;
+            const { start, end, allDay } = _gcalTimes(item);
+            if (!start) continue;
             allEvents.push({
               title:     item.summary || '(No title)',
-              start,
-              allDay,
+              start, end, allDay,
               _calName:  cal.name,
               _calColor: cal._personalGoogle ? (store.currentUserProfile?.calendar_color || cal.color || '#C9A84C') : (cal.color || '#1565C0'),
               _gcalId:   item.id,
@@ -188,12 +200,11 @@ export async function loadCalendar() {
           for (const item of ((await wr.json()).items || [])) {
             const panel = item.extendedProperties?.private?.pd_panel;
             if (!panel || !canSeeWorkEvent(panel)) continue;
-            const startRaw = item.start?.dateTime || item.start?.date;
-            if (!startRaw) continue;
+            const { start, end, allDay } = _gcalTimes(item);
+            if (!start) continue;
             allEvents.push({
               title: item.summary || '(No title)',
-              start: new Date(startRaw),
-              allDay: !item.start?.dateTime,
+              start, end, allDay,
               _calName: PANEL_TITLES[panel] || panel,
               _calColor: store.parishSettings?.work_calendar_color || '#8B1A2F',
               _priority: 2,
