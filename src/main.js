@@ -169,7 +169,13 @@ async function startApp(user) {
   loadCalendar();
 
   console.log('[startApp] switching to dashboard');
-  window.switchPanel('dashboard');
+  // After designating the parish Google writer, land on Admin → Calendars so the
+  // admin can pick which calendar is the global one.
+  if (new URLSearchParams(location.search).has('parish_writer_connected')) {
+    window.switchPanel('admin');
+  } else {
+    window.switchPanel('dashboard');
+  }
 }
 // NOTE: the old additive syncParishStaff() was removed — "Parish Staff" is now
 // DERIVED from HR at read time (ui/parishStaff.js), never stored in team_members.
@@ -203,6 +209,8 @@ if ('serviceWorker' in navigator) {
   const _params = new URLSearchParams(window.location.search);
   if (_params.has('google_connected')) {
     console.log('[oauth] Google Calendar connected successfully');
+  } else if (_params.has('parish_writer_connected')) {
+    console.log('[oauth] Parish Google calendar (global writer) connected');
   } else if (_params.has('google_error')) {
     const reason = _params.get('google_error');
     const detail = _params.get('detail') ?? '';

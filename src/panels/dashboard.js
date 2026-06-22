@@ -2,7 +2,7 @@ import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity } from '../utils.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
-import { isSuperAdmin, isAdmin } from '../roles.js';
+import { isSuperAdmin, isAdmin, canWriteGlobalCalendar } from '../roles.js';
 import { parseICS } from '../utils/icsParser.js';
 import { createAvatar } from '../ui/avatar.js';
 import { notifyUsers, getAllUserIds, getUserIdsForTeam } from '../notifications.js';
@@ -105,10 +105,11 @@ export async function loadCalendar() {
 
     if (parishRes.error) throw parishRes.error;
 
-    // Merge: parish calendars first, then personal Google if present and not already covered
+    // Merge: parish calendars (incl. the global writer) + the user's personal Google.
+    // The global parish Google and the personal Google are distinct sources now (the
+    // global reads via the designated-writer token), so show both.
     const parishCals = parishRes.data || [];
-    const hasParishGoogle = parishCals.some(c => c.type === 'google');
-    const cals = personalRes.data && !hasParishGoogle
+    const cals = personalRes.data
       ? [...parishCals, { ...personalRes.data, _personalGoogle: true }]
       : parishCals;
 
@@ -128,11 +129,15 @@ export async function loadCalendar() {
     await Promise.allSettled(cals.map(async (cal) => {
       if (cal.type === 'google') {
         try {
-          console.log('[dashboard] fetching google calendar events for userId:', currentUserId);
+          // Personal → the user's own token; parish (global writer) → target 'global'
+          // so EVERY user sees parish events (read via the designated-writer token).
+          const proxyBody = cal._personalGoogle
+            ? { user_id: currentUserId, action: 'list', timeMin: startOfDay, timeMax: endOfDay }
+            : { user_id: currentUserId, action: 'list', target: 'global', timeMin: startOfDay, timeMax: endOfDay };
           const proxyRes = await fetch('/google-calendar-proxy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: currentUserId, action: 'list', timeMin: startOfDay, timeMax: endOfDay }),
+            body: JSON.stringify(proxyBody),
           });
           if (!proxyRes.ok) throw new Error(await proxyRes.text());
           const gcalData = await proxyRes.json();
@@ -973,13 +978,28 @@ async function _openNewEventModal() {
       sel.appendChild(opt);
     }
 
+    // Parish (global) calendar — admins only, and only if a global calendar exists.
+    let hasGlobalParish = false;
+    if (canWriteGlobalCalendar()) {
+      const { data: gw } = await sb.from('calendars')
+        .select('id').eq('scope', 'parish').eq('type', 'google').limit(1).maybeSingle();
+      hasGlobalParish = !!gw;
+      if (hasGlobalParish) {
+        const opt = document.createElement('option');
+        opt.value = 'parish';
+        opt.textContent = 'Parish Calendar';
+        opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+
     if (_googleCalConnected) {
       const opt = document.createElement('option');
       opt.value = 'google';
       opt.textContent = 'My Google Calendar';
-      opt.selected = true;
+      opt.selected = !hasGlobalParish;
       sel.appendChild(opt);
-    } else {
+    } else if (!hasGlobalParish) {
       const opt = document.createElement('option');
       opt.value = '';
       opt.textContent = 'No writable calendar — connect Google Calendar in your profile';
@@ -1014,7 +1034,10 @@ async function _saveNewEvent() {
 
   if (!title) { statusEl.textContent = 'Title is required.'; return; }
   if (!date)  { statusEl.textContent = 'Date is required.'; return; }
-  if (cal !== 'google') { statusEl.textContent = 'No writable calendar selected.'; return; }
+  if (cal !== 'google' && cal !== 'parish') { statusEl.textContent = 'No writable calendar selected.'; return; }
+  // Writing to the parish (global) calendar is admins-only — guard in JS (the proxy
+  // also enforces it server-side via the designated-writer path).
+  if (cal === 'parish' && !canWriteGlobalCalendar()) { statusEl.textContent = 'Not authorized to post to the parish calendar.'; return; }
 
   statusEl.style.color = '#6B7280';
   statusEl.textContent = 'Saving…';
@@ -1040,7 +1063,9 @@ async function _saveNewEvent() {
     const res = await fetch('/google-calendar-proxy',{
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: currentUserId, action: 'create', event: gcalEvent }),
+      body: JSON.stringify(cal === 'parish'
+        ? { user_id: currentUserId, action: 'create', target: 'global', event: gcalEvent }
+        : { user_id: currentUserId, action: 'create', event: gcalEvent }),
     });
     if (!res.ok) throw new Error(await res.text());
 

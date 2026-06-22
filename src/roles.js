@@ -101,6 +101,14 @@ export function isAdmin() {
   return !!store.currentUserRoles?.isAdmin;  // true for admin AND super_admin
 }
 
+// Write policy for the GLOBAL parish calendar: super-admin OR admin may write
+// (create parish events via the designated-writer token). Regular users NEVER write
+// — they only READ the global calendar's events on the dashboard. The proxy also
+// enforces this server-side for the global-write path (defense-in-depth).
+export function canWriteGlobalCalendar() {
+  return isAdmin();   // isAdmin() === admin || super_admin
+}
+
 export function hasRole(role) {
   return (store.currentUserRoles?.roles || []).includes(role);
 }

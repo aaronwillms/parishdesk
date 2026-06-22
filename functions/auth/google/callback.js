@@ -4,7 +4,7 @@ export async function onRequestGet({ request, env }) {
   try {
     const url = new URL(request.url);
     const code = url.searchParams.get('code');
-    const state = url.searchParams.get('state'); // user_id passed through state param
+    const state = url.searchParams.get('state'); // "<user_id>" (personal) or "parishwriter:<user_id>"
 
     console.log('[google/callback] received — code present:', !!code, '| state present:', !!state);
 
@@ -12,6 +12,11 @@ export async function onRequestGet({ request, env }) {
       console.error('[google/callback] missing code or state — code:', code, 'state:', state);
       return Response.redirect('https://parishdesk.pages.dev/?google_error=missing_code', 302);
     }
+
+    // Parse the connection purpose from state. parishwriter → designate the connected
+    // account as the parish's GLOBAL CALENDAR writer (parish-level, not tied to a person).
+    const isParishWriter = state.startsWith('parishwriter:');
+    const stateUserId    = isParishWriter ? state.slice('parishwriter:'.length) : state;
 
     // Exchange code for tokens
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
@@ -42,27 +47,57 @@ export async function onRequestGet({ request, env }) {
     const supaUrl = env.VITE_SUPA_URL;
     const serviceKey = env.SUPABASE_SERVICE_KEY;
 
-    console.log('[google/callback] supabase URL present:', !!supaUrl, '| service key present:', !!serviceKey);
+    console.log('[google/callback] supabase URL present:', !!supaUrl, '| service key present:', !!serviceKey, '| parishWriter:', isParishWriter);
 
-    const upsertRes = await fetch(`${supaUrl}/rest/v1/calendars?on_conflict=user_id,type`, {
-      method: 'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'apikey':        serviceKey,
-        'Authorization': `Bearer ${serviceKey}`,
-        'Prefer':        'resolution=merge-duplicates,return=minimal',
-      },
-      body: JSON.stringify({
-        user_id:    state,
-        type:       'google',
-        name:       'Google Calendar',
-        url:        'primary',
-        scope:      'personal',
-        active:     true,
-        color:      '#1565C0',
-        token_data: tokenData,
-      }),
-    });
+    let upsertRes;
+    if (isParishWriter) {
+      // Designated GLOBAL parish writer — a singleton parish-level row (user_id null).
+      // Replace any existing writer (re-designation by any admin re-points it). The
+      // chosen calendarId is set later by the admin's calendar picker (defaults to primary).
+      await fetch(`${supaUrl}/rest/v1/calendars?scope=eq.parish&type=eq.google`, {
+        method: 'DELETE',
+        headers: { 'apikey': serviceKey, 'Authorization': `Bearer ${serviceKey}`, 'Prefer': 'return=minimal' },
+      });
+      upsertRes = await fetch(`${supaUrl}/rest/v1/calendars`, {
+        method: 'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'apikey':        serviceKey,
+          'Authorization': `Bearer ${serviceKey}`,
+          'Prefer':        'return=minimal',
+        },
+        body: JSON.stringify({
+          user_id:    null,
+          type:       'google',
+          name:       'Parish Google Calendar',
+          url:        'primary',
+          scope:      'parish',
+          active:     true,
+          color:      '#8B1A2F',
+          token_data: tokenData,
+        }),
+      });
+    } else {
+      upsertRes = await fetch(`${supaUrl}/rest/v1/calendars?on_conflict=user_id,type`, {
+        method: 'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'apikey':        serviceKey,
+          'Authorization': `Bearer ${serviceKey}`,
+          'Prefer':        'resolution=merge-duplicates,return=minimal',
+        },
+        body: JSON.stringify({
+          user_id:    stateUserId,
+          type:       'google',
+          name:       'Google Calendar',
+          url:        'primary',
+          scope:      'personal',
+          active:     true,
+          color:      '#1565C0',
+          token_data: tokenData,
+        }),
+      });
+    }
 
     console.log('[google/callback] supabase upsert status:', upsertRes.status);
 
@@ -76,8 +111,13 @@ export async function onRequestGet({ request, env }) {
       );
     }
 
-    console.log('[google/callback] upsert succeeded — redirecting with google_connected=true');
-    return Response.redirect('https://parishdesk.pages.dev/?google_connected=true', 302);
+    console.log('[google/callback] upsert succeeded — redirecting');
+    return Response.redirect(
+      isParishWriter
+        ? 'https://parishdesk.pages.dev/?parish_writer_connected=true'
+        : 'https://parishdesk.pages.dev/?google_connected=true',
+      302
+    );
 
   } catch (e) {
     console.error('[google/callback] unexpected error:', e?.message ?? e);

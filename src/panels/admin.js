@@ -33,9 +33,12 @@ const CAL_PRESETS = ['#1C2B3A', '#8B1A2F', '#C9A84C', '#1565C0', '#2E7D32', '#6A
 export async function loadAdmin() {
   const { data: { user } } = await sb.auth.getUser();
   _currentAuthUserId = user?.id || null;
-  _activeTab = 'users';
+  // Land on Calendars right after designating the parish Google writer (so the
+  // admin can pick which calendar is the global one).
+  _activeTab = new URLSearchParams(location.search).has('parish_writer_connected') ? 'calendars' : 'users';
   _render();
   if (_activeTab === 'users') await _loadUsers();
+  else if (_activeTab === 'calendars') await _renderCalendarsTab();
 }
 
 // ── Data ───────────────────────────────────────────────────────────────────
@@ -593,7 +596,13 @@ async function _renderCalendarsTab() {
   const cals = calsRes.data || [];
   const ps   = settingsRes.data || {};
 
-  const rows = cals.map(c => `
+  // The designated GLOBAL parish calendar writer is the parish-scope Google row
+  // (it carries the connected account's token). Shown in its own section, not the
+  // generic read-feed list below.
+  const writer = cals.find(c => c.type === 'google') || null;
+  const feedCals = cals.filter(c => c.type !== 'google');
+
+  const rows = feedCals.map(c => `
     <div style="display:flex;align-items:center;gap:10px;padding:.65rem 0;border-bottom:.5px solid #F0EDE8;">
       <div style="width:12px;height:12px;border-radius:50%;background:${c.color || '#1C2B3A'};flex-shrink:0;"></div>
       <div style="flex:1;min-width:0;">
@@ -633,6 +642,30 @@ async function _renderCalendarsTab() {
 
   el.innerHTML = `
     <div style="max-width:620px;">
+      <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:7px;padding:1rem 1.1rem;margin-bottom:1.5rem;">
+        <div style="font-size:13px;font-weight:600;color:#1C2B3A;margin-bottom:.35rem;">Global Parish Calendar</div>
+        <div style="font-size:12px;color:#6B7280;margin-bottom:.85rem;line-height:1.5;">One Google account designated as the parish's writable calendar. Its events appear on everyone's dashboard, and admins can post parish events to it. Typically the parish's own account (e.g. office@…), connected here — it is parish-level, not tied to any one person, so any admin can re-point it.</div>
+        ${writer ? `
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:.7rem;flex-wrap:wrap;">
+            <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:#E8F5E9;color:#2E7D32;">Connected</span>
+            <span style="font-size:12px;color:#6B7280;">Which calendar on this account is the parish calendar?</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select id="gpc-calendar" style="flex:1;min-width:0;padding:.4rem .6rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:12.5px;background:#fff;cursor:pointer;"><option>Loading calendars…</option></select>
+            <button id="gpc-save" class="btn-primary" style="padding:.4rem .9rem;font-size:12.5px;white-space:nowrap;">Save</button>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:.7rem;gap:8px;">
+            <span id="gpc-status" style="font-size:12px;color:#6B7280;"></span>
+            <div style="white-space:nowrap;">
+              <button id="gpc-reconnect" style="background:none;border:none;color:#8FA8BF;font-size:12px;cursor:pointer;">Re-connect account</button>
+              <button id="gpc-disconnect" style="background:none;border:none;color:#A32D2D;font-size:12px;cursor:pointer;margin-left:8px;">Remove</button>
+            </div>
+          </div>
+        ` : `
+          <button id="gpc-connect" style="padding:.45rem 1rem;background:#1C2B3A;color:#fff;border:none;border-radius:5px;font-size:13px;cursor:pointer;font-weight:500;">Connect parish Google account</button>
+        `}
+      </div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.75rem;">Read-only feeds</div>
       <div style="display:flex;justify-content:flex-end;margin-bottom:1rem;">
         <button id="cal-add-btn" style="
           padding:.4rem 1rem;background:#1C2B3A;color:#fff;border:none;border-radius:5px;
@@ -725,6 +758,16 @@ async function _renderCalendarsTab() {
     });
   });
 
+  // Global Parish Calendar (designated writer) — connect / pick / remove
+  document.getElementById('gpc-connect')?.addEventListener('click', _connectParishWriter);
+  document.getElementById('gpc-reconnect')?.addEventListener('click', _connectParishWriter);
+  document.getElementById('gpc-disconnect')?.addEventListener('click', async () => {
+    if (!confirm('Remove the parish Google calendar? Parish events will stop syncing until you reconnect.')) return;
+    if (writer) await deleteWithRetry(() => sb.from('calendars').delete().eq('id', writer.id));
+    await _renderCalendarsTab();
+  });
+  if (writer) _populateParishCalendarPicker(writer);
+
   // Show/hide internal sub-section when internal calendar changes
   document.getElementById('ps-internal-cal')?.addEventListener('change', function () {
     const sub = document.getElementById('ps-internal-sub');
@@ -779,44 +822,76 @@ async function _renderCalendarsTab() {
   document.getElementById('cal-add-btn').addEventListener('click', () => _openCalendarModal());
 }
 
+// Designate the parish's Google account as the global writer — reuses the existing
+// personal OAuth connect flow (same authorize URL / callback), but with a
+// "parishwriter:" state so the callback stores it as the parish-level writer row.
+async function _connectParishWriter() {
+  try {
+    const res = await fetch('/config');
+    const { googleClientId } = res.ok ? await res.json() : {};
+    if (!googleClientId) { alert('Google Calendar is not configured — set GOOGLE_CLIENT_ID in Cloudflare env.'); return; }
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user?.id) { alert('Not signed in.'); return; }
+    const params = new URLSearchParams({
+      client_id:     googleClientId,
+      redirect_uri:  'https://parishdesk.pages.dev/auth/google/callback',
+      response_type: 'code',
+      scope:         'https://www.googleapis.com/auth/calendar',
+      access_type:   'offline',
+      prompt:        'consent',
+      state:         'parishwriter:' + user.id,
+    });
+    window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+  } catch (e) {
+    alert('Could not start Google connection: ' + e.message);
+  }
+}
+
+// Fetch the designated account's calendar list (via the admin-gated proxy) so the
+// admin can pick WHICH calendar is the global parish one (by name, not raw id).
+async function _populateParishCalendarPicker(writer) {
+  const sel = document.getElementById('gpc-calendar');
+  const status = document.getElementById('gpc-status');
+  if (!sel) return;
+  try {
+    const { data: { user } } = await sb.auth.getUser();
+    const res = await fetch('/google-calendar-proxy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: user?.id, action: 'listCalendars', target: 'global' }),
+    });
+    if (!res.ok) { sel.innerHTML = `<option>Could not load calendars (${res.status})</option>`; return; }
+    const { items } = await res.json();
+    sel.innerHTML = (items || [])
+      .map(c => `<option value="${c.id}" ${c.id === writer.url ? 'selected' : ''}>${c.summary}${c.primary ? ' (primary)' : ''}</option>`)
+      .join('') || '<option>No calendars found</option>';
+  } catch (e) {
+    sel.innerHTML = '<option>Error loading calendars</option>';
+  }
+  document.getElementById('gpc-save')?.addEventListener('click', async () => {
+    const calendarId = sel.value;
+    const name = sel.options[sel.selectedIndex]?.textContent?.replace(/ \(primary\)$/, '') || 'Parish Google Calendar';
+    if (!calendarId) return;
+    if (status) { status.style.color = '#6B7280'; status.textContent = 'Saving…'; }
+    const { error } = await sb.from('calendars').update({ url: calendarId, name }).eq('id', writer.id);
+    if (error) { if (status) { status.style.color = '#E74C3C'; status.textContent = 'Save failed.'; } return; }
+    if (status) { status.style.color = '#2D6A4F'; status.textContent = 'Saved.'; }
+    window.flashSaved?.();
+  });
+}
+
 function _openCalendarModal(data) {
   const colorPickers = _calColorPickers(data?.color);
-  const isGoogle = data?.type === 'google';
 
   document.getElementById('modal-content').innerHTML = `
-    <div class="modal-title">${data?.id ? 'Edit Calendar' : 'Add Calendar'}</div>
+    <div class="modal-title">${data?.id ? 'Edit Feed' : 'Add Read-only Feed'}</div>
     <label>Name</label>
-    <input id="cal-name" value="${data?.name || ''}" placeholder="e.g. Parish Events" />
-    <label>Type</label>
-    <select id="cal-type" onchange="
-      const lbl = document.getElementById('cal-url-label');
-      const ph  = document.getElementById('cal-url');
-      const icsNote = document.getElementById('cal-note-ics');
-      const gNote   = document.getElementById('cal-note-google');
-      if (this.value === 'google') {
-        lbl.textContent = 'Calendar ID';
-        ph.placeholder  = 'example@group.calendar.google.com';
-        icsNote.style.display = 'none';
-        gNote.style.display   = 'flex';
-      } else {
-        lbl.textContent = 'Feed URL';
-        ph.placeholder  = 'https://…';
-        icsNote.style.display = 'flex';
-        gNote.style.display   = 'none';
-      }
-    ">
-      <option value="ics"    ${!isGoogle ? 'selected' : ''}>ICS Feed</option>
-      <option value="google" ${isGoogle  ? 'selected' : ''}>Google Calendar</option>
-    </select>
-    <label id="cal-url-label">${isGoogle ? 'Calendar ID' : 'Feed URL'}</label>
-    <input id="cal-url" value="${data?.url || ''}" placeholder="${isGoogle ? 'example@group.calendar.google.com' : 'https://…'}" />
-    <div id="cal-note-ics" style="display:${isGoogle ? 'none' : 'flex'};align-items:flex-start;gap:8px;background:#F8F7F4;border:.5px solid #E2DDD6;border-radius:6px;padding:.55rem .75rem;margin-top:4px;">
+    <input id="cal-name" value="${data?.name || ''}" placeholder="e.g. School Calendar" />
+    <input type="hidden" id="cal-type" value="ics" />
+    <label id="cal-url-label">Feed URL</label>
+    <input id="cal-url" value="${data?.url || ''}" placeholder="https://…" />
+    <div id="cal-note-ics" style="display:flex;align-items:flex-start;gap:8px;background:#F8F7F4;border:.5px solid #E2DDD6;border-radius:6px;padding:.55rem .75rem;margin-top:4px;">
       <i class="fa-solid fa-circle-info" style="font-size:12px;color:#6B7280;flex-shrink:0;margin-top:2px;"></i>
-      <span style="font-size:12px;color:#6B7280;line-height:1.45;"><strong style="color:#374151;">ICS calendars are read-only.</strong> Events are pulled from the feed URL. To edit events, update them in the source application.</span>
-    </div>
-    <div id="cal-note-google" style="display:${isGoogle ? 'flex' : 'none'};align-items:flex-start;gap:8px;background:#F8F7F4;border:.5px solid #E2DDD6;border-radius:6px;padding:.55rem .75rem;margin-top:4px;">
-      <i class="fa-solid fa-circle-info" style="font-size:12px;color:#6B7280;flex-shrink:0;margin-top:2px;"></i>
-      <span style="font-size:12px;color:#6B7280;line-height:1.45;"><strong style="color:#374151;">Google Calendar:</strong> ParishDesk can create events here on behalf of connected users. Make sure the service account has write access to this calendar.</span>
+      <span style="font-size:12px;color:#6B7280;line-height:1.45;"><strong style="color:#374151;">ICS feeds are read-only.</strong> Events are pulled from the URL. To add a <em>writable</em> Google calendar, use “Global Parish Calendar” above. To edit feed events, update them in the source application.</span>
     </div>
     <label style="margin-top:.75rem;">Color</label>
     <div style="display:flex;gap:10px;align-items:center;margin-top:4px;">${colorPickers}</div>
