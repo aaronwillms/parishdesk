@@ -195,7 +195,7 @@ export function computeLiturgicalDay(date = new Date(), tz = 'America/Chicago') 
 
   const cross = isHDO;
   const xp = cross ? '✠ ' : '';
-  let line2 = '', line3 = '';
+  let line2 = '', line3 = '', feriaMems = '';
 
   if (isSunday) {
     // Variant A — the day is a Sunday (incl. an override or solemnity on a Sunday).
@@ -216,11 +216,12 @@ export function computeLiturgicalDay(date = new Date(), tz = 'America/Chicago') 
   } else {
     // Variant D — feria (with optional memorials, if any) + season week line.
     const mems = rank === 'OPT_MEMORIAL' ? memorialList(name) : '';
+    feriaMems = mems;
     line2 = mems ? `FERIA, ${mems}` : 'FERIA';
     line3 = weekLine(base, cal, ymd);
   }
 
-  return { civilDate, cross, line2, line3, color, season, feriaMemorials: (!isSunday && rank === 'OPT_MEMORIAL') };
+  return { civilDate, cross, line2, line3, color, season, feriaMems, feriaMemorials: !!feriaMems };
 }
 
 // ── DOM wiring ───────────────────────────────────────────────────────────────
@@ -239,7 +240,14 @@ export function initLiturgical() {
 
   const dayEl = document.getElementById('lit-day');
   if (dayEl) {
-    dayEl.textContent = lit.line2;
+    if (lit.feriaMems) {
+      // "FERIA" keeps the header size; the optional memorial(s) render slightly
+      // smaller + italic. romcal supplies the names (no user input), but escape anyway.
+      const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      dayEl.innerHTML = `FERIA, <span class="lit-feria-mem">${esc(lit.feriaMems)}</span>`;
+    } else {
+      dayEl.textContent = lit.line2;
+    }
     // Feria with optional memorials may wrap — hang the wrapped lines under the saints.
     dayEl.style.textIndent = lit.feriaMemorials ? '-3.4em' : '';
     dayEl.style.paddingLeft = lit.feriaMemorials ? '3.4em' : '';
