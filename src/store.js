@@ -7,6 +7,7 @@ export const store = {
   teams: [],
   notifications: [],
   parishSettings: null,
+  diocesanOverrides: [],
   currentUserProfile: null,
   currentUserRoles: null,
 };

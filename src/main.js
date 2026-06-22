@@ -29,6 +29,14 @@ async function loadParishSettings() {
   applyParishName(data.parish_name);
 }
 
+async function loadDiocesanOverrides() {
+  // Local festal overrides for the liturgical header. Missing table (pre-migration)
+  // degrades to no overrides — the romcal-computed day still renders.
+  const { data, error } = await sb.from('diocesan_overrides').select('*');
+  if (error) { store.diocesanOverrides = []; return; }
+  store.diocesanOverrides = data || [];
+}
+
 async function startApp(user) {
   // Ensure-load stubs for the lazy sacramental cluster's cross-panel globals.
   // A chip rendered by one panel may call e.g. window.expandCase before the
@@ -119,7 +127,7 @@ async function startApp(user) {
 
   // Phase 1 — non-user-dependent data (parallel)
   try {
-    await Promise.all([loadParishSettings(), loadPersonnel(), loadTeamsStore()]);
+    await Promise.all([loadParishSettings(), loadDiocesanOverrides(), loadPersonnel(), loadTeamsStore()]);
   } catch (e) {
     console.error('[startApp] phase-1 init failed:', e);
   }

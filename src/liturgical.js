@@ -1,132 +1,259 @@
+// ── Liturgical header (romcal-computed) ──────────────────────────────────────
+// Replaces the old hand-rolled, year-hardcoded getLiturgicalDay() (which computed
+// the Ordinary-Time week with a brittle day-offset formula — off by one, e.g. it
+// showed "ELEVENTH" for 2026-06-21 which is really the XII Sunday of OT — and broke
+// for any year but 2025-26). This computes the day from romcal with the US national
+// calendar, in the parish's LOCAL timezone, fed by the diocesan transfer toggles,
+// with local festal overrides applied on top.
+//
+// HDO note: romcal 1.x does NOT flag holy days of obligation, so we determine US HDO
+// status ourselves from the celebration KEY (HDO_KEYS) ∪ Sundays — see ✠ rule below.
+
+// Import romcal's PREBUILT UMD bundle, not its ESM entry. The ESM entry pulls in
+// moment-recur, whose moment monkey-patching breaks under Vite/esbuild dep
+// optimization ("Cannot set properties of undefined (setting 'recur')") in BOTH
+// dev and the production bundle. The prebuilt bundle has moment + its plugins
+// already wired internally (built by romcal's own webpack), so it loads cleanly.
+import RomcalBundle from 'romcal/dist/romcal.bundle.min.js';
 import { store } from './store.js';
 
-const OPT_MEMORIALS = {
-  '1-13':'Optional Memorial of St. Hilary, Bishop & Doctor','1-17':'Optional Memorial of St. Anthony, Abbot',
-  '1-20':'Optional Memorial of St. Fabian, Pope & Martyr','1-21':'Optional Memorial of St. Agnes, Virgin & Martyr',
-  '1-24':'Memorial of St. Francis de Sales, Bishop & Doctor','1-26':'Memorial of Sts. Timothy & Titus, Bishops',
-  '1-27':'Optional Memorial of St. Angela Merici, Virgin','1-28':'Memorial of St. Thomas Aquinas, Priest & Doctor',
-  '1-31':'Memorial of St. John Bosco, Priest','2-5':'Memorial of St. Agatha, Virgin & Martyr',
-  '2-6':'Memorial of Sts. Paul Miki & Companions, Martyrs','2-10':'Memorial of St. Scholastica, Virgin',
-  '2-11':'Optional Memorial of Our Lady of Lourdes','2-14':'Memorial of Sts. Cyril & Methodius',
-  '2-22':'Feast of the Chair of St. Peter, Apostle','2-23':'Feast of the Dedication of the Cathedral of Saint Peter the Apostle',
-  '3-7':'Memorial of Sts. Perpetua & Felicity, Martyrs','3-19':'Solemnity of St. Joseph',
-  '4-7':'Memorial of St. John Baptist de la Salle, Priest','4-11':'Memorial of St. Stanislaus, Bishop & Martyr',
-  '4-25':'Feast of St. Mark, Evangelist','4-29':'Memorial of St. Catherine of Siena, Virgin & Doctor',
-  '5-2':'Memorial of St. Athanasius, Bishop & Doctor','5-3':'Feast of Sts. Philip & James, Apostles',
-  '5-13':'Optional Memorial of Our Lady of Fatima','5-14':'Feast of St. Matthias, Apostle',
-  '5-26':'Memorial of St. Philip Neri, Priest','5-31':'Feast of the Visitation of the Blessed Virgin Mary',
-  '6-1':'Optional Memorial of St. Justin, Martyr','6-3':'Memorial of St. Charles Lwanga & Companions, Martyrs',
-  '6-5':'Memorial of St. Boniface, Bishop & Martyr','6-11':'Memorial of St. Barnabas, Apostle',
-  '6-13':'Memorial of St. Anthony of Padua, Priest & Doctor','6-21':'Memorial of St. Aloysius Gonzaga, Religious',
-  '6-24':'Solemnity of the Nativity of St. John the Baptist','6-28':'Solemnity of Sts. Peter & Paul, Apostles',
-  '6-29':'Feast of Sts. Peter & Paul, Apostles (if not Sunday)',
-  '7-3':'Feast of St. Thomas, Apostle','7-11':'Memorial of St. Benedict, Abbot',
-  '7-15':'Memorial of St. Bonaventure, Bishop & Doctor','7-22':'Feast of St. Mary Magdalene',
-  '7-25':'Feast of St. James, Apostle','7-26':'Memorial of Sts. Joachim & Anne',
-  '7-29':'Memorial of St. Martha, Mary & Lazarus','7-31':'Memorial of St. Ignatius of Loyola, Priest',
-  '8-1':'Memorial of St. Alphonsus Liguori, Bishop & Doctor','8-4':'Memorial of St. John Vianney, Priest',
-  '8-6':'Feast of the Transfiguration of the Lord','8-8':'Memorial of St. Dominic, Priest',
-  '8-10':'Feast of St. Lawrence, Deacon & Martyr','8-11':'Memorial of St. Clare, Virgin',
-  '8-15':'Solemnity of the Assumption of the Blessed Virgin Mary',
-  '8-20':'Memorial of St. Bernard, Abbot & Doctor','8-21':'Memorial of St. Pius X, Pope',
-  '8-22':'Memorial of the Queenship of the Blessed Virgin Mary',
-  '8-24':'Feast of St. Bartholomew, Apostle','8-27':'Memorial of St. Monica',
-  '8-28':'Memorial of St. Augustine, Bishop & Doctor','8-29':'Memorial of the Passion of St. John the Baptist',
-  '9-3':'Memorial of St. Gregory the Great, Pope & Doctor','9-8':'Feast of the Nativity of the Blessed Virgin Mary',
-  '9-13':'Memorial of St. John Chrysostom, Bishop & Doctor',
-  '9-15':'Solemnity of Our Lady of Sorrows (parish)','9-16':'Memorial of Sts. Cornelius & Cyprian, Martyrs',
-  '9-21':'Feast of St. Matthew, Apostle & Evangelist','9-23':'Memorial of St. Pius of Pietrelcina, Priest',
-  '9-27':'Memorial of St. Vincent de Paul, Priest','9-29':'Feast of Sts. Michael, Gabriel & Raphael, Archangels',
-  '9-30':'Memorial of St. Jerome, Priest & Doctor',
-  '10-1':'Memorial of St. Thérèse of the Child Jesus, Virgin & Doctor',
-  '10-2':'Memorial of the Holy Guardian Angels','10-4':'Memorial of St. Francis of Assisi',
-  '10-7':'Memorial of Our Lady of the Rosary','10-15':'Memorial of St. Teresa of Ávila, Virgin & Doctor',
-  '10-17':'Memorial of St. Ignatius of Antioch, Bishop & Martyr','10-18':'Feast of St. Luke, Evangelist',
-  '10-28':'Feast of Sts. Simon & Jude, Apostles',
-  '11-1':'Solemnity of All Saints','11-2':'The Commemoration of All the Faithful Departed',
-  '11-4':'Memorial of St. Charles Borromeo, Bishop','11-9':'Feast of the Dedication of the Lateran Basilica',
-  '11-10':'Memorial of St. Leo the Great, Pope & Doctor','11-11':'Memorial of St. Martin of Tours, Bishop',
-  '11-17':'Memorial of St. Elizabeth of Hungary, Religious',
-  '11-21':'Memorial of the Presentation of the Blessed Virgin Mary',
-  '11-22':'Memorial of St. Cecilia, Virgin & Martyr','11-30':'Feast of St. Andrew, Apostle',
-  '12-3':'Memorial of St. Francis Xavier, Priest','12-7':'Memorial of St. Ambrose, Bishop & Doctor',
-  '12-8':'Solemnity of the Immaculate Conception','12-12':'Feast of Our Lady of Guadalupe',
-  '12-13':'Memorial of St. Lucy, Virgin & Martyr','12-14':'Memorial of St. John of the Cross, Priest & Doctor',
-  '12-26':'Feast of St. Stephen, First Martyr','12-27':'Feast of St. John, Apostle & Evangelist',
-  '12-28':'Feast of the Holy Innocents, Martyrs',
+const romcal = (RomcalBundle && RomcalBundle.calendarFor)
+  ? RomcalBundle
+  : (RomcalBundle && RomcalBundle.default) || RomcalBundle;
+
+// ── US universal Holy Days of Obligation (by romcal celebration key) ─────────
+// Whatever DAY romcal assigns these to (incl. a transferred Ascension), that day is
+// an HDO → carries ✠. Epiphany & Corpus Christi are NOT HDOs in the US (transferred
+// to Sunday). Sundays are always HDOs (handled separately).
+const HDO_KEYS = new Set([
+  'maryMotherOfGod', 'epiphany', 'ascension', 'assumption', 'allSaints', 'immaculateConception', 'christmas',
+]);
+// Epiphany is a US HDO too. When transferred to Sunday (the default) the Sunday
+// already carries ✠; when NOT transferred (epiphany_on_sunday off → romcal puts it
+// on Jan 6, possibly a weekday) the 'epiphany' key supplies the ✠.
+
+// Liturgical-color key → vestment palette. WHITE and GOLD are DISTINCT (a white
+// SOLEMNITY renders gold; ordinary white Sundays/feasts stay white — see colorKeyFor).
+const COLOR_MAP = {
+  GREEN: '#3B6D11', WHITE: '#F0EDE6', GOLD: '#C9A84C', RED: '#8B1A2F',
+  PURPLE: '#534AB7', VIOLET: '#534AB7', ROSE: '#C47E9A', PINK: '#C47E9A', BLACK: '#2C2C2A',
 };
+const colorHex = (key) => COLOR_MAP[String(key || '').toUpperCase()] || '#3B6D11';
 
-function getLiturgicalDay(d) {
-  const month=d.getMonth()+1, day=d.getDate(), dow=d.getDay();
-  const dayNames=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  const weekOrd=['','First','Second','Third','Fourth','Fifth','Sixth','Seventh','Eighth','Ninth','Tenth','Eleventh','Twelfth','Thirteenth','Fourteenth','Fifteenth','Sixteenth','Seventeenth','Eighteenth','Nineteenth','Twentieth','Twenty-First','Twenty-Second','Twenty-Third','Twenty-Fourth','Twenty-Fifth','Twenty-Sixth','Twenty-Seventh','Twenty-Eighth','Twenty-Ninth','Thirtieth','Thirty-First','Thirty-Second','Thirty-Third','Thirty-Fourth'];
-
-  if(month===6&&day===14) return {name:'✠ THE MOST SACRED HEART OF JESUS',rank:'SOLEMNITY',season:'Ordinary Time',vestColor:'#C9A84C',barColor:'#C9A84C'};
-  if(month===9&&day===15) return {name:'✠ OUR LADY OF SORROWS',rank:'SOLEMNITY',season:'Ordinary Time',vestColor:'#C9A84C',barColor:'#C9A84C'};
-
-  const easter2026=new Date(2026,3,5);
-  const diff=Math.floor((d-easter2026)/86400000);
-  if(diff===0) return {name:'✠ EASTER SUNDAY',rank:'SOLEMNITY',season:'Easter Time',vestColor:'#C9A84C',barColor:'#C9A84C'};
-  if(diff>0&&diff<49) return {name:'FERIA — EASTER TIME',rank:`${dayNames[dow]} · Easter Time`,season:'Easter Time',vestColor:'#F0EDE6',barColor:'#D4C9B0'};
-  if(diff===49) return {name:'✠ PENTECOST SUNDAY',rank:'SOLEMNITY',season:'Ordinary Time',vestColor:'#8B1A2F',barColor:'#8B1A2F'};
-
-  const lentStart=new Date(2026,1,18);
-  if(d>=lentStart&&d<easter2026){
-    const palmSun=new Date(2026,2,29);
-    if(dow===0&&d>=palmSun) return {name:'✠ PALM SUNDAY OF THE PASSION',rank:'SUNDAY',season:'Holy Week',vestColor:'#8B1A2F',barColor:'#8B1A2F'};
-    if(d>=palmSun) return {name:'HOLY WEEK',rank:`${dayNames[dow]} of Holy Week`,season:'Holy Week',vestColor:'#8B1A2F',barColor:'#8B1A2F'};
-    if(month===3&&day>=15&&day<=21&&dow===0) return {name:'✠ LAETARE SUNDAY',rank:'FOURTH SUNDAY OF LENT',season:'Lent',vestColor:'#C47E9A',barColor:'#C47E9A'};
-    return {name:'FERIA',rank:`${dayNames[dow]} · Lent`,season:'Lent',vestColor:'#534AB7',barColor:'#534AB7'};
-  }
-
-  const advent2025=new Date(2025,10,30), xmas=new Date(2025,11,25), baptism=new Date(2026,0,11);
-  if(d>=advent2025&&d<xmas){
-    const aw=Math.floor((d-advent2025)/604800000)+1;
-    if(dow===0&&aw===3) return {name:'✠ GAUDETE SUNDAY',rank:'THIRD SUNDAY OF ADVENT',season:'Advent',vestColor:'#C47E9A',barColor:'#C47E9A'};
-    if(dow===0) return {name:`✠ ${weekOrd[aw].toUpperCase()} SUNDAY OF ADVENT`,rank:'SUNDAY OF ADVENT',season:'Advent',vestColor:'#534AB7',barColor:'#534AB7'};
-    return {name:'ADVENT',rank:`${dayNames[dow]} · Advent`,season:'Advent',vestColor:'#534AB7',barColor:'#534AB7'};
-  }
-  if(month===12&&day===25) return {name:'✠ THE NATIVITY OF THE LORD',rank:'SOLEMNITY',season:'Christmas',vestColor:'#C9A84C',barColor:'#C9A84C'};
-  if(d>=xmas&&d<baptism) return {name:'CHRISTMAS SEASON',rank:`${dayNames[dow]} · Christmas`,season:'Christmas Time',vestColor:'#F0EDE6',barColor:'#D4C9B0'};
-  if(month===11&&day===2) return {name:'THE COMMEMORATION OF ALL THE FAITHFUL DEPARTED',rank:"ALL SOULS' DAY",season:'Ordinary Time',vestColor:'#2C2C2A',barColor:'#444441'};
-
-  const otIStart=new Date(2026,0,12);
-  const pentecost=new Date(2026,4,31);
-  const otIIStart=new Date(2026,5,1);
-  let weekNum;
-  if(d<pentecost){
-    weekNum=Math.max(1,Math.min(34,Math.floor((d-otIStart)/(7*86400000))+1));
-  } else {
-    const daysFromOtII=Math.floor((d-otIIStart)/86400000);
-    let adjustedWeek;
-    if(daysFromOtII<=13){
-      adjustedWeek=10;
-    } else {
-      adjustedWeek=11+Math.floor((daysFromOtII-14)/7);
-    }
-    weekNum=Math.max(1,Math.min(34,adjustedWeek));
-  }
-  if(dow===0) return {name:`✠ ${weekOrd[weekNum].toUpperCase()} SUNDAY OF ORDINARY TIME`,rank:'SUNDAY',season:'Ordinary Time',vestColor:'#3B6D11',barColor:'#3B6D11'};
-
-  const key=`${month}-${day}`;
-  const memorial=OPT_MEMORIALS[key]||null;
-  return {name: memorial?`FERIA, ${memorial}`:'FERIA', rank:`${dayNames[dow]} of the ${weekOrd[weekNum]} Week of Ordinary Time`, season:'Ordinary Time', vestColor:'#3B6D11', barColor:'#3B6D11'};
+// Ferial color of a season (used when a feria carries only optional memorials —
+// the day stays the season's color, not the saint's).
+function seasonColorKey(season) {
+  if (/lent|advent/i.test(season)) return 'PURPLE';
+  if (/easter|christmas/i.test(season)) return 'WHITE';
+  return 'GREEN';
+}
+// HEADER COLOR RULES — applied to romcal's computed color (NOT to overrides, which
+// supply their own color). Returns the final color KEY.
+function colorKeyFor(base, rank, ymd, season) {
+  const baseKey = String(base?.data?.meta?.liturgicalColor?.key || 'GREEN').toUpperCase();
+  const name = base?.name || '';
+  if (ymd.slice(5) === '11-02') return 'BLACK';                       // 3) All Souls (Nov 2) → black
+  if (/3rd Sunday of Advent/i.test(name)) return 'ROSE';             // 5) Gaudete → rose
+  if (/4th Sunday of Lent/i.test(name)) return 'ROSE';              // 5) Laetare → rose
+  if (rank === 'OPT_MEMORIAL') return seasonColorKey(season);        // 4) feria + optional memorial → season color
+  if (rank === 'SOLEMNITY' && baseKey === 'WHITE') return 'GOLD';    // 1) white solemnity → gold (incl. solemnity-Sundays)
+  return baseKey;                                                    // 2) red stays red; all else unchanged
 }
 
+const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX', 'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', 'XXXI', 'XXXII', 'XXXIII', 'XXXIV'];
+const roman = (n) => ROMAN[n] || String(n);
+
+// romcal seasons surface as "Eastertide" in season.value but "Easter" in names;
+// normalise to the name form used in the header.
+const seasonName = (s) => /easter/i.test(s) ? 'Easter' : s;
+
+const pad2 = (n) => String(n).padStart(2, '0');
+const addDays = (ymd, n) => { const d = new Date(ymd + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + Number(n || 0)); return d.toISOString().slice(0, 10); };
+
+// ── romcal calendar cache (per civil year + transfer config) ─────────────────
+const _calCache = new Map();
+function yearCalendar(year, t) {
+  const key = `${year}|${t.ascensionOnSunday ? 1 : 0}${t.epiphanyOnSunday ? 1 : 0}${t.corpusChristiOnSunday ? 1 : 0}`;
+  if (_calCache.has(key)) return _calCache.get(key);
+  const cal = romcal.calendarFor({
+    year, country: 'unitedStates', locale: 'en',
+    ascensionOnSunday: !!t.ascensionOnSunday,
+    epiphanyOnJan6: !t.epiphanyOnSunday,   // romcal 1.x option is inverted from our "on Sunday" toggle
+    corpusChristiOnSunday: !!t.corpusChristiOnSunday,
+  });
+  _calCache.set(key, cal);
+  return cal;
+}
+const ymdOf = (entry) => String(entry.moment).slice(0, 10);
+const entryForDate = (cal, ymd) => cal.find(e => ymdOf(e) === ymd) || null;
+
+// Moveable anchors (for anchored overrides), resolved from the same calendar so they
+// respect the transfer toggles (e.g. Ascension's actual day).
+function anchorsFor(cal) {
+  const byKey = (k) => { const e = cal.find(x => x.key === k); return e ? ymdOf(e) : null; };
+  return {
+    easter: byKey('easter'), ashWednesday: byKey('ashWednesday'), goodFriday: byKey('goodFriday'),
+    ascension: byKey('ascension'), pentecost: byKey('pentecostSunday'),
+  };
+}
+
+// ── Transfer toggles + overrides from the store (diocesan config) ────────────
+// Defaults = the common US / Province of Mobile (Diocese of Jackson) practice:
+// all three moveable feasts transferred to Sunday.
+export function diocesanTransfers() {
+  const p = store.parishSettings || {};
+  const def = (v) => (v === undefined || v === null) ? true : !!v;
+  return {
+    ascensionOnSunday: def(p.ascension_on_sunday),
+    epiphanyOnSunday: def(p.epiphany_on_sunday),
+    corpusChristiOnSunday: def(p.corpus_christi_on_sunday),
+  };
+}
+const diocesanOverrides = () => Array.isArray(store.diocesanOverrides) ? store.diocesanOverrides : [];
+
+// Find a local override whose computed date matches the given parish-local ymd.
+function overrideForDate(ymd, year, cal, overrides) {
+  const anchors = anchorsFor(cal);
+  for (const o of overrides) {
+    let target = null;
+    if (o.rule_type === 'fixed' && o.month && o.day) target = `${year}-${pad2(o.month)}-${pad2(o.day)}`;
+    else if (o.rule_type === 'oneoff' && o.full_date) target = String(o.full_date).slice(0, 10);
+    else if (o.rule_type === 'anchored' && o.anchor && anchors[o.anchor]) target = addDays(anchors[o.anchor], o.offset_days);
+    if (target === ymd) return o;
+  }
+  return null;
+}
+
+// ── Rank normalisation ───────────────────────────────────────────────────────
+// romcal `type` → our variant rank. COMMEMORATION (Lenten weekday saints) behaves
+// like an optional memorial on the feria.
+const RANK_FROM_TYPE = {
+  SOLEMNITY: 'SOLEMNITY', FEAST: 'FEAST', MEMORIAL: 'MEMORIAL', OPT_MEMORIAL: 'OPT_MEMORIAL',
+  COMMEMORATION: 'OPT_MEMORIAL', SUNDAY: 'SUNDAY', FERIA: 'FERIA', HOLY_WEEK: 'NAMED', TRIDUUM: 'NAMED',
+};
+const RANK_FROM_OVERRIDE = {
+  solemnity: 'SOLEMNITY', feast: 'FEAST', memorial: 'MEMORIAL',
+  'optional memorial': 'OPT_MEMORIAL', 'opt memorial': 'OPT_MEMORIAL',
+};
+const RANK_LABEL = { SOLEMNITY: 'Solemnity', FEAST: 'Feast', MEMORIAL: 'Memorial', OPT_MEMORIAL: 'Optional Memorial' };
+
+// Most-recent Sunday on/before ymd (for the season week line).
+function recentSunday(cal, ymd) {
+  let best = null;
+  for (const e of cal) {
+    const ey = ymdOf(e);
+    if (ey > ymd) break;
+    if (e.type === 'SUNDAY' || (new Date(ey + 'T12:00:00').getDay() === 0)) best = e;
+  }
+  return best;
+}
+// "XII Week of Ordinary Time" / "III Week of Easter" etc.
+function weekLine(baseEntry, cal, ymd) {
+  let m = baseEntry?.name?.match(/of the (\d+)(?:st|nd|rd|th)\s+week\s+of\s+(.+)$/i);
+  if (m) return `${roman(+m[1])} Week of ${seasonName(m[2]).trim()}`;
+  const sun = recentSunday(cal, ymd);
+  const sm = sun?.name?.match(/^(\d+)(?:st|nd|rd|th)\s+Sunday\s+of\s+(.+)$/i);
+  if (sm) return `${roman(+sm[1])} Week of ${seasonName(sm[2]).trim()}`;
+  return seasonName(baseEntry?.data?.season?.value || '');
+}
+
+const upper = (s) => String(s || '').toUpperCase();
+// Sunday line-2 name: "XII SUNDAY OF ORDINARY TIME" for an ordinary Sunday, else the
+// celebration name in caps (Easter, Palm Sunday, an override, …).
+function sundayName(displayName) {
+  const m = displayName.match(/^(\d+)(?:st|nd|rd|th)\s+Sunday\s+of\s+(.+)$/i);
+  if (m) return `${roman(+m[1])} SUNDAY OF ${upper(seasonName(m[2]).trim())}`;
+  return upper(displayName);
+}
+// Split romcal's '/'-joined optional memorials into "a; b; c".
+const memorialList = (name) => String(name || '').split('/').map(s => s.trim()).filter(Boolean).join('; ');
+
+// ── Core: compute the displayed liturgical day ───────────────────────────────
+export function computeLiturgicalDay(date = new Date(), tz = 'America/Chicago') {
+  const transfers = diocesanTransfers();
+  const ymd = date.toLocaleDateString('en-CA', { timeZone: tz });          // parish-LOCAL date
+  const year = Number(ymd.slice(0, 4));
+  const dow = new Date(ymd + 'T12:00:00').getDay();                        // 0 = Sunday
+  const cal = yearCalendar(year, transfers);
+  const base = entryForDate(cal, ymd);
+
+  const civilDate = date.toLocaleDateString('en-US', { timeZone: tz, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  if (!base) return { civilDate, cross: dow === 0, line2: 'FERIA', line3: '', color: '#3B6D11', season: 'Ordinary Time' };
+
+  const isSunday = dow === 0;
+  // ✠ is a property of the DAY: Sunday OR a US HDO. Determined from the romcal day
+  // (NOT the override — a local override never carries its own HDO status).
+  const isHDO = isSunday || HDO_KEYS.has(base.key);
+
+  // Override REPLACES the displayed celebration (name/rank/color) if one matches today.
+  const ov = overrideForDate(ymd, year, cal, diocesanOverrides());
+  const rank = ov ? (RANK_FROM_OVERRIDE[String(ov.rank || '').toLowerCase()] || 'MEMORIAL') : (RANK_FROM_TYPE[base.type] || 'FERIA');
+  const name = ov ? ov.name : base.name;
+  const season = seasonName(base.data?.season?.value || 'Ordinary Time');
+  // Overrides use their picked color directly; romcal days go through the color rules.
+  const color = ov ? colorHex(ov.color) : colorHex(colorKeyFor(base, rank, ymd, season));
+
+  const cross = isHDO;
+  const xp = cross ? '✠ ' : '';
+  let line2 = '', line3 = '';
+
+  if (isSunday) {
+    // Variant A — the day is a Sunday (incl. an override or solemnity on a Sunday).
+    line2 = xp + (ov ? upper(name) : sundayName(name));
+    line3 = (rank === 'SOLEMNITY' || rank === 'FEAST') ? RANK_LABEL[rank] : '';   // plain green Sunday → no rank line
+  } else if (rank === 'SOLEMNITY' || rank === 'FEAST') {
+    // Variant B — weekday solemnity/feast.
+    line2 = xp + upper(name);
+    line3 = RANK_LABEL[rank];
+  } else if (rank === 'MEMORIAL') {
+    // Variant C — obligatory memorial.
+    line2 = name;
+    line3 = 'Memorial';
+  } else if (rank === 'NAMED') {
+    // Holy Week / Triduum weekday — show the proper name + the season week line.
+    line2 = xp + upper(name);
+    line3 = weekLine(base, cal, ymd);
+  } else {
+    // Variant D — feria (with optional memorials, if any) + season week line.
+    const mems = rank === 'OPT_MEMORIAL' ? memorialList(name) : '';
+    line2 = mems ? `FERIA, ${mems}` : 'FERIA';
+    line3 = weekLine(base, cal, ymd);
+  }
+
+  return { civilDate, cross, line2, line3, color, season, feriaMemorials: (!isSunday && rank === 'OPT_MEMORIAL') };
+}
+
+// ── DOM wiring ───────────────────────────────────────────────────────────────
 export function initLiturgical() {
-  const parishTz = store.parishSettings?.timezone || 'America/Chicago';
-  const today = new Date(new Date().toLocaleString('en-US',{timeZone: parishTz}));
-  const lit = getLiturgicalDay(today);
-  const dateStr = today.toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric',timeZone: parishTz});
-  document.getElementById('lit-date').textContent = dateStr;
-  document.getElementById('lit-day').textContent = lit.name;
-  document.getElementById('lit-rank').textContent = lit.rank;
-  const dot = document.getElementById('lit-color-dot');
-  dot.style.background = lit.vestColor;
-  const isLight = lit.vestColor==='#F0EDE6'||lit.vestColor==='#FFFFFF';
-  dot.style.borderColor = isLight?'rgba(248,247,244,0.55)':'rgba(248,247,244,0.28)';
-  document.getElementById('season-bar').style.background = lit.barColor;
+  const tz = store.parishSettings?.timezone || 'America/Chicago';
+  let lit;
+  try {
+    lit = computeLiturgicalDay(new Date(), tz);
+  } catch (e) {
+    console.error('[liturgical] compute failed:', e);
+    lit = { civilDate: new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }), cross: false, line2: '', line3: '', color: '#3B6D11', season: '' };
+  }
+
+  const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  set('lit-date', lit.civilDate);
+
+  const dayEl = document.getElementById('lit-day');
+  if (dayEl) {
+    dayEl.textContent = lit.line2;
+    // Feria with optional memorials may wrap — hang the wrapped lines under the saints.
+    dayEl.style.textIndent = lit.feriaMemorials ? '-3.4em' : '';
+    dayEl.style.paddingLeft = lit.feriaMemorials ? '3.4em' : '';
+  }
+  const rankEl = document.getElementById('lit-rank');
+  if (rankEl) { rankEl.textContent = lit.line3 || ''; rankEl.style.display = lit.line3 ? '' : 'none'; }
+
+  const icon = document.getElementById('lit-color-icon');
+  // fa-church tinted to the final liturgical color. Black vestments (#2C2C2A) are
+  // invisible on the navy block, so render those as silver instead.
+  if (icon) icon.style.color = lit.color === '#2C2C2A' ? '#B8BCC2' : lit.color;
+  const bar = document.getElementById('season-bar');
+  if (bar) bar.style.background = lit.color;
   const topbarSeason = document.getElementById('topbar-season');
-  if(topbarSeason) topbarSeason.textContent = lit.season;
+  if (topbarSeason) topbarSeason.textContent = lit.season;
   return lit;
 }

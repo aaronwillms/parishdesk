@@ -143,6 +143,7 @@ function _render() {
   const TABS = [
     { key: 'users',     label: 'Users' },
     { key: 'calendars', label: 'Calendars' },
+    { key: 'diocesan',  label: 'Diocesan Calendar' },
     { key: 'settings',  label: 'Parish Settings' },
     { key: 'audit',     label: 'Access Audit' },
     { key: 'invite',    label: 'Invite User' },
@@ -174,6 +175,7 @@ function _render() {
       });
       if (_activeTab === 'users')     { _renderUsersTab(); await _loadUsers(); }
       if (_activeTab === 'calendars') await _renderCalendarsTab();
+      if (_activeTab === 'diocesan')  await _renderDiocesanTab();
       if (_activeTab === 'settings')  await _renderSettingsTab();
       if (_activeTab === 'audit')     await _renderAuditTab();
       if (_activeTab === 'invite')    _renderInviteTab();
@@ -181,6 +183,7 @@ function _render() {
   });
 
   if (_activeTab === 'calendars')     _renderCalendarsTab();
+  else if (_activeTab === 'diocesan') _renderDiocesanTab();
   else if (_activeTab === 'settings') _renderSettingsTab();
   else if (_activeTab === 'audit')    _renderAuditTab();
   else if (_activeTab === 'invite')   _renderInviteTab();
@@ -1257,5 +1260,170 @@ function _bindAuditWindow() {
     if (error) { alert('Could not save note: ' + error.message); return; }
     if (g) g.note = note.trim() || null;
     _renderAuditPivot();
+  };
+}
+
+// ── Diocesan Calendar tab ────────────────────────────────────────────────────
+let _dioOverrides = [];
+let _dioEditId = null;
+const DIO_RANKS  = ['Solemnity', 'Feast', 'Memorial', 'Optional Memorial'];
+const DIO_COLORS = [['WHITE', 'White', '#F0EDE6'], ['GOLD', 'Gold', '#C9A84C'], ['RED', 'Red', '#8B1A2F'], ['PURPLE', 'Violet', '#534AB7'], ['GREEN', 'Green', '#3B6D11'], ['BLACK', 'Black', '#2C2C2A']];
+const DIO_ANCHORS = [['easter', 'Easter Sunday'], ['ashWednesday', 'Ash Wednesday'], ['goodFriday', 'Good Friday'], ['ascension', 'Ascension'], ['pentecost', 'Pentecost']];
+
+async function _renderDiocesanTab() {
+  const el = document.getElementById('admin-tab-content'); if (!el) return;
+  el.innerHTML = '<div style="font-size:13px;color:#9CA3AF;">Loading…</div>';
+  const [psRes, ovRes] = await Promise.all([
+    sb.from('parish_settings').select('id,ascension_on_sunday,epiphany_on_sunday,corpus_christi_on_sunday').limit(1).maybeSingle(),
+    sb.from('diocesan_overrides').select('*').order('name'),
+  ]);
+  const missing = (e) => e && /(does not exist|relation|column .* does not exist|schema cache)/i.test(e.message || '');
+  if (missing(psRes.error) || missing(ovRes.error)) {
+    el.innerHTML = `<div style="background:#FEF9E7;border:.5px solid #E8D9A0;border-radius:8px;padding:1rem 1.2rem;font-size:13px;color:#7D6608;line-height:1.6;">
+      The Diocesan Calendar needs its migration. Apply <code>supabase/migrations/20260621_diocesan_calendar.sql</code> (and the separate <code>ALTER TABLE diocesan_overrides DISABLE ROW LEVEL SECURITY;</code>), then reload.</div>`;
+    return;
+  }
+  const ps = psRes.data || {};
+  const tog = (v) => (v === undefined || v === null) ? true : !!v;
+  _dioOverrides = ovRes.data || [];
+
+  const card = 'background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.2rem 1.4rem;margin-bottom:1.2rem;';
+  const head = 'font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:1rem;';
+  const toggleRow = (field, label, on, sub) => `
+    <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;margin-bottom:.85rem;">
+      <input type="checkbox" ${on ? 'checked' : ''} onchange="window.dioSaveToggle('${field}',this.checked)" style="width:15px;height:15px;accent-color:var(--cardinal);margin-top:2px;flex-shrink:0;" />
+      <span><span style="font-size:13px;color:#1C2B3A;font-weight:500;">${label}</span><br><span style="font-size:11.5px;color:#9CA3AF;">${sub}</span></span>
+    </label>`;
+
+  el.innerHTML = `
+    <div style="${card}max-width:520px;">
+      <div style="${head}">Transfer Settings</div>
+      <div style="font-size:12px;color:#6B7280;margin:-.5rem 0 1rem;line-height:1.5;">Which day these moveable feasts are observed on. These feed the liturgical-calendar computation. Default (on) = transferred to Sunday, the common US practice.</div>
+      ${toggleRow('ascension_on_sunday', 'Ascension on Sunday', tog(ps.ascension_on_sunday), 'Off = observed on Thursday (40 days after Easter).')}
+      ${toggleRow('epiphany_on_sunday', 'Epiphany on Sunday', tog(ps.epiphany_on_sunday), 'Off = observed on January 6 (traditional).')}
+      ${toggleRow('corpus_christi_on_sunday', 'Corpus Christi on Sunday', tog(ps.corpus_christi_on_sunday), 'Off = observed on Thursday after Trinity Sunday.')}
+    </div>
+    <div style="${card}max-width:520px;">
+      <div style="${head}">Festal Overrides</div>
+      <div style="font-size:12px;color:#6B7280;margin:-.5rem 0 1rem;line-height:1.5;">Local feasts that replace the day's celebration in the header. (Local overrides are never holy days of obligation — the ✠ comes only from the day being a Sunday or holy day.)</div>
+      <div id="dio-list">${_dioListHtml()}</div>
+      <div id="dio-form">${_dioFormHtml()}</div>
+    </div>`;
+}
+
+function _dioListHtml() {
+  if (!_dioOverrides.length) return '<div style="font-size:13px;color:#9CA3AF;font-style:italic;margin-bottom:1rem;">No overrides yet.</div>';
+  return _dioOverrides.map(o => {
+    const sw = (DIO_COLORS.find(c => c[0] === o.color) || DIO_COLORS[0])[2];
+    let rule = '';
+    if (o.rule_type === 'fixed') rule = `${o.month}/${o.day} yearly`;
+    else if (o.rule_type === 'oneoff') rule = String(o.full_date || '').slice(0, 10);
+    else if (o.rule_type === 'anchored') { const a = (DIO_ANCHORS.find(x => x[0] === o.anchor) || [])[1] || o.anchor; const n = Number(o.offset_days || 0); rule = `${Math.abs(n)} day${Math.abs(n) === 1 ? '' : 's'} ${n < 0 ? 'before' : 'after'} ${a}`; }
+    return `<div style="display:flex;align-items:center;gap:10px;padding:.6rem 0;border-bottom:.5px solid #F0EDE8;">
+      <span style="width:12px;height:12px;border-radius:50%;background:${sw};flex-shrink:0;"></span>
+      <div style="flex:1;min-width:0;"><div style="font-size:13.5px;color:#1C2B3A;font-weight:500;">${_esc(o.name)}</div>
+        <div style="font-size:11.5px;color:#9CA3AF;">${_esc(o.rank)} · ${_esc(rule)}</div></div>
+      <button onclick="window.dioEdit('${o.id}')" style="background:none;border:none;cursor:pointer;color:#8FA8BF;font-size:12px;">Edit</button>
+      <button onclick="window.dioDelete('${o.id}')" style="background:none;border:none;cursor:pointer;color:#A32D2D;font-size:12px;">Delete</button>
+    </div>`;
+  }).join('');
+}
+
+function _dioFormHtml() {
+  const o = _dioEditId ? _dioOverrides.find(x => x.id === _dioEditId) : null;
+  const inp = 'box-sizing:border-box;padding:.4rem .6rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;font-family:Inter,sans-serif;outline:none;background:#fff;';
+  const lbl = 'display:block;font-size:11px;color:#6B7280;margin-bottom:3px;';
+  const rt = o?.rule_type || 'fixed';
+  const sel = (v, cur) => v === cur ? ' selected' : '';
+  return `
+    <div style="margin-top:1rem;padding-top:1rem;border-top:1px dashed #E2DDD6;">
+      <div style="font-size:12.5px;font-weight:600;color:#1C2B3A;margin-bottom:.75rem;">${o ? 'Edit override' : 'Add override'}</div>
+      <label style="${lbl}">Feast Name</label>
+      <input id="dio-name" value="${_esc(o?.name || '')}" placeholder="Our Lady of the Passion" style="${inp}width:100%;margin-bottom:.7rem;" />
+      <div style="display:flex;gap:.6rem;margin-bottom:.7rem;">
+        <div style="flex:1;"><label style="${lbl}">Rank</label><select id="dio-rank" style="${inp}width:100%;cursor:pointer;">${DIO_RANKS.map(r => `<option${sel(r, o?.rank || 'Memorial')}>${r}</option>`).join('')}</select></div>
+        <div style="flex:1;"><label style="${lbl}">Color</label><select id="dio-color" style="${inp}width:100%;cursor:pointer;">${DIO_COLORS.map(c => `<option value="${c[0]}"${sel(c[0], o?.color || 'WHITE')}>${c[1]}</option>`).join('')}</select></div>
+      </div>
+      <label style="${lbl}">Date rule</label>
+      <select id="dio-rule" onchange="window.dioRuleChange(this.value)" style="${inp}width:100%;cursor:pointer;margin-bottom:.7rem;">
+        <option value="fixed"${sel('fixed', rt)}>Fixed yearly (month/day)</option>
+        <option value="oneoff"${sel('oneoff', rt)}>One-off (specific date)</option>
+        <option value="anchored"${sel('anchored', rt)}>Moveable (offset from an anchor)</option>
+      </select>
+      <div id="dio-rule-fields">${_dioRuleFields(rt, o)}</div>
+      <div style="display:flex;gap:8px;margin-top:.9rem;">
+        <button onclick="window.dioSave()" class="btn-primary" style="padding:.4rem 1rem;font-size:12.5px;">${o ? 'Save' : 'Add'}</button>
+        ${o ? `<button onclick="window.dioCancelEdit()" class="btn-secondary" style="padding:.4rem 1rem;font-size:12.5px;">Cancel</button>` : ''}
+      </div>
+    </div>`;
+}
+
+function _dioRuleFields(rt, o) {
+  const inp = 'box-sizing:border-box;padding:.4rem .6rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;font-family:Inter,sans-serif;outline:none;background:#fff;';
+  const lbl = 'display:block;font-size:11px;color:#6B7280;margin-bottom:3px;';
+  const sel = (v, cur) => v === cur ? ' selected' : '';
+  if (rt === 'fixed') return `<div style="display:flex;gap:.6rem;"><div><label style="${lbl}">Month</label><input id="dio-month" type="number" min="1" max="12" value="${o?.month || ''}" style="${inp}width:80px;" /></div><div><label style="${lbl}">Day</label><input id="dio-day" type="number" min="1" max="31" value="${o?.day || ''}" style="${inp}width:80px;" /></div></div>`;
+  if (rt === 'oneoff') return `<label style="${lbl}">Date</label><input id="dio-fulldate" type="date" value="${String(o?.full_date || '').slice(0, 10)}" style="${inp}" />`;
+  return `<div style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap;">
+    <div><label style="${lbl}">Offset (days, − before)</label><input id="dio-offset" type="number" value="${o?.offset_days ?? 0}" style="${inp}width:130px;" /></div>
+    <div style="flex:1;min-width:140px;"><label style="${lbl}">Anchor</label><select id="dio-anchor" style="${inp}width:100%;cursor:pointer;">${DIO_ANCHORS.map(a => `<option value="${a[0]}"${sel(a[0], o?.anchor || 'easter')}>${a[1]}</option>`).join('')}</select></div>
+  </div>`;
+}
+
+if (typeof window !== 'undefined') {
+  window.dioSaveToggle = async (field, on) => {
+    const { data: ps } = await sb.from('parish_settings').select('id').limit(1).maybeSingle();
+    if (!ps?.id) return;
+    const { error } = await sb.from('parish_settings').update({ [field]: on }).eq('id', ps.id);
+    if (error) { alert('Could not save: ' + error.message); return; }
+    if (store.parishSettings) store.parishSettings[field] = on;
+    const { initLiturgical } = await import('../liturgical.js');
+    initLiturgical();   // refresh header with the new transfer setting
+  };
+  window.dioRuleChange = (rt) => { const f = document.getElementById('dio-rule-fields'); if (f) f.innerHTML = _dioRuleFields(rt, _dioEditId ? _dioOverrides.find(x => x.id === _dioEditId) : null); };
+  window.dioEdit = (id) => { _dioEditId = id; document.getElementById('dio-form').innerHTML = _dioFormHtml(); };
+  window.dioCancelEdit = () => { _dioEditId = null; document.getElementById('dio-form').innerHTML = _dioFormHtml(); };
+  window.dioSave = async () => {
+    const name = (document.getElementById('dio-name')?.value || '').trim();
+    if (!name) { alert('Feast name is required.'); return; }
+    const rule_type = document.getElementById('dio-rule').value;
+    const row = {
+      name, rank: document.getElementById('dio-rank').value, color: document.getElementById('dio-color').value,
+      rule_type, month: null, day: null, full_date: null, anchor: null, offset_days: 0,
+    };
+    if (rule_type === 'fixed') {
+      row.month = Number(document.getElementById('dio-month')?.value) || null;
+      row.day = Number(document.getElementById('dio-day')?.value) || null;
+      if (!row.month || !row.day) { alert('Month and day are required.'); return; }
+    } else if (rule_type === 'oneoff') {
+      row.full_date = document.getElementById('dio-fulldate')?.value || null;
+      if (!row.full_date) { alert('A date is required.'); return; }
+    } else {
+      row.anchor = document.getElementById('dio-anchor').value;
+      row.offset_days = Number(document.getElementById('dio-offset')?.value) || 0;
+    }
+    const q = _dioEditId
+      ? sb.from('diocesan_overrides').update(row).eq('id', _dioEditId)
+      : sb.from('diocesan_overrides').insert(row);
+    const { error } = await q;
+    if (error) { alert('Save failed: ' + error.message); return; }
+    _dioEditId = null;
+    const { data } = await sb.from('diocesan_overrides').select('*').order('name');
+    _dioOverrides = data || []; store.diocesanOverrides = _dioOverrides;
+    document.getElementById('dio-list').innerHTML = _dioListHtml();
+    document.getElementById('dio-form').innerHTML = _dioFormHtml();
+    const { initLiturgical } = await import('../liturgical.js');
+    initLiturgical();
+  };
+  window.dioDelete = async (id) => {
+    if (!confirm('Delete this override?')) return;
+    const { error } = await deleteWithRetry(() => sb.from('diocesan_overrides').delete().eq('id', id));
+    if (error) { alert('Delete failed: ' + error.message); return; }
+    _dioOverrides = _dioOverrides.filter(o => o.id !== id); store.diocesanOverrides = _dioOverrides;
+    if (_dioEditId === id) _dioEditId = null;
+    document.getElementById('dio-list').innerHTML = _dioListHtml();
+    document.getElementById('dio-form').innerHTML = _dioFormHtml();
+    const { initLiturgical } = await import('../liturgical.js');
+    initLiturgical();
   };
 }
