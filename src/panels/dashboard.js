@@ -6,6 +6,7 @@ import { isSuperAdmin, isAdmin } from '../roles.js';
 import { parseICS } from '../utils/icsParser.js';
 import { createAvatar } from '../ui/avatar.js';
 import { notifyUsers, getAllUserIds, getUserIdsForTeam } from '../notifications.js';
+import { sacConfigForContext } from '../ui/grants.js';
 
 let currentUserId     = null;
 let _dashPersonnelId  = null;
@@ -768,13 +769,35 @@ async function loadActivityFeed() {
     }
   }
 
+  // Resolve any entry whose entity_name is a bare record id (e.g. an OLD delete
+  // that logged the uuid) to a display name, reusing the SAC_GRANTABLE registry.
+  // Records that no longer exist (most deletes) stay unresolved → the entry renders
+  // as just its action (graceful degrade), never a raw uuid. New deletes already
+  // capture the name at deletion time, so they aren't uuids here.
+  const _UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const _nameById = {};
+  const _byTable = {};   // table -> { cfg, ids:Set }
+  visibleActData.forEach(r => {
+    if (!r.entity_name || !_UUID_RE.test(r.entity_name)) return;
+    const cfg = sacConfigForContext(r.context_type);
+    if (!cfg) return;
+    (_byTable[cfg.table] ||= { cfg, ids: new Set() }).ids.add(r.entity_name);
+  });
+  for (const { cfg, ids } of Object.values(_byTable)) {
+    const { data: rows } = await sb.from(cfg.table).select(['id', ...cfg.cols].join(',')).in('id', [...ids]);
+    (rows || []).forEach(row => { _nameById[row.id] = cfg.label(row); });
+  }
+  const _entityName = (r) => (r.entity_name && _UUID_RE.test(r.entity_name))
+    ? (_nameById[r.entity_name] || '')        // unresolved uuid → drop it (show action only)
+    : (r.entity_name || '');
+
   // activity_log entries — attributed to triggering user
   visibleActData.forEach(r => {
     const user = r.triggered_by ? (userMap[r.triggered_by] || { name: 'Unknown User' }) : null;
     items.push({
       icon:        _contextIcon(r.context_type || 'general', r.context_id, projectIconMap),
       label:       r.action || 'Action',
-      name:        r.entity_name || '',
+      name:        _entityName(r),
       ts:          r.created_at,
       actorName:   user?.name || null,
       actorUserId: r.triggered_by || null,

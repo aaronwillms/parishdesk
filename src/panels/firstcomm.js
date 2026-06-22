@@ -413,10 +413,12 @@ export async function fcSaveEdit(id) {
 }
 export async function fcDeleteRec(id) {
   if (!confirm('Permanently delete this record? This cannot be undone.')) return { ok: false };
+  // Capture the display name BEFORE deletion — the record is gone afterward.
+  const _name = allFc.find(x => x.id === id)?.name || 'First Communion record';
   const { error } = await deleteWithRetry(() => sb.from('sacramental_firstcomm').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return { ok: false }; }
   allFc = allFc.filter(x => x.id !== id);
-  logActivity({ action: 'deleted First Communion record', entityType: 'firstcomm', entityName: id, contextType: 'firstcomm' });
+  logActivity({ action: 'deleted First Communion record', entityType: 'firstcomm', entityName: _name, contextType: 'firstcomm' });
   updateStats();
   return { ok: true };
 }

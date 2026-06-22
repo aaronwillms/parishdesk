@@ -829,10 +829,12 @@ export async function ociaSaveEdit(id) {
 }
 export async function ociaDeleteRec(id) {
   if (!confirm('Permanently delete this record? This cannot be undone.')) return { ok: false };
+  // Capture the display name BEFORE deletion — the record is gone afterward.
+  const _name = allOcia.find(x => x.id === id)?.name || 'OCIA record';
   const { error } = await deleteWithRetry(() => sb.from('sacramental_ocia').delete().eq('id', id));
   if (error) { reportWriteError('ocia delete', error); return { ok: false }; }
   allOcia = allOcia.filter(x => x.id !== id); store.allOcia = allOcia;
-  logActivity({ action: 'deleted OCIA record', entityType: 'ocia', entityName: id, contextType: 'ocia' });
+  logActivity({ action: 'deleted OCIA record', entityType: 'ocia', entityName: _name, contextType: 'ocia' });
   return { ok: true };
 }
 async function ociaDeletePerson(id) {   // modal Delete button

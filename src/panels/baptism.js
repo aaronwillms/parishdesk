@@ -403,10 +403,12 @@ export async function bapSaveEdit(id) {
 // Shell config.deleteRecord
 export async function bapDeleteRec(id) {
   if (!confirm('Permanently delete this record? This cannot be undone.')) return { ok: false };
+  // Capture the display name BEFORE deletion — the record is gone afterward.
+  const _name = allBap.find(x => x.id === id)?.name || 'Baptism record';
   const { error } = await deleteWithRetry(() => sb.from('sacramental_baptism').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return { ok: false }; }
   allBap = allBap.filter(x => x.id !== id);
-  logActivity({ action: 'deleted Baptism record', entityType: 'baptism', entityName: id, contextType: 'baptism' });
+  logActivity({ action: 'deleted Baptism record', entityType: 'baptism', entityName: _name, contextType: 'baptism' });
   updateStats();
   return { ok: true };
 }

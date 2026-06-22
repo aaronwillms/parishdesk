@@ -890,10 +890,13 @@ export function buildMarEditForm(c) {
 export async function marSaveEdit(id) { return _marWriteEdit(id); }
 export async function marDeleteRec(id) {
   if (!confirm('Permanently delete this file? This cannot be undone.')) return { ok: false };
+  // Capture the display name BEFORE deletion — the record is gone afterward.
+  const _c = allCouples.find(x => x.id === id);
+  const _name = _c ? `${_c.groom || '?'} & ${_c.bride || '?'}` : 'marriage prep record';
   const { error } = await deleteWithRetry(() => sb.from('couples').delete().eq('id', id));
   if (error) { reportWriteError('couples delete', error); return { ok: false }; }
   allCouples = allCouples.filter(x => x.id !== id);
-  logActivity({ action: 'deleted marriage prep record', entityType: 'marriage', entityName: id, contextType: 'couple' });
+  logActivity({ action: 'deleted marriage prep record', entityType: 'marriage', entityName: _name, contextType: 'couple' });
   updateCoupleStats();
   return { ok: true };
 }

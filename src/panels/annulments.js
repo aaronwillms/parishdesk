@@ -1114,11 +1114,14 @@ export async function anlSaveEdit(id) {
 
 export async function anlDeleteRec(id) {
   if (!confirm('Permanently delete this case? This cannot be undone.')) return { ok: false };
+  // Capture the display name BEFORE deletion — the record is gone afterward.
+  const _c = allCases.find(x => x.id === id);
+  const _name = _c ? (_c.respondent ? `${_c.petitioner || '?'} v. ${_c.respondent}` : (_c.petitioner || 'annulment case')) : 'annulment case';
   const { error } = await deleteWithRetry(() => sb.from('annulment_cases').delete().eq('id', id));
   if (error) { reportWriteError('annulment delete', error); return { ok: false }; }
   allCases = allCases.filter(x => x.id !== id);
   store.allCases = allCases;
-  await logActivity({ action: 'deleted annulment case', entityType: 'annulments', entityName: id, contextType: 'annulments' });
+  await logActivity({ action: 'deleted annulment case', entityType: 'annulments', entityName: _name, contextType: 'annulments' });
   renderAnnulmentAlerts();
   return { ok: true };
 }

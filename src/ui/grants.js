@@ -42,6 +42,22 @@ const SAC_GRANTABLE = {
   discerner:    { gtype: 'discerner',       typeLabel: 'Discerner',       table: 'discerners',              cols: ['name'],                     label: r => r.name || 'Discerner' },
 };
 
+// Activity-log context_type → SAC_GRANTABLE config, so a bare record id stored in
+// an activity entry (e.g. an old delete that logged the uuid) can be resolved to a
+// display name using the SAME registry the % audit (labelForGrant) uses. Returns
+// null for non-sacramental contexts. cfg exposes { table, cols, label(row) }.
+const _CONTEXT_TO_SAC = {
+  firstcomm: 'firstcomm', firstcommunion: 'firstcomm',
+  confirmation: 'confirmation', baptism: 'baptism', ocia: 'ocia',
+  couple: 'marriage', marriage: 'marriage',
+  annulments: 'annulment', annulment: 'annulment',
+  discernment: 'discerner', discerner: 'discerner',
+};
+export function sacConfigForContext(contextType) {
+  const key = _CONTEXT_TO_SAC[contextType];
+  return key ? SAC_GRANTABLE[key] : null;
+}
+
 // Map a mention/link type key → the record_grants.record_type value. Used both
 // when writing grants from the % picker and when checking the current user's
 // grants against a '#' link chip (see hasMyGrantForLink / canAccessLink).

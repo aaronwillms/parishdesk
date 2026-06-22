@@ -482,10 +482,12 @@ export async function confSaveEdit(id) {
 }
 export async function confDeleteRec(id) {
   if (!confirm('Permanently delete this record? This cannot be undone.')) return { ok: false };
+  // Capture the display name BEFORE deletion — the record is gone afterward.
+  const _name = allConf.find(x => x.id === id)?.name || 'Confirmation record';
   const { error } = await deleteWithRetry(() => sb.from('sacramental_confirmation').delete().eq('id', id));
   if (error) { reportWriteError('confirmation delete', error); return { ok: false }; }
   allConf = allConf.filter(x => x.id !== id);
-  logActivity({ action: 'deleted Confirmation record', entityType: 'confirmation', entityName: id, contextType: 'confirmation' });
+  logActivity({ action: 'deleted Confirmation record', entityType: 'confirmation', entityName: _name, contextType: 'confirmation' });
   updateStats();
   return { ok: true };
 }
