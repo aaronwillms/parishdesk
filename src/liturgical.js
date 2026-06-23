@@ -165,8 +165,27 @@ function sundayName(displayName) {
   if (m) return `${roman(+m[1])} SUNDAY OF ${upper(seasonName(m[2]).trim())}`;
   return upper(displayName);
 }
-// Split romcal's '/'-joined optional memorials into "a; b; c".
-const memorialList = (name) => String(name || '').split('/').map(s => s.trim()).filter(Boolean).join('; ');
+// Each optional memorial's OWN liturgical colour. romcal gives only the day/season
+// colour for the combined entry, so derive per-memorial from the title: a Martyr → red,
+// otherwise white. Routed through the same palette/transform map. Returns [{ text, color }].
+const MEM_COLOR_KEY = (text) => /\bmartyr/i.test(text) ? 'RED' : 'WHITE';
+function memorialItems(name) {
+  return String(name || '').split('/').map(s => s.trim()).filter(Boolean)
+    .map(text => ({ text, color: colorHex(MEM_COLOR_KEY(text)) }));
+}
+
+// Church-icon shades from the day's FINAL (transformed) colour: a PALE square + a
+// saturated church. Very light colours (white) darken the church so it stays visible
+// on the pale square; dark colours (black) keep the church dark on a silvery square.
+function _rgb(hex) { const n = parseInt(String(hex).replace('#', ''), 16); return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 }; }
+function iconShades(hex) {
+  const { r, g, b } = _rgb(hex);
+  const mix = (c, t, a) => Math.round(c + (t - c) * a);
+  const sq = `rgb(${mix(r, 255, .82)},${mix(g, 255, .82)},${mix(b, 255, .82)})`;   // pale square
+  const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+  const ch = lum > 200 ? `rgb(${mix(r, 0, .42)},${mix(g, 0, .40)},${mix(b, 0, .30)})` : hex;  // darken very-light
+  return { sq, ch };
+}
 
 // ── Core: compute the displayed liturgical day ───────────────────────────────
 export function computeLiturgicalDay(date = new Date(), tz = 'America/Chicago') {
@@ -195,7 +214,7 @@ export function computeLiturgicalDay(date = new Date(), tz = 'America/Chicago') 
 
   const cross = isHDO;
   const xp = cross ? '✠ ' : '';
-  let line2 = '', line3 = '', feriaMems = '';
+  let line2 = '', line3 = '', feriaMems = [];
 
   if (isSunday) {
     // Variant A — the day is a Sunday (incl. an override or solemnity on a Sunday).
@@ -215,13 +234,13 @@ export function computeLiturgicalDay(date = new Date(), tz = 'America/Chicago') 
     line3 = weekLine(base, cal, ymd);
   } else {
     // Variant D — feria (with optional memorials, if any) + season week line.
-    const mems = rank === 'OPT_MEMORIAL' ? memorialList(name) : '';
+    const mems = rank === 'OPT_MEMORIAL' ? memorialItems(name) : [];
     feriaMems = mems;
-    line2 = mems ? `FERIA, ${mems}` : 'FERIA';
+    line2 = mems.length ? `FERIA, ${mems.map(m => m.text).join('; ')}` : 'FERIA';
     line3 = weekLine(base, cal, ymd);
   }
 
-  return { civilDate, cross, line2, line3, color, season, feriaMems, feriaMemorials: !!feriaMems };
+  return { civilDate, cross, line2, line3, color, season, feriaMems, feriaMemorials: feriaMems.length > 0 };
 }
 
 // ── DOM wiring ───────────────────────────────────────────────────────────────
@@ -240,25 +259,49 @@ export function initLiturgical() {
 
   const dayEl = document.getElementById('lit-day');
   if (dayEl) {
-    if (lit.feriaMems) {
-      // "FERIA" keeps the header size; the optional memorial(s) render slightly
-      // smaller + italic. romcal supplies the names (no user input), but escape anyway.
-      const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      dayEl.innerHTML = `FERIA, <span class="lit-feria-mem">${esc(lit.feriaMems)}</span>`;
+    const mems = Array.isArray(lit.feriaMems) ? lit.feriaMems : [];
+    // "FERIA" keeps the header size; the optional memorial(s) render slightly smaller +
+    // italic, each followed by a dot in THAT memorial's own liturgical colour. romcal
+    // supplies the names (no user input), but escape anyway.
+    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const dot = (m) => `<span class="lit-mem-dot" style="background:${m.color};"></span>`;
+    dayEl.style.textIndent = '';
+    dayEl.style.paddingLeft = '';
+    if (mems.length === 1) {
+      // Single optional memorial rides inline on the FERIA line.
+      dayEl.innerHTML = `FERIA, <span class="lit-feria-mem">${esc(mems[0].text)}</span>${dot(mems[0])}`;
+    } else if (mems.length > 1) {
+      // First memorial rides on the FERIA line; the rest hang below, indented to align
+      // under the FIRST memorial (not under "FERIA"). The hang width is the measured
+      // "FERIA, " width, so the alignment is exact regardless of font/size.
+      const inner = mems.map((m, i) =>
+        `<span class="lit-feria-mem">${esc(m.text)}</span>${i < mems.length - 1 ? ';' : ''}${dot(m)}`
+      ).join('<br>');
+      dayEl.innerHTML = `FERIA, ${inner}`;
+      const probe = document.createElement('span');
+      probe.style.cssText = 'visibility:hidden;white-space:pre;font:inherit;';
+      probe.textContent = 'FERIA, ';
+      dayEl.appendChild(probe);
+      const w = probe.getBoundingClientRect().width;
+      probe.remove();
+      dayEl.style.paddingLeft = w + 'px';   // hanging indent: subsequent lines align under mem #1
+      dayEl.style.textIndent = -w + 'px';   // pull line 1 back so "FERIA," starts flush
     } else {
       dayEl.textContent = lit.line2;
     }
-    // Feria with optional memorials may wrap — hang the wrapped lines under the saints.
-    dayEl.style.textIndent = lit.feriaMemorials ? '-3.4em' : '';
-    dayEl.style.paddingLeft = lit.feriaMemorials ? '3.4em' : '';
   }
   const rankEl = document.getElementById('lit-rank');
   if (rankEl) { rankEl.textContent = lit.line3 || ''; rankEl.style.display = lit.line3 ? '' : 'none'; }
 
   const icon = document.getElementById('lit-color-icon');
-  // fa-church tinted to the final liturgical color. Black vestments (#2C2C2A) are
-  // invisible on the navy block, so render those as silver instead.
-  if (icon) icon.style.color = lit.color === '#2C2C2A' ? '#B8BCC2' : lit.color;
+  // Church icon sits in a rounded square: a PALE tint of the day's final liturgical
+  // colour for the square, the saturated colour for the church itself (very-light
+  // colours darken so the church stays visible; black → silvery square + black church).
+  if (icon) {
+    const { sq, ch } = iconShades(lit.color);
+    icon.style.background = sq;
+    icon.style.color = ch;
+  }
   const bar = document.getElementById('season-bar');
   if (bar) bar.style.background = lit.color;
   const topbarSeason = document.getElementById('topbar-season');

@@ -49,13 +49,16 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 .lit-block{background:var(--navy);border-radius:var(--radius);padding:1.25rem 1.5rem;margin-bottom:1rem;display:flex;align-items:center;gap:16px;}
 .lit-date{font-size:11.5px;color:rgba(248,247,244,.45);letter-spacing:.04em;margin-bottom:4px;}
 .lit-day{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;color:#F8F7F4;line-height:1.25;}
-/* Optional-memorial text on a ferial day: slightly smaller than "FERIA" + italic. */
+/* Optional-memorial text on a ferial day: slightly smaller than "FERIA" + italic.
+   First memorial rides on the FERIA line; additional memorials hang below via a
+   measured hanging indent (set in JS) so they align under the first memorial. */
 .lit-feria-mem{font-size:.85em;font-style:italic;font-weight:400;}
+/* Dot in each memorial's OWN liturgical colour, to the right of its name. */
+.lit-mem-dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex-shrink:0;vertical-align:middle;margin-left:6px;box-shadow:0 0 0 .5px rgba(248,247,244,.5);}
 .lit-rank{margin-top:5px;font-size:12px;color:var(--gold);letter-spacing:.05em;}
-/* fa-church liturgical-color anchor, vertically centered beside the 2–3 line header.
-   Flat solid fill — no outline or glow (both read as clutter on the detailed glyph).
-   The colour is set per day in JS; black vestments are shown as silver for legibility. */
-#lit-color-icon{font-size:34px;line-height:1;flex-shrink:0;color:#F0EDE6;}
+/* Church icon in a rounded square, vertically centered beside the 2–3 line header.
+   Per day in JS: square = pale tint of the liturgical colour, church = saturated colour. */
+#lit-color-icon{width:48px;height:48px;display:flex;align-items:center;justify-content:center;border-radius:12px;font-size:26px;line-height:1;flex-shrink:0;}
 .stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:1rem;}
 .stat-card{background:#FFFFFF;border-radius:var(--radius);border:0.5px solid var(--stone);padding:1rem;text-align:center;}
 .stat-num{font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:500;color:var(--navy);line-height:1;}
