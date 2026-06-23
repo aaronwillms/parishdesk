@@ -92,8 +92,9 @@ let _activeInstId = null;
 // an id is open unless it is in this set. Manual collapses live only for the
 // session — a refresh resets the module, so the tree re-opens fully.
 const _collapsed = new Set();
-let _selectedPosId = null;     // node selected in the org chart (drives the inline panel)
+let _selectedPosId = null;     // node selected in the org chart (drives the floating panel)
 let _addMenuPosId = null;      // node whose "+ Add Position" sibling/child menu is open
+let _escBound = false;         // one-time Escape-to-close keydown binding
 let _ctx = null;               // built context (see buildContext)
 let _insts = [];
 let _people = [];              // all personnel (incl. inactive, for name lookup)
@@ -294,7 +295,15 @@ function render() {
 
   // Single delegated handler for tabs + tree node actions (replaces on re-render).
   root.onclick = onHrClick;
-  root.onchange = onHrChange;   // inline-panel type select + supervisor checkbox
+  root.onchange = onHrChange;   // panel type select + supervisor checkbox
+
+  // Escape closes the floating node panel (bound once, guards on selection).
+  if (!_escBound) {
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && _selectedPosId) { _selectedPosId = null; _addMenuPosId = null; renderTree(); }
+    });
+    _escBound = true;
+  }
 }
 
 // ── PHASE 3 — tree render ───────────────────────────────────────────────────
@@ -312,12 +321,34 @@ function renderTree() {
   // Family-tree-style org chart: one connected tree per institution root. Each node
   // is a rounded card (name + title, VACANT in red). The whole chart pans/scrolls
   // inside .org-scroll (works on desktop AND mobile); branches collapse via the
-  // node toggle. Clicking a node opens the inline editor panel below the chart.
+  // node toggle. Clicking a node opens a floating editor panel OVER the chart
+  // (position:fixed, so it escapes the org-scroll overflow clip).
   const tree = roots.length
     ? `<div class="org-scroll"><div class="org-tree"><ul>${roots.map(renderNode).join('')}</ul></div></div>`
     : `<div class="card" style="padding:1rem 1.1rem;font-size:13px;color:#6B7280;font-style:italic;">This institution has no root position yet — it will be created automatically (or via the backfill migration).</div>`;
 
   el.innerHTML = tree + renderNodePanel();
+  positionPop();   // anchor the floating panel near the selected node (desktop)
+}
+
+// Anchor the floating node panel near the clicked node on desktop; on mobile the
+// panel is a centered bottom sheet (CSS-positioned), so leave its inline position
+// unset. position:fixed means it floats above the org-scroll, never clipped.
+function positionPop() {
+  const pop = document.getElementById('org-pop');
+  if (!pop || !_selectedPosId) return;
+  if (window.innerWidth <= 767) { pop.style.left = ''; pop.style.top = ''; return; }
+  const node = document.querySelector(`.org-node[data-pos-id="${CSS.escape(_selectedPosId)}"]`);
+  if (!node) return;
+  const r = node.getBoundingClientRect();
+  const pw = pop.offsetWidth, ph = pop.offsetHeight, gap = 12, m = 8;
+  let left = r.right + gap;                                  // prefer to the right of the node
+  if (left + pw > window.innerWidth - m) left = r.left - pw - gap;   // flip to the left
+  left = Math.max(m, Math.min(left, window.innerWidth - pw - m));
+  let top = Math.min(r.top, window.innerHeight - ph - m);
+  top = Math.max(m, top);
+  pop.style.left = left + 'px';
+  pop.style.top = top + 'px';
 }
 
 function renderNode(pos) {
@@ -336,7 +367,7 @@ function renderNode(pos) {
 
   const node = `<div class="org-node${vacant ? ' vacant' : ''}${sel}" data-action="node" data-pos-id="${pos.id}">
       ${nameHtml}
-      <div class="ti">${esc(pos.title)}</div>
+      <div class="org-ti">${esc(pos.title)}</div>
       ${sup}
       ${toggle}
     </div>`;
@@ -409,10 +440,11 @@ function renderNodePanel() {
       ${addMenu}`
     : `<div style="margin-top:.9rem;"><button class="btn-secondary" data-action="op-view-record" ${occ ? `data-occ-id="${occ.id}"` : 'disabled style="opacity:.5;"'} style="padding:.4rem .8rem;font-size:12.5px;">View Personnel Record</button></div>`;
 
-  return `<div class="org-panel">
+  return `<div class="org-pop-backdrop" data-action="op-close"></div>
+    <div class="org-pop" id="org-pop" role="dialog" aria-modal="true">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
-      <div style="font-family:'Cormorant Garamond',Georgia,serif;font-weight:700;font-size:17px;color:var(--navy);">${esc(pos.title)}${pos.is_administrator ? ` <span class="org-sup" style="vertical-align:middle;">Supervisor</span>` : ''}</div>
-      <button data-action="op-close" title="Close" style="background:none;border:none;font-size:18px;color:#9CA3AF;cursor:pointer;line-height:1;">×</button>
+      <div style="font-family:'Cormorant Garamond',Georgia,serif;font-weight:700;font-size:17px;color:var(--navy);line-height:1.2;">${esc(pos.title)}${pos.is_administrator ? ` <span class="org-sup" style="vertical-align:middle;">Supervisor</span>` : ''}</div>
+      <button data-action="op-close" title="Close" style="background:none;border:none;font-size:18px;color:#9CA3AF;cursor:pointer;line-height:1;flex-shrink:0;">×</button>
     </div>
     ${occupantRow}
     ${titleRow}
