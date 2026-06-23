@@ -46,7 +46,7 @@ async function _loadData() {
     // Recompute the membership from the current HR occupancy state on every view.
     const ids = await deriveParishStaffPersonnelIds();
     const { data: people } = ids.length
-      ? await sb.from('personnel').select('id,name,phone,email,institution,employment').in('id', ids)
+      ? await sb.from('personnel').select('id,name,phone,email').in('id', ids)
       : { data: [] };
     _members = (people || []).map(p => ({ id: `hr:${p.id}`, personnel_id: p.id, role: null, personnel: p }));
   } else {

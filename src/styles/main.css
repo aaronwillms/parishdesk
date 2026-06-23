@@ -216,6 +216,36 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 .prog-bar-wrap{height:5px;background:var(--stone);border-radius:3px;overflow:hidden;margin:4px 0 2px;}
 .prog-bar-fill{height:100%;border-radius:3px;transition:width .3s;}
 
+/* ── HR org chart (family-tree) — connected parent→child nodes ─────────────── */
+.org-scroll{overflow:auto;-webkit-overflow-scrolling:touch;padding:1.2rem 1rem;background:#fff;border-radius:var(--radius);border:.5px solid var(--stone);}
+.org-tree{display:inline-block;min-width:100%;text-align:center;}
+.org-tree ul{position:relative;padding-top:24px;display:flex;justify-content:center;list-style:none;margin:0;}
+.org-tree li{position:relative;display:flex;flex-direction:column;align-items:center;padding:24px 12px 0;list-style:none;}
+.org-tree li::before,.org-tree li::after{content:'';position:absolute;top:0;width:50%;height:24px;border-top:2px solid var(--stone);}
+.org-tree li::before{right:50%;}
+.org-tree li::after{left:50%;border-left:2px solid var(--stone);}
+.org-tree li:only-child::before,.org-tree li:only-child::after{display:none;}
+.org-tree li:only-child{padding-top:24px;}
+.org-tree li:first-child::before,.org-tree li:last-child::after{border:0 none;}
+.org-tree li:last-child::before{border-right:2px solid var(--stone);border-radius:0 7px 0 0;}
+.org-tree li:first-child::after{border-radius:7px 0 0 0;}
+.org-tree ul ul::before{content:'';position:absolute;top:0;left:50%;width:0;height:24px;border-left:2px solid var(--stone);}
+.org-node{position:relative;display:inline-block;border:1.5px solid var(--navy);border-radius:10px;background:#fff;padding:.5rem .75rem .55rem;min-width:128px;max-width:190px;cursor:pointer;text-align:center;transition:box-shadow .12s,border-color .12s,transform .12s;}
+.org-node:hover{box-shadow:0 3px 12px rgba(28,43,58,.16);}
+.org-node.sel{border-color:var(--cardinal);box-shadow:0 0 0 2.5px rgba(139,26,47,.18);}
+.org-node.vacant{border-style:dashed;border-color:var(--gold);background:#FFFDF6;}
+.org-node .nm{font-family:'Cormorant Garamond',Georgia,serif;font-weight:700;font-size:15.5px;color:var(--navy);line-height:1.15;}
+.org-node .vac{font-weight:700;font-size:13px;color:var(--cardinal);letter-spacing:.05em;}
+.org-node .ti{font-family:'Inter',sans-serif;font-size:11.5px;color:#6B7280;margin-top:2px;line-height:1.2;}
+.org-node .sup{display:inline-block;margin-top:5px;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#8A6D1A;background:rgba(201,168,76,.2);border-radius:3px;padding:1px 6px;}
+.org-toggle{position:absolute;left:50%;bottom:-12px;transform:translateX(-50%);width:18px;height:18px;border-radius:50%;border:1.5px solid var(--stone);background:#fff;color:#6B7280;font-size:11px;line-height:14px;text-align:center;cursor:pointer;z-index:2;font-family:'Inter',sans-serif;}
+.org-toggle:hover{border-color:var(--cardinal);color:var(--cardinal);}
+/* Inline node editor panel */
+.org-panel{margin-top:1rem;background:#fff;border:.5px solid var(--stone);border-left:3px solid var(--cardinal);border-radius:var(--radius);padding:1rem 1.15rem;}
+.org-panel label{display:block;font-size:11px;color:#6B7280;margin:.6rem 0 3px;}
+.org-panel .op-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.org-panel input[type=text],.org-panel select{box-sizing:border-box;padding:.4rem .6rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;background:#fff;color:var(--navy);outline:none;}
+
 /* MOBILE */
 #hamburger{display:none;}
 #sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:199;}
@@ -276,6 +306,15 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
   body.dark-mode .card{background:#1A2634 !important;border-color:#2D3F50 !important;}
   body.dark-mode .card *{color:#F8F7F4 !important;}
   body.dark-mode .card-header,body.dark-mode .card-title{color:#F8F7F4 !important;}
+  /* HR org chart in dark mode */
+  body.dark-mode .org-scroll{background:#0F1923;border-color:#2D3F50;}
+  body.dark-mode .org-tree li::before,body.dark-mode .org-tree li::after,body.dark-mode .org-tree ul ul::before{border-color:#3A4D60;}
+  body.dark-mode .org-node{background:#1A2634;border-color:#3A4D60;}
+  body.dark-mode .org-node .nm{color:#F8F7F4;}
+  body.dark-mode .org-node.sel{border-color:var(--cardinal);}
+  body.dark-mode .org-toggle{background:#1A2634;border-color:#3A4D60;color:#9CA3AF;}
+  body.dark-mode .org-panel{background:#1A2634;border-color:#2D3F50;}
+  body.dark-mode .org-panel input,body.dark-mode .org-panel select{background:#0F1923;border-color:#3A4D60;color:#F8F7F4;}
   /* Sacramental / record / named panel cards */
   body.dark-mode .couple-card,body.dark-mode .record-card,body.dark-mode .marriage-card,
   body.dark-mode .annulment-card,body.dark-mode .baptism-card,body.dark-mode .ocia-card,

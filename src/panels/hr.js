@@ -92,6 +92,8 @@ let _activeInstId = null;
 // an id is open unless it is in this set. Manual collapses live only for the
 // session — a refresh resets the module, so the tree re-opens fully.
 const _collapsed = new Set();
+let _selectedPosId = null;     // node selected in the org chart (drives the inline panel)
+let _addMenuPosId = null;      // node whose "+ Add Position" sibling/child menu is open
 let _ctx = null;               // built context (see buildContext)
 let _insts = [];
 let _people = [];              // all personnel (incl. inactive, for name lookup)
@@ -150,7 +152,7 @@ export async function loadHr() {
 
   const [instRes, peopleRes, posRes, occRes] = await Promise.all([
     sb.from('institutions').select('*').order('sort_order').order('name'),
-    sb.from('personnel').select('id,name,type,employment,institution,active').order('name'),
+    sb.from('personnel').select('id,name,active').order('name'),
     sb.from('positions').select('*').is('archived_at', null),
     sb.from('person_positions').select('*'),
   ]);
@@ -292,6 +294,7 @@ function render() {
 
   // Single delegated handler for tabs + tree node actions (replaces on re-render).
   root.onclick = onHrClick;
+  root.onchange = onHrChange;   // inline-panel type select + supervisor checkbox
 }
 
 // ── PHASE 3 — tree render ───────────────────────────────────────────────────
@@ -301,81 +304,122 @@ function renderTree() {
   if (!el) return;
   if (!_activeInstId) { el.innerHTML = ''; return; }
 
+  // Drop a stale selection (e.g. after a position was deleted).
+  if (_selectedPosId && !_ctx.posById.get(_selectedPosId)) { _selectedPosId = null; _addMenuPosId = null; }
+
   const roots = _ctx.childrenByParent.get('__root__')?.filter(p => p.institution_id === _activeInstId) || [];
 
-  // Each institution has exactly one permanent root ("Root Administrator"),
-  // auto-created with the institution. No manual root-creation button; children
-  // are added under any position via "+ Child".
-  const body = roots.length
-    ? roots.map(p => renderNode(p, 0)).join('')
-    : `<div style="font-size:13px;color:#6B7280;font-style:italic;padding:.5rem 0;">This institution has no root position yet — it will be created automatically (or via the backfill migration).</div>`;
+  // Family-tree-style org chart: one connected tree per institution root. Each node
+  // is a rounded card (name + title, VACANT in red). The whole chart pans/scrolls
+  // inside .org-scroll (works on desktop AND mobile); branches collapse via the
+  // node toggle. Clicking a node opens the inline editor panel below the chart.
+  const tree = roots.length
+    ? `<div class="org-scroll"><div class="org-tree"><ul>${roots.map(renderNode).join('')}</ul></div></div>`
+    : `<div class="card" style="padding:1rem 1.1rem;font-size:13px;color:#6B7280;font-style:italic;">This institution has no root position yet — it will be created automatically (or via the backfill migration).</div>`;
 
-  el.innerHTML = `<div class="card" style="padding:1rem 1.1rem;">${body}</div>`;
+  el.innerHTML = tree + renderNodePanel();
 }
 
-function renderNode(pos, depth) {
+function renderNode(pos) {
   const children = _ctx.childrenByParent.get(pos.id) || [];
   const hasChildren = children.length > 0;
   const isOpen = !_collapsed.has(pos.id);
   const current = _ctx.currentByPos.get(pos.id) || [];
   const vacant = current.length === 0;
+  const sel = pos.id === _selectedPosId ? ' sel' : '';
 
-  const caret = hasChildren
-    ? `<span data-action="toggle" data-pos-id="${pos.id}" style="cursor:pointer;display:inline-block;width:14px;color:#9CA3AF;font-size:11px;">${isOpen ? '▾' : '▸'}</span>`
-    : `<span style="display:inline-block;width:14px;"></span>`;
+  const nameHtml = vacant
+    ? `<div class="vac">VACANT</div>`
+    : `<div class="nm">${esc(_ctx.personName(current[0].person_id))}${current.length > 1 ? `<span style="font-size:11px;color:#9CA3AF;font-weight:400;"> +${current.length - 1}</span>` : ''}</div>`;
+  const sup = pos.is_administrator ? `<div class="sup">Supervisor</div>` : '';
+  const toggle = hasChildren ? `<span class="org-toggle" data-action="toggle" data-pos-id="${pos.id}" title="${isOpen ? 'Collapse' : 'Expand'}">${isOpen ? '–' : '+'}</span>` : '';
 
-  // Occupant chips (or Vacant marker)
-  const occHtml = vacant
-    ? `<span style="font-size:11.5px;color:#B45309;font-weight:600;">Vacant</span>`
-    : current.map(o => `
-        <span style="display:inline-flex;align-items:center;gap:5px;background:#F6F4F0;border-radius:4px;padding:1px 6px;">
-          <span data-action="view-occ" data-occ-id="${o.id}" style="cursor:pointer;font-size:12.5px;color:var(--navy);font-weight:500;text-decoration:underline;text-decoration-color:#D6CEC2;">${esc(_ctx.personName(o.person_id))}</span>
-          ${empBadge(o.employment_type)}
-          ${canEditTree() ? `<span data-action="unlink" data-occ-id="${o.id}" title="Unlink (soft)" style="cursor:pointer;color:#B45309;font-size:11px;">✕</span>` : ''}
-        </span>`).join(' ');
-
-  // Vacant admin seat → presentational supervision fallback
-  let resolverLine = '';
-  if (pos.is_administrator && vacant) {
-    const r = resolveEffectiveSupervisor(pos.id, _ctx);
-    resolverLine = `<div style="font-size:11px;color:#6B7280;font-style:italic;margin-top:2px;">Supervision currently resolves to: <strong style="font-style:normal;color:#374151;">${esc(r.name)}</strong>${r.kind === 'pastor' ? ' (Pastor)' : ` (${esc(r.title)})`}</div>`;
-  }
-
-  // The institution's permanent root: editable + linkable, but never deleted /
-  // moved / archived (that would break the one-root-per-institution invariant).
-  const isRoot = !pos.parent_position_id;
-  const actions = canEditTree() ? `
-    <div class="hr-node-actions" style="display:flex;gap:8px;flex-shrink:0;align-items:center;">
-      <button class="card-action" data-action="link"      data-pos-id="${pos.id}">Link</button>
-      <button class="card-action" data-action="add-child" data-pos-id="${pos.id}">+ Child</button>
-      <button class="card-action" data-action="edit-pos"  data-pos-id="${pos.id}">Edit</button>
-      ${isRoot ? '' : `<button class="card-action" data-action="move-pos"  data-pos-id="${pos.id}">Move</button>`}
-      ${isRoot ? '' : `<button class="card-action" data-action="archive"   data-pos-id="${pos.id}" style="color:#9A6A1E;">Archive</button>`}
-      ${isRoot
-        ? `<span class="card-action" title="The institution's permanent root position cannot be deleted." style="color:#C9C2B6;cursor:not-allowed;">Delete</span>`
-        : `<button class="card-action" data-action="delete" data-pos-id="${pos.id}" style="color:#A32D2D;">Delete</button>`}
-    </div>` : '';
-
-  const row = `
-    <div style="display:flex;align-items:flex-start;gap:10px;padding:.55rem 0;border-bottom:.5px solid #F0EDE8;padding-left:${depth * 22}px;">
-      <div style="flex:1;min-width:0;display:flex;align-items:flex-start;gap:6px;">
-        ${caret}
-        <div style="flex:1;min-width:0;">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <span style="font-weight:600;font-size:13.5px;color:var(--navy);">${esc(pos.title)}</span>
-            ${pos.is_administrator ? adminBadge() : ''}
-          </div>
-          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:3px;">${occHtml}</div>
-          ${resolverLine}
-        </div>
-      </div>
-      ${actions}
+  const node = `<div class="org-node${vacant ? ' vacant' : ''}${sel}" data-action="node" data-pos-id="${pos.id}">
+      ${nameHtml}
+      <div class="ti">${esc(pos.title)}</div>
+      ${sup}
+      ${toggle}
     </div>`;
 
-  const kids = (hasChildren && isOpen)
-    ? children.map(c => renderNode(c, depth + 1)).join('')
+  const kids = (hasChildren && isOpen) ? `<ul>${children.map(renderNode).join('')}</ul>` : '';
+  return `<li>${node}${kids}</li>`;
+}
+
+// Inline editor for the selected node (Phase 1 mechanics under current HR access;
+// Phase 3 applies the full permission model). Reuses the existing positions /
+// person_positions persistence + the person link picker.
+function renderNodePanel() {
+  if (!_selectedPosId) return '';
+  const pos = _ctx.posById.get(_selectedPosId);
+  if (!pos) return '';
+  const current = _ctx.currentByPos.get(pos.id) || [];
+  const occ = current[0] || null;
+  const vacant = !occ;
+  const isRoot = !pos.parent_position_id;
+  const canEdit = canEditTree();
+  const ro = canEdit ? '' : 'disabled';
+
+  const occupantRow = vacant
+    ? (canEdit
+      ? `<label>Link a person</label>
+         <div class="op-row">
+           <select id="op-person" style="flex:1;min-width:150px;"><option value="">— Select person —</option>${personPickerOptions()}</select>
+           <select id="op-link-type">${empTypeOptions('full_time')}</select>
+           <button class="btn-primary" data-action="op-link" data-pos-id="${pos.id}" style="padding:.4rem .9rem;font-size:12.5px;">Link</button>
+         </div>`
+      : `<div style="font-size:13px;color:var(--cardinal);font-weight:600;">Vacant</div>`)
+    : `<label>Employee${current.length > 1 ? 's' : ''}</label>
+       <div class="op-row">
+         ${current.map(o => `<span style="display:inline-flex;align-items:center;gap:6px;font-size:13.5px;color:var(--navy);font-weight:600;">${esc(_ctx.personName(o.person_id))} ${empBadge(o.employment_type)}${canEdit ? `<span data-action="op-unlink" data-occ-id="${o.id}" title="Unlink" style="cursor:pointer;color:#B45309;font-size:12px;">✕</span>` : ''}</span>`).join('')}
+       </div>`;
+
+  const titleRow = `
+    <label>Position title</label>
+    <div class="op-row">
+      <input type="text" id="op-title" value="${esc(pos.title)}" style="flex:1;min-width:180px;" ${ro} />
+      ${canEdit ? `<button class="btn-secondary" data-action="op-save-title" data-pos-id="${pos.id}" style="padding:.4rem .8rem;font-size:12.5px;">Save</button>` : ''}
+    </div>`;
+
+  const typeRow = occ
+    ? `<label>Type</label>
+       <select id="op-type" data-action="op-set-type" data-occ-id="${occ.id}" ${ro} style="min-width:150px;">${empTypeOptions(occ.employment_type)}</select>`
     : '';
-  return row + kids;
+
+  const supRow = `
+    <label style="display:flex;align-items:center;gap:8px;margin-top:.75rem;cursor:${canEdit ? 'pointer' : 'default'};">
+      <input type="checkbox" id="op-sup" data-action="op-toggle-sup" data-pos-id="${pos.id}" ${pos.is_administrator ? 'checked' : ''} ${ro} style="width:auto;margin:0;accent-color:var(--cardinal);" />
+      <span style="font-size:13px;color:var(--navy);">Supervisor (supervises subordinate positions)</span>
+    </label>`;
+
+  const addMenu = (_addMenuPosId === pos.id && canEdit)
+    ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:.55rem;padding:.5rem .6rem;background:#F8F7F4;border-radius:6px;">
+        ${isRoot ? '' : `<button class="btn-secondary" data-action="op-add-sibling" data-pos-id="${pos.id}" style="padding:.35rem .8rem;font-size:12.5px;">Add Sibling</button>`}
+        <button class="btn-secondary" data-action="op-add-child" data-pos-id="${pos.id}" style="padding:.35rem .8rem;font-size:12.5px;">Add Child</button>
+        ${isRoot ? `<span style="font-size:11.5px;color:#9CA3AF;align-self:center;">Root position — children only.</span>` : ''}
+      </div>`
+    : '';
+
+  const footer = canEdit
+    ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:.9rem;align-items:center;">
+        <button class="btn-secondary" data-action="op-view-record" ${occ ? `data-occ-id="${occ.id}"` : 'disabled style="opacity:.5;"'} style="padding:.4rem .8rem;font-size:12.5px;">View Personnel Record</button>
+        <button class="btn-primary" data-action="op-add-toggle" data-pos-id="${pos.id}" style="padding:.4rem .8rem;font-size:12.5px;">+ Add Position</button>
+        ${isRoot ? '' : `<button data-action="op-move" data-pos-id="${pos.id}" style="background:none;border:none;color:#8FA8BF;font-size:12px;cursor:pointer;">Move</button>`}
+        ${isRoot ? '' : `<button data-action="op-delete" data-pos-id="${pos.id}" style="background:none;border:none;color:#A32D2D;font-size:12px;cursor:pointer;margin-left:auto;">Delete</button>`}
+      </div>
+      ${addMenu}`
+    : `<div style="margin-top:.9rem;"><button class="btn-secondary" data-action="op-view-record" ${occ ? `data-occ-id="${occ.id}"` : 'disabled style="opacity:.5;"'} style="padding:.4rem .8rem;font-size:12.5px;">View Personnel Record</button></div>`;
+
+  return `<div class="org-panel">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+      <div style="font-family:'Cormorant Garamond',Georgia,serif;font-weight:700;font-size:17px;color:var(--navy);">${esc(pos.title)}${pos.is_administrator ? ` <span class="org-sup" style="vertical-align:middle;">Supervisor</span>` : ''}</div>
+      <button data-action="op-close" title="Close" style="background:none;border:none;font-size:18px;color:#9CA3AF;cursor:pointer;line-height:1;">×</button>
+    </div>
+    ${occupantRow}
+    ${titleRow}
+    ${typeRow}
+    ${supRow}
+    ${footer}
+  </div>`;
 }
 
 // ── Event delegation ────────────────────────────────────────────────────────
@@ -394,6 +438,19 @@ function onHrClick(e) {
     case 'rename-inst': openInstitutionModal(instId); break;
     case 'open-templates': openTemplateManager(); break;
     case 'toggle':      _collapsed.has(posId) ? _collapsed.delete(posId) : _collapsed.add(posId); renderTree(); break;
+    // ── Org-chart node + inline panel ──────────────────────────────────────
+    case 'node':        _selectedPosId = posId; _addMenuPosId = null; renderTree(); break;
+    case 'op-close':    _selectedPosId = null; _addMenuPosId = null; renderTree(); break;
+    case 'op-save-title': hrSetTitle(posId); break;
+    case 'op-link':     hrLinkInline(posId); break;
+    case 'op-unlink':   unlinkOccupancy(occId); break;
+    case 'op-view-record': if (occId) openOccupancyCard(occId); break;
+    case 'op-add-toggle': _addMenuPosId = (_addMenuPosId === posId ? null : posId); renderTree(); break;
+    case 'op-add-sibling': hrAddPosition(_ctx.posById.get(posId)?.parent_position_id || null); break;
+    case 'op-add-child': hrAddPosition(posId); break;
+    case 'op-move':     openMoveModal(posId); break;
+    case 'op-delete':   deletePosition(posId); break;
+    // ── legacy actions (kept for the reused modals) ────────────────────────
     case 'add-child':   openPositionModal(null, posId); break;
     case 'edit-pos':    openPositionModal(posId, null); break;
     case 'move-pos':    openMoveModal(posId); break;
@@ -403,6 +460,60 @@ function onHrClick(e) {
     case 'unlink':      unlinkOccupancy(occId); break;
     case 'view-occ':    openOccupancyCard(occId); break;
   }
+}
+
+// Change delegate for the inline panel's select/checkbox (type + supervisor).
+function onHrChange(e) {
+  const t = e.target.closest('[data-action]');
+  if (!t) return;
+  if (t.dataset.action === 'op-set-type') hrSetType(t.dataset.occId, t.value);
+  else if (t.dataset.action === 'op-toggle-sup') hrSetSupervisor(t.dataset.posId, t.checked);
+}
+
+// ── Inline-panel persistence (reuses the existing positions / person_positions model) ──
+async function hrSetTitle(posId) {
+  if (!canEditTree()) return;
+  const title = document.getElementById('op-title')?.value.trim();
+  if (!title) { alert('Title is required.'); return; }
+  const { error } = await sb.from('positions').update({ title, updated_at: new Date().toISOString() }).eq('id', posId);
+  if (error) { alert('Save failed: ' + error.message); return; }
+  logActivity({ action: 'updated position', entityType: 'position', entityName: title });
+  window.flashSavedThen(async () => { await loadHr(); });
+}
+async function hrSetType(occId, type) {
+  if (!canEditTree() || !occId) return;
+  const { error } = await sb.from('person_positions').update({ employment_type: type }).eq('id', occId);
+  if (error) { alert('Update failed: ' + error.message); return; }
+  await loadHr();
+}
+async function hrSetSupervisor(posId, checked) {
+  if (!canEditTree()) return;
+  const { error } = await sb.from('positions').update({ is_administrator: !!checked, updated_at: new Date().toISOString() }).eq('id', posId);
+  if (error) { alert('Update failed: ' + error.message); return; }
+  await loadHr();
+}
+async function hrLinkInline(posId) {
+  if (!canEditTree()) return;
+  const personId = document.getElementById('op-person')?.value;
+  const empType  = document.getElementById('op-link-type')?.value || 'full_time';
+  if (!personId) { alert('Select a person.'); return; }
+  const { error } = await sb.from('person_positions').insert({ person_id: personId, position_id: posId, employment_type: empType });
+  if (error) { alert('Link failed: ' + error.message); return; }
+  logActivity({ action: 'linked person to position', entityType: 'person_position', entityName: _ctx.posById.get(posId)?.title || '' });
+  window.flashSavedThen(async () => { await loadHr(); });
+}
+// "+ Add Position": create a VACANT position (sibling = same parent; child = under this).
+async function hrAddPosition(parentId) {
+  if (!canEditTree()) return;
+  const { data, error } = await sb.from('positions').insert({
+    institution_id: _activeInstId, parent_position_id: parentId || null, title: 'New Position', is_administrator: false,
+  }).select().single();
+  if (error) { alert('Add failed: ' + error.message); return; }
+  _addMenuPosId = null;
+  if (parentId) _collapsed.delete(parentId);
+  _selectedPosId = data?.id || null;   // select the new vacant node so it can be filled in
+  logActivity({ action: 'created position', entityType: 'position', entityName: 'New Position' });
+  await loadHr();
 }
 
 // ── PHASE 2 — institution add / rename / reorder (super-admin) ───────────────

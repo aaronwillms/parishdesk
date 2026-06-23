@@ -414,7 +414,7 @@ export function createContactPicker({ container, placeholder = 'Search by nameâ€
     if (existing) {
       select(existing);
     } else {
-      sb.from('personnel').select('id,name,institution').eq('id', initialValue).single()
+      sb.from('personnel').select('id,name').eq('id', initialValue).single()
         .then(({ data }) => { if (data) select(data); });
     }
   }
