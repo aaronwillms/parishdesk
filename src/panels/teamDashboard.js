@@ -329,10 +329,10 @@ function _renderMembers(el) {
   document.getElementById('td-picker-confirm').addEventListener('click', _confirmAddMember);
 }
 
-const STAFF_TYPES = new Set(['full-time', 'part-time']);
-
+// Parish Staff (the protected team) is HR-derived and read-only, so its members are
+// never manually removable. (Previously keyed off the retired personnel.employment.)
 function _isAutoSyncedMember(m) {
-  return _team?.is_protected && STAFF_TYPES.has(m.personnel?.employment);
+  return !!_team?.is_protected;
 }
 
 const TEAM_ROLES = ['President', 'Vice President', 'Secretary', 'Treasurer', 'Coordinator', 'Member', 'Ad Hoc', 'Other'];

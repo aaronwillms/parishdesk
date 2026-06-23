@@ -152,9 +152,11 @@ export function renderMinistryNav() {
     .filter(i => {
       if (userIsAdmin) return true;
       if (!teamPersonnelIds) return false;
-      // Show if any personnel in this institution share a team with the user
-      const personnel = store.personnel || [];
-      return personnel.some(p => p.institution === i.name && teamPersonnelIds.includes(p.id));
+      // Show if any HR occupant of this institution shares a team with the user.
+      // Membership is the HR-derived person→institution map (positions.institution_id),
+      // not the retired personnel.institution name-link.
+      const members = store.personnelByInstitutionId?.get(i.id);
+      return !!members && teamPersonnelIds.some(pid => members.has(pid));
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 

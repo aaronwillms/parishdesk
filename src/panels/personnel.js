@@ -102,6 +102,9 @@ export async function loadPersonnel() {
     const cur = m.get(pp.person_id);           // one appearance per person per institution…
     if (cur === undefined || rank(pp.employment_type) < rank(cur)) m.set(pp.person_id, pp.employment_type || null);  // …in their most-senior role there
   });
+  // HR-derived institution membership (instId → Map(personId → empType)) for other
+  // modules (e.g. the ministry nav) — replaces the retired personnel.institution link.
+  store.personnelByInstitutionId = _byInstitution;
 
   renderPersonnel();
 }
@@ -420,12 +423,8 @@ async function saveInstitutionSettings(id, oldName) {
   }
   const { error: instErr } = await sb.from('institutions').update(update).eq('id', id);
   if (instErr) { alert('Save failed: ' + instErr.message); return; }
-  if (newName !== oldName) {
-    const { error: persErr } = await sb.from('personnel')
-      .update({ institution: newName, updated_at: new Date().toISOString() })
-      .eq('institution', oldName);
-    if (persErr) { alert('Failed to update personnel records: ' + persErr.message); return; }
-  }
+  // (Institution membership now lives in HR via positions.institution_id — no
+  // personnel.institution name-link to cascade on rename.)
   window.flashSavedThen(() => { closeModal(); loadPersonnel(); });
 }
 
@@ -447,10 +446,7 @@ async function reorderInstitutionDir(id, dir) {
 
 async function deleteInstitution(id, name) {
   if (!confirm(`Deleting "${name}" will remove it from all personnel records. This cannot be undone. Continue?`)) return;
-  const { error: persErr } = await sb.from('personnel')
-    .update({ institution: null, updated_at: new Date().toISOString() })
-    .eq('institution', name);
-  if (persErr) { alert('Failed to clear personnel: ' + persErr.message); return; }
+  // (No personnel.institution name-link to clear — HR occupancy is keyed by id.)
   const { error } = await deleteWithRetry(() => sb.from('institutions').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return; }
   closeModal();
@@ -503,10 +499,9 @@ async function savePersonnel(id) {
     if (error) { reportWriteError('personnel update', error); return; }
     logActivity({ action: 'updated person in directory', entityType: 'personnel', entityName: payload.name, contextType: 'personnel' });
   } else {
-    // `type` is a legacy (now dead) column that may still be NOT NULL — seed a
-    // harmless default on insert only so new rows are valid. The directory never
-    // reads it; institution/employment are HR-owned and left unset.
-    const { error } = await insertWithRetry('personnel', { ...payload, type: 'staff' });
+    // Legacy type/institution/employment columns are being dropped (see
+    // 20260622_drop_dead_personnel_columns.sql) — no longer seeded here.
+    const { error } = await insertWithRetry('personnel', payload);
     if (error) { reportWriteError('personnel insert', error); return; }
     logActivity({ action: 'added person to directory', entityType: 'personnel', entityName: payload.name, contextType: 'personnel' });
   }

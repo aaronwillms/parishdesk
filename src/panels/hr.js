@@ -238,8 +238,16 @@ export function resolveEffectiveSupervisor(positionId, ctx) {
     }
     parentId = anc.parent_position_id;
   }
-  const pastor = _people.find(p => p.type === 'pastor');
-  return { kind: 'pastor', name: pastor ? pastor.name : 'the Pastor', title: 'Pastor' };
+  // Backstop = the parish pastor: the current occupant of the Pastor/Rector position
+  // (HR org tree), replacing the retired personnel.type === 'pastor' lookup.
+  let pastorName = null;
+  for (const pos of ctx.posById.values()) {
+    if (/\b(pastor|rector)\b/i.test(pos.title || '')) {
+      const occ = ctx.currentByPos.get(pos.id);
+      if (occ && occ.length) { pastorName = ctx.personName(occ[0].person_id); break; }
+    }
+  }
+  return { kind: 'pastor', name: pastorName || 'the Pastor', title: 'Pastor' };
 }
 
 // ── Render: panel shell + institution tabs ──────────────────────────────────
@@ -428,10 +436,7 @@ async function hrSaveInstitution(id) {
   const old = _insts.find(i => i.id === id);
   const { error } = await sb.from('institutions').update({ name }).eq('id', id);
   if (error) { alert('Save failed: ' + error.message); return; }
-  // Cascade the rename to personnel.institution (name-based link).
-  if (old && old.name !== name) {
-    await sb.from('personnel').update({ institution: name, updated_at: new Date().toISOString() }).eq('institution', old.name);
-  }
+  // (No personnel.institution name-link to cascade — HR membership is keyed by id.)
   logActivity({ action: 'renamed institution', entityType: 'institution', entityName: name });
   window.flashSavedThen(async () => { closeModal(); await loadHr(); });
 }

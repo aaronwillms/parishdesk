@@ -38,7 +38,6 @@ const MARRIAGE_AUTO_DOCS = [
 ];
 const HOW_ENDED = ['Death', 'Annulment', 'Civil Divorce Only'];
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
-const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
 
 const FALLBACK_TEMPLATES = {
   nuptial_mass:  { documents:[], steps:[{step:'Initial Meeting'},{step:'Ceremony Planned'}], fees_enabled:true, fees:[{name:'Standard Fee',amount:100}] },
@@ -57,12 +56,6 @@ function fullAccess() { return isAdmin() || canAccessSacrament('marriage'); }
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function _curUserName() { return store.currentUserProfile?.personnel?.name || 'Staff'; }
 function nowIso() { return new Date().toISOString(); }
-function clergyPersonnel() {
-  // Clergy are identified by personnel.type. (The legacy title-regex match was
-  // retired with personnel.title in the HR collapse.)
-  return (store.personnel || []).filter(p => CLERGY_TYPES.includes(p.type))
-    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-}
 
 // ── Field accessors (backward-compatible) ────────────────────────────────────
 // The REAL ceremony type — the SINGLE source of truth for a file's marriage type.

@@ -22,7 +22,6 @@ const OCIA_STATUS = {
 const HOW_ENDED = ['Death', 'Annulment', 'Civil Divorce Only'];
 const COUNTRIES = ['United States of America', 'Mexico', 'Philippines', 'Vietnam', 'Nigeria', 'India', 'Other'];
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
-const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
 const FALLBACK_TEMPLATES = { catechumen: [], candidate: [{ name: 'Baptismal Certificate', deletable: false }] };
 
 let allOcia = [], ociaFilter = 'all', ociaExpanded = null;
@@ -52,11 +51,8 @@ function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').repl
 function _curUserName() { return store.currentUserProfile?.personnel?.name || 'Staff'; }
 function nowIso() { return new Date().toISOString(); }
 // Parish clergy — source of truth is the parish-wide personnel.clergy boolean (set
-// in the Directory), the same source clergyNames() uses. The old filter relied on
-// personnel.type / personnel.title, but title was retired in the HR Stage 1
-// collapse and clergy are commonly type:'staff', so it returned nobody. (Same fix
-// applied to Baptism in 4a.) CLERGY_TYPES kept as a fallback.
-function clergyPersonnel() { return (store.personnel || []).filter(p => p.clergy || CLERGY_TYPES.includes(p.type)).sort((a, b) => (a.name || '').localeCompare(b.name || '')); }
+// in the Directory), the same source clergyNames() uses.
+function clergyPersonnel() { return (store.personnel || []).filter(p => p.clergy).sort((a, b) => (a.name || '').localeCompare(b.name || '')); }
 
 // Easter (Anonymous Gregorian algorithm)
 function easterDate(year) {

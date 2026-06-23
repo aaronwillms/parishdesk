@@ -23,7 +23,12 @@ function _render(container) {
   }
 
   const icon = inst.icon || 'fa-building';
-  const personnel = (store.personnel || []).filter(p => p.institution === inst.name);
+  // HR-derived membership (positions.institution_id) — not the retired
+  // personnel.institution name-link.
+  const memberIds = store.personnelByInstitutionId?.get(inst.id);
+  const personnel = memberIds
+    ? (store.personnel || []).filter(p => memberIds.has(p.id))
+    : [];
   const teams = (store.teams || []).filter(() => false); // future: filter by institution
 
   const tabs = [

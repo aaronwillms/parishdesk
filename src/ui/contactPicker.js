@@ -1,5 +1,6 @@
 import { sb } from '../supabase.js';
 import { store } from '../store.js';
+import { personTitle } from '../utils.js';
 
 // ── Styles (injected once) ─────────────────────────────────────────────────
 
@@ -194,7 +195,7 @@ export function createContactPicker({ container, placeholder = 'Search by name�
   }
 
   function personSub(p) {
-    return [p.institution].filter(Boolean).join(' · ');
+    return [personTitle(p.id)].filter(Boolean).join(' · ');   // HR-derived title
   }
 
   function _addChip(person, onRemove) {
@@ -287,10 +288,6 @@ export function createContactPicker({ container, placeholder = 'Search by name�
     showingNewForm = true;
     dropdown.innerHTML = '';
 
-    const instOptions = _institutions.map(n =>
-      `<option value="${n.replace(/"/g, '&quot;')}">${n}</option>`
-    ).join('');
-
     const form = document.createElement('div');
     form.className = 'cp-new-form';
     form.innerHTML = `
@@ -298,25 +295,6 @@ export function createContactPicker({ container, placeholder = 'Search by name�
       <input id="cp-new-name"  placeholder="Full name *" value="${prefillName.replace(/"/g, '&quot;')}" />
       <div style="font-size:11px;color:#6B7280;margin-bottom:-2px;">Date of Birth (optional)</div>
       <input type="date" id="cp-new-dob" />
-      <select id="cp-new-inst" style="
-        width:100%;box-sizing:border-box;padding:.35rem .55rem;
-        border:.5px solid #D1C9BE;border-radius:var(--radius-sm,5px);
-        font-size:12.5px;font-family:'Inter',sans-serif;
-        background:#fff;color:#1C2B3A;outline:none;
-      ">
-        <option value="volunteer" selected>N/A</option>
-        ${instOptions}
-      </select>
-      <select id="cp-new-employment" style="
-        width:100%;box-sizing:border-box;padding:.35rem .55rem;
-        border:.5px solid #D1C9BE;border-radius:var(--radius-sm,5px);
-        font-size:12.5px;font-family:'Inter',sans-serif;
-        background:#fff;color:#1C2B3A;outline:none;
-      ">
-        <option value="full-time">Full-time</option>
-        <option value="part-time">Part-time</option>
-        <option value="contract">Contract</option>
-      </select>
       <div id="cp-new-error" style="font-size:11px;color:#8B1A2F;min-height:14px;margin-top:2px;"></div>
       <div class="cp-new-form-actions">
         <button type="button" class="cp-btn-save"   id="cp-new-save">Add &amp; select</button>
@@ -330,25 +308,14 @@ export function createContactPicker({ container, placeholder = 'Search by name�
     form.addEventListener('mousedown', e => e.stopPropagation());
     form.addEventListener('click',     e => e.stopPropagation());
 
-    const instSel  = form.querySelector('#cp-new-inst');
-    const empSel   = form.querySelector('#cp-new-employment');
     const saveBtn  = form.querySelector('#cp-new-save');
     const errEl    = form.querySelector('#cp-new-error');
-
-    // Show/hide employment based on institution selection
-    function updateInstVisibility() {
-      const isNa = instSel.value === 'volunteer';
-      empSel.style.display   = isNa ? 'none' : '';
-    }
-    instSel.addEventListener('change', updateInstVisibility);
-    updateInstVisibility();
 
     form.querySelector('#cp-new-name').focus();
 
     saveBtn.addEventListener('click', async e => {
       e.stopPropagation();
       const nameVal  = form.querySelector('#cp-new-name').value.trim();
-      const isVolunteer = instSel.value === 'volunteer';
       const dobVal = form.querySelector('#cp-new-dob').value || null;
 
       if (!nameVal) {
@@ -362,11 +329,9 @@ export function createContactPicker({ container, placeholder = 'Search by name�
       errEl.textContent = '';
 
       try {
+        // Quick-add creates a directory person; institution/role are assigned in HR.
         const { data, error } = await sb.from('personnel').insert({
-          name:        nameVal,
-          type:          isVolunteer ? 'volunteer' : 'staff',
-          employment:    isVolunteer ? null : empSel.value,
-          institution:   isVolunteer ? null : instSel.value,
+          name:          nameVal,
           date_of_birth: dobVal,
           active:        true,
         }).select().single();

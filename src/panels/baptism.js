@@ -14,7 +14,6 @@ export const BAP_STATUS = {
   inactive:  { label:'Inactive',  color:'#616A6B', bg:'#F2F3F4', dot:'#AAB7B8' },
 };
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
-const CLERGY_TYPES = ['pastor', 'parochial-vicar', 'priest-in-residence', 'deacon', 'religious'];
 
 let allBap = [], bapFilter = 'all', bapExpanded = null;
 let _tplRow = null, _M = null, _bapCoordinatorNames = [];
@@ -34,12 +33,8 @@ function _curUserName() { return store.currentUserProfile?.personnel?.name || 'S
 function _curUserId() { return store.currentUserProfile?.user_id || null; }
 function nowIso() { return new Date().toISOString(); }
 // Parish clergy for the officiant dropdown. Source of truth is the parish-wide
-// personnel.clergy boolean (set in the Directory) — the same source clergyNames()
-// uses for the working Marriage/preparer dropdowns. The old filter relied on
-// personnel.type / personnel.title, but title was retired in the HR Stage 1
-// collapse and clergy are commonly type:'staff', so it returned nobody → the
-// dropdown showed only "Other". CLERGY_TYPES is kept as a fallback.
-function clergyPersonnel() { return (store.personnel || []).filter(p => p.clergy || CLERGY_TYPES.includes(p.type)).sort((a, b) => (a.name || '').localeCompare(b.name || '')); }
+// personnel.clergy boolean (set in the Directory).
+function clergyPersonnel() { return (store.personnel || []).filter(p => p.clergy).sort((a, b) => (a.name || '').localeCompare(b.name || '')); }
 function ageOf(dob) { if (!dob) return null; const d = new Date(dob); if (isNaN(d)) return null; const now = new Date(new Date().toLocaleString('en-US', { timeZone: store.parishSettings?.timezone || 'America/Chicago' })); let a = now.getFullYear() - d.getFullYear(); const m = now.getMonth() - d.getMonth(); if (m < 0 || (m === 0 && now.getDate() < d.getDate())) a--; return a; }
 
 // ── Field accessors (backward-compatible) ────────────────────────────────────
