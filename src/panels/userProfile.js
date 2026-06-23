@@ -426,6 +426,16 @@ async function _renderGcalPicker() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_id: _user.id, action: 'listCalendars' }),
     });
+    if (res.status === 401) {
+      const j = await res.json().catch(() => ({}));
+      if (j.error === 'reauth_required') {
+        // Expired/revoked Google token → offer to re-run consent (refreshes the token).
+        box.innerHTML = `<div style="color:#9A6A1E;font-size:12.5px;margin-bottom:7px;line-height:1.45;">Your Google connection has expired or was revoked. Reconnect to reload your calendars.</div>
+          <button id="up-gcal-reconnect" style="font-size:12.5px;color:#fff;background:#1C2B3A;border:none;border-radius:5px;padding:.35rem .85rem;cursor:pointer;font-family:'Inter',sans-serif;font-weight:500;">Reconnect your Google Calendar</button>`;
+        document.getElementById('up-gcal-reconnect')?.addEventListener('click', _connectGoogle);
+        return;
+      }
+    }
     if (!res.ok) { box.innerHTML = `<span style="color:#9CA3AF;">Could not load your calendars (${res.status}).</span>`; return; }
     ({ items } = await res.json());
   } catch (e) { box.innerHTML = '<span style="color:#9CA3AF;">Could not load your calendars.</span>'; return; }

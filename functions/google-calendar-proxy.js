@@ -19,7 +19,14 @@ async function _refreshToken(tokenData, env) {
       grant_type:    'refresh_token',
     }),
   });
-  if (!res.ok) throw new Error('Token refresh failed: ' + await res.text());
+  if (!res.ok) {
+    const body = await res.text();
+    let parsed = {}; try { parsed = JSON.parse(body); } catch { /* non-JSON */ }
+    // Expired/revoked refresh token → the user must re-consent. Surface this as a
+    // distinct, recoverable signal (handled as 401 reauth_required), NOT a 502.
+    if (parsed.error === 'invalid_grant') { const e = new Error('reauth_required'); e.reauth = true; throw e; }
+    throw new Error('Token refresh failed: ' + body);
+  }
   const fresh = await res.json();
   return {
     ...tokenData,
@@ -157,7 +164,12 @@ export async function onRequestPost(context) {
 
   let accessToken;
   try { accessToken = await _getValidToken(calRow, env, supaUrl, serviceKey); }
-  catch (e) { return new Response('Token error: ' + e.message, { status: 502 }); }
+  catch (e) {
+    // Expired/revoked token → 401 reauth_required (the client re-runs consent).
+    // 502 stays reserved for genuine upstream/gateway failures.
+    if (e.reauth) return _json({ error: 'reauth_required' }, 401);
+    return new Response('Token error: ' + e.message, { status: 502 });
+  }
 
   // ── Actions ─────────────────────────────────────────────────────────────────
   if (action === 'listCalendars') {
