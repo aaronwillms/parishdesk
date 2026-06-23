@@ -615,4 +615,8 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
   body.dark-mode .sac-avatar{background:#243447 !important;color:var(--gold) !important;}
   body.dark-mode .sac-section-title{color:var(--gold) !important;border-color:#2D3F50 !important;}
   body.dark-mode #sac-search{background:#243447 !important;border-color:#2D3F50 !important;color:#F8F7F4 !important;}
+  /* HR entry header + cf frozen-answer rows: inline var(--navy) text would vanish on
+     the dark detail/modal — lift it. (.pf-entry-head covers the modal self-evaluation.) */
+  body.dark-mode .pf-entry-head [style*="var(--navy)"],
+  body.dark-mode .sac-detail [style*="var(--navy)"]{color:#E6ECF2 !important;}
 }

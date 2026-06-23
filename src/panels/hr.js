@@ -49,7 +49,7 @@ const RECORD_META = {
 // RECORD_META / the record_grants record_type values.
 const RECORD_CHIP = {
   review:       { label: 'Evaluation',   tone: 'active',   icon: 'fa-clipboard-check' },
-  self_report:  { label: 'Self-Report',  tone: 'neutral',  icon: 'fa-user-pen' },
+  self_report:  { label: 'Self-Evaluation', tone: 'neutral', icon: 'fa-user-pen' },
   incident:     { label: 'Incident',     tone: 'urgent',   icon: 'fa-triangle-exclamation' },
   disciplinary: { label: 'Disciplinary', tone: 'pending',  icon: 'fa-gavel' },
   memo:         { label: 'Memo',         tone: 'complete', icon: 'fa-note-sticky' },
@@ -131,11 +131,17 @@ function viewerPersonId() { return store.currentUserProfile?.personnel_id || nul
 // A self-report is a performance_review the SUBJECT authors about themselves. Built-in
 // template (the builder/template integration is for managers' evaluations; self-reports
 // use this fixed reflective structure).
+// "Self-Evaluation" — the template the self-report flow instantiates (Phase 4B seed).
+// Stable, human-readable field ids so frozen_definition keys never drift.
 const SELF_REPORT_TEMPLATE = [
-  { id: 'sr_accomplishments', type: 'text', prompt: 'Key accomplishments this period' },
-  { id: 'sr_challenges',      type: 'text', prompt: 'Challenges or obstacles' },
-  { id: 'sr_goals',           type: 'text', prompt: 'Goals for the next period' },
-  { id: 'sr_support',         type: 'text', prompt: 'Support or resources needed' },
+  { id: 'se_accomplishments', type: 'text', prompt: 'What were your major accomplishments over the past year?' },
+  { id: 'se_most_effective',  type: 'text', prompt: 'What part of your position do you think you perform most effectively?' },
+  { id: 'se_enhance',         type: 'text', prompt: 'What areas of your performance would you like to enhance or improve? What training or assistance would help?' },
+  { id: 'se_changes',         type: 'text', prompt: 'What changes in your position or procedure would improve how you do your job? What obstacles exist?' },
+  { id: 'se_challenging',     type: 'text', prompt: 'What was most challenging in the past year in terms of your position?' },
+  { id: 'se_suggestions',     type: 'text', prompt: 'Do you feel comfortable providing suggestions or areas for improvement? What ideas would you like to suggest?' },
+  { id: 'se_plans',           type: 'text', prompt: 'Do you plan to continue employment, or would you like to share your plan for retirement or departure?' },
+  { id: 'se_other',           type: 'text', prompt: 'Other comments?' },
 ];
 // Display kind for a record (a self-report shows its own chip, but persists in the
 // performance_reviews table — RECORD_META lookups still use r._type === 'review').
@@ -972,12 +978,17 @@ function cfVisible(f, answers) { return cfVisRec(f, answers, new Set()); }
 
 // ── Live edit rendering ──────────────────────────────────────────────────────
 function cfRenderFields(defs, answers) { return defs.map(f => cfRenderField(f, answers)).join(''); }
+function cfHelpHtml(f) { return f.help ? `<div style="font-size:11.5px;color:#6B7280;margin:1px 0 4px;line-height:1.35;">${esc(f.help)}</div>` : ''; }
 function cfRenderField(f, answers) {
   const aid = `hr-ans-${f.id}`;
-  const head = `<label style="font-weight:600;">${esc(f.prompt || '(no prompt)')}</label>`;
+  const head = `<label style="font-weight:600;">${esc(f.prompt || '(no prompt)')}</label>${cfHelpHtml(f)}`;
   const a = answers[f.id];
   const wrap = (inner) => `<div class="cf-f" id="cf-wrap-${f.id}" style="margin-bottom:.6rem;${cfVisible(f, answers) ? '' : 'display:none;'}">${inner}</div>`;
 
+  // Section header — a non-input divider (label + optional help, e.g. a rating anchor).
+  if (f.type === 'section') {
+    return wrap(`<div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--cardinal);border-bottom:.5px solid var(--stone);padding-bottom:3px;margin:.4rem 0 .1rem;">${esc(f.prompt || '')}</div>${cfHelpHtml(f)}`);
+  }
   if (f.type === 'group') {
     const sel = a ?? '';
     const opts = `<option value="">— Select —</option>` + (f.options || []).map(o => `<option value="${esc(o)}"${sel === o ? ' selected' : ''}>${esc(o)}</option>`).join('');
@@ -986,7 +997,7 @@ function cfRenderField(f, answers) {
     return wrap(`${head}<select id="${aid}" data-cf="1" onchange="window.cfReeval()" style="margin-bottom:.3rem;">${opts}</select>${branches}`);
   }
   if (f.type === 'boolean') {
-    return wrap(`<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;"><input type="checkbox" id="${aid}" data-cf="1" ${a === true ? 'checked' : ''} onchange="window.cfReeval()" style="width:auto;margin:0;accent-color:var(--cardinal);" /><span>${esc(f.prompt || '')}</span></label>`);
+    return wrap(`<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;"><input type="checkbox" id="${aid}" data-cf="1" ${a === true ? 'checked' : ''} onchange="window.cfReeval()" style="width:auto;margin:0;accent-color:var(--cardinal);" /><span>${esc(f.prompt || '')}</span></label>${cfHelpHtml(f)}`);
   }
   if (f.type === 'date') {
     return wrap(`${head}<input type="date" id="${aid}" value="${esc(String(a || '').slice(0, 10))}" />`);
@@ -1092,6 +1103,7 @@ function cfValidate(defs, raw) {
 }
 function cfCollect(defs, raw, out) {
   for (const f of defs) {
+    if (f.type === 'section') continue;   // headers carry no answer
     if (!cfVisible(f, raw)) continue;     // hidden field (and its subtree) not saved
     out[f.id] = raw[f.id] === undefined ? null : raw[f.id];
     if (f.type === 'group') { const sel = raw[f.id]; if (sel && f.branches?.[sel]) cfCollect(f.branches[sel], raw, out); }
@@ -1119,7 +1131,11 @@ async function cfWriteLinks(defs, answers, recordType, recordId) {
 function cfRenderAnswerTree(defs, answers) {
   return defs.map(f => {
     if (!cfVisible(f, answers)) return '';   // exactly what was visible at save
-    const row = (val, extra = '') => `<div style="padding:.4rem 0;border-bottom:.5px solid #F0EDE8;"><div style="font-size:12px;color:#6B7280;margin-bottom:1px;">${esc(f.prompt || '')}</div><div style="font-size:13.5px;color:var(--navy);font-weight:500;">${val}</div></div>${extra}`;
+    if (f.type === 'section') {
+      return `<div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--cardinal);border-bottom:.5px solid var(--stone);padding-bottom:3px;margin:.8rem 0 .2rem;">${esc(f.prompt || '')}</div>${f.help ? `<div style="font-size:11.5px;color:#6B7280;margin-bottom:.3rem;">${esc(f.help)}</div>` : ''}`;
+    }
+    const help = f.help ? `<div style="font-size:11px;color:#9CA3AF;margin-bottom:1px;">${esc(f.help)}</div>` : '';
+    const row = (val, extra = '') => `<div style="padding:.4rem 0;border-bottom:.5px solid #F0EDE8;"><div style="font-size:12px;color:#6B7280;margin-bottom:1px;">${esc(f.prompt || '')}</div>${help}<div style="font-size:13.5px;color:var(--navy);font-weight:500;">${val}</div></div>${extra}`;
     if (f.type === 'group') {
       const sel = answers[f.id];
       const branch = (sel && f.branches?.[sel]) ? cfRenderAnswerTree(f.branches[sel], answers) : '';
@@ -1295,7 +1311,7 @@ function builderFieldHtml(f, idx) {
       <label style="display:inline-flex;align-items:center;gap:4px;">High label <input type="text" id="hr-tb-high-${idx}" value="${esc(f.highLabel || '')}" placeholder="highest" style="width:90px;" /></label>
     </div>`;
   } else if (f.type === 'link') {
-    const scopeOpts = ['incident', 'disciplinary', 'review', 'memo'].map(s => `<option value="${s}"${(f.scope || 'incident') === s ? ' selected' : ''}>${esc(RECORD_CHIP[s].label)}</option>`).join('');
+    const scopeOpts = ['incident', 'disciplinary', 'review'].map(s => `<option value="${s}"${(f.scope || 'incident') === s ? ' selected' : ''}>${esc(RECORD_CHIP[s].label)}</option>`).join('');
     cfg = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#6B7280;">
       <label style="display:inline-flex;align-items:center;gap:4px;">Links to <select id="hr-tb-scope-${idx}">${scopeOpts}</select></label>
       <span>records for this person · this institution</span>
@@ -1547,11 +1563,11 @@ function openPersonnelFile(personId, institutionId) {
 async function fetchPersonnelRecords(personId, institutionId) {
   // Live file = non-archived records (deleted records live only in the super-admin archive).
   const q = (table) => sb.from(table).select('*').eq('person_id', personId).eq('institution_id', institutionId).is('archived_at', null);
-  const [rev, dis, inc, mem] = await Promise.all([
-    q('performance_reviews'), q('disciplinary_records'), q('incident_reports'), q('memos'),
+  const [rev, dis, inc] = await Promise.all([
+    q('performance_reviews'), q('disciplinary_records'), q('incident_reports'),
   ]);
   const tag = (res, type) => (res.data || []).map(r => ({ ...r, _type: type }));
-  return [...tag(rev, 'review'), ...tag(dis, 'disciplinary'), ...tag(inc, 'incident'), ...tag(mem, 'memo')]
+  return [...tag(rev, 'review'), ...tag(dis, 'disciplinary'), ...tag(inc, 'incident')]
     .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
 }
 
@@ -1602,18 +1618,28 @@ function personnelFileConfig(personId, institutionId) {
 }
 
 // ── Read viewer (detail) ─────────────────────────────────────────────────────
+// Universal auto-filled entry header — all three fields DERIVED, on every entry type.
+// Employee = the file's person; Position = their current title(s) in this institution
+// (comma-separated); Date = the uneditable creation date (MM/DD/YYYY).
+function entryHeaderHtml(r) {
+  const name = _ctx?.personName(r.person_id) || '—';
+  const titles = (r.person_id && r.institution_id) ? personTitlesIn(r.person_id, r.institution_id) : [];
+  const row = (l, v) => `<div style="display:flex;gap:8px;"><span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#9CA3AF;min-width:78px;flex-shrink:0;padding-top:1px;">${l}</span><span style="font-size:13px;color:var(--navy);">${v}</span></div>`;
+  return `<div class="pf-entry-head" style="background:#F8F7F4;border:.5px solid var(--stone);border-radius:6px;padding:.55rem .75rem;margin-bottom:.9rem;display:flex;flex-direction:column;gap:3px;">
+    ${row('Employee', esc(name))}
+    ${row('Position', titles.length ? esc(titles.join(', ')) : '—')}
+    ${row('Date', esc(createdMDY(r.created_at)))}
+  </div>`;
+}
+
 function recordDetailHtml(r) {
   const isSelf = r._type === 'review' && r.is_self_report;
-  const meta = `<div style="font-size:11.5px;color:#6B7280;margin-bottom:.8rem;">Created ${createdMDY(r.created_at)} · ${esc(authorName(r.author_id))}${r.record_date ? ' · dated ' + formatDateMDY(r.record_date) : ''}</div>`;
+  const header = entryHeaderHtml(r);
+  const meta = `<div style="font-size:11.5px;color:#6B7280;margin-bottom:.8rem;">By ${esc(authorName(r.author_id))}${r.record_date ? ' · dated ' + formatDateMDY(r.record_date) : ''}</div>`;
   const banner = `<div style="font-size:10.5px;color:#B9A88F;font-style:italic;border-top:.5px solid var(--stone);margin-top:1rem;padding-top:.55rem;line-height:1.5;">${esc(bannerText())}</div>`;
   const controls = recordControlsHtml(r);
-  if (r._type === 'memo') {
-    return meta
-      + (r.subject ? `<div style="font-weight:600;color:var(--navy);margin-bottom:.3rem;">${esc(r.subject)}</div>` : '')
-      + `<div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;">${esc(r.body || '')}</div>` + controls;
-  }
   if (r._type === 'incident') {
-    return meta + `<div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;">${esc(r.description || '')}</div>` + banner + controls;
+    return header + meta + `<div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;">${esc(r.description || '')}</div>` + banner + controls;
   }
   if (r._type === 'disciplinary') {
     const field = (l, v) => v ? `<div class="pf-flabel">${l}</div><div class="pf-fval">${esc(v)}</div>` : '';
@@ -1621,7 +1647,7 @@ function recordDetailHtml(r) {
     const signed = r.signed_on_file
       ? `<div style="font-size:12px;color:#2E6B43;">✓ Signed physical copy on file${r.signed_date ? ` (${formatDateMDY(r.signed_date)})` : ''}</div>`
       : `<div style="font-size:12px;color:#9CA3AF;">Signed copy not yet on file</div>`;
-    return meta + sev + field('Narrative', r.narrative) + field('Corrective action', r.corrective_action) + signed + banner + controls;
+    return header + meta + sev + field('Narrative', r.narrative) + field('Corrective action', r.corrective_action) + signed + banner + controls;
   }
   // review / self-report
   const status = isSelf
@@ -1638,7 +1664,7 @@ function recordDetailHtml(r) {
   const signed = r.signed_on_file
     ? `<div style="font-size:12px;color:#2E6B43;margin-top:.6rem;">✓ Signed physical copy on file${r.signed_date ? ` (${formatDateMDY(r.signed_date)})` : ''}</div>` : '';
   const emptyMsg = isSelf ? 'Empty self-report.' : 'Empty — use Edit to fill this evaluation in.';
-  return meta + status + period + (rows || `<div style="font-size:12.5px;color:#9CA3AF;">${emptyMsg}</div>`) + signed + banner + controls;
+  return header + meta + status + period + (rows || `<div style="font-size:12.5px;color:#9CA3AF;">${emptyMsg}</div>`) + signed + banner + controls;
 }
 
 // Per-record conditional controls (rendered inside the read viewer, fully gated by
@@ -1730,7 +1756,6 @@ function hrPfCreate() {
       ${btn('review', '', 'Personnel Evaluation')}
       ${btn('incident', '', 'Incident Report')}
       ${btn('disciplinary', '', 'Disciplinary Action')}
-      ${btn('memo', '', 'Memo')}
     </div>
     <div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancel</button></div>`);
 }
@@ -1789,14 +1814,9 @@ function recordEditForm(r) {
   if (r._type === 'review' && r.is_self_report) {
     return `<div style="font-size:13px;color:#6B7280;line-height:1.6;">This is the employee’s self-report. ${r.finalized ? 'It is finalized and locked.' : 'You can finalize it from the read view, but its content is edited by the employee.'}</div>`;
   }
-  if (r._type === 'memo') {
-    return `
-      <label>Subject</label><input id="pf-memo-subject" value="${esc(r.subject || '')}" />
-      <label>Body</label><textarea id="pf-memo-body" rows="6">${esc(r.body || '')}</textarea>
-      <label>Date</label><input type="date" id="pf-memo-date" value="${r.record_date || todayISO()}" />`;
-  }
+  const header = entryHeaderHtml(r);   // universal auto-filled header on every entry form
   if (r._type === 'incident') {
-    return `
+    return header + `
       <label>Description</label><textarea id="pf-inc-desc" rows="7">${esc(r.description || '')}</textarea>
       <label>Date</label><input type="date" id="pf-inc-date" value="${r.record_date || todayISO()}" />`;
   }
@@ -1804,7 +1824,7 @@ function recordEditForm(r) {
     const ladder = severityLadder();
     const sevOpts = ['<option value="">— Select —</option>']
       .concat(ladder.map(s => `<option value="${esc(s)}"${r.severity === s ? ' selected' : ''}>${esc(s.charAt(0).toUpperCase() + s.slice(1))}</option>`)).join('');
-    return `
+    return header + `
       <label>Narrative</label><textarea id="pf-dis-narr" rows="5">${esc(r.narrative || '')}</textarea>
       <label>Severity</label><select id="pf-dis-sev">${sevOpts}</select>
       <label>Corrective action</label><textarea id="pf-dis-corr" rows="3">${esc(r.corrective_action || '')}</textarea>
@@ -1821,7 +1841,7 @@ function recordEditForm(r) {
   _cfDef = def; _cfBy = cfFlatten(def);
   _cfCtx = { recordType: 'review', recordId: r.id, personId: r.person_id, institutionId: r.institution_id };
   const fields = cfRenderFields(def, ans);
-  return `
+  return header + `
     <div style="font-size:12px;color:#6B7280;margin-bottom:.6rem;">Structure frozen at creation.</div>
     ${fields || '<div style="font-size:12.5px;color:#9CA3AF;">This evaluation’s template has no fields.</div>'}
     <div style="border-top:.5px solid var(--stone);margin:.6rem 0;padding-top:.6rem;"></div>
@@ -1921,7 +1941,8 @@ async function hrPfEditSelfReport(id) {
   _cfCtx = { recordType: 'review', recordId: r.id, personId: r.person_id, institutionId: r.institution_id };
   const fields = cfRenderFields(def, ans);
   openModalHtml(`
-    <div class="modal-title">Self-Report</div>
+    <div class="modal-title">Self-Evaluation</div>
+    ${entryHeaderHtml(r)}
     <div style="font-size:12px;color:#6B7280;margin-bottom:.6rem;">Editable until a supervisor finalizes it.</div>
     ${fields}
     <label>Date</label><input type="date" id="hr-rev-date" value="${r.review_date || todayISO()}" />
@@ -1988,7 +2009,7 @@ async function hrPfMarkDeparted() {
 async function openHrArchive() {
   if (!isSuperAdmin()) return;
   openModalHtml(`<div class="modal-title">HR Archive</div><div style="font-size:12.5px;color:#9CA3AF;">Loading…</div>`);
-  const TABLES = [['review', 'performance_reviews'], ['disciplinary', 'disciplinary_records'], ['incident', 'incident_reports'], ['memo', 'memos']];
+  const TABLES = [['review', 'performance_reviews'], ['disciplinary', 'disciplinary_records'], ['incident', 'incident_reports']];
   const out = [];
   // (a) Individually deleted records.
   for (const [type, table] of TABLES) {
