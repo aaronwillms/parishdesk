@@ -41,7 +41,6 @@ const RECORD_META = {
   review:       { table: 'performance_reviews',  label: 'Performance Review',  banner: true  },
   disciplinary: { table: 'disciplinary_records', label: 'Disciplinary Record', banner: true  },
   incident:     { table: 'incident_reports',     label: 'Incident Report',     banner: true  },
-  memo:         { table: 'memos',                label: 'Memo',                banner: false },
 };
 
 // Personnel-file presentation per record type: the left-card TYPE CHIP (label +
@@ -52,7 +51,6 @@ const RECORD_CHIP = {
   self_report:  { label: 'Self-Evaluation', tone: 'neutral', icon: 'fa-user-pen' },
   incident:     { label: 'Incident',     tone: 'urgent',   icon: 'fa-triangle-exclamation' },
   disciplinary: { label: 'Disciplinary', tone: 'pending',  icon: 'fa-gavel' },
-  memo:         { label: 'Memo',         tone: 'complete', icon: 'fa-note-sticky' },
 };
 
 // Live settings reads — never hardcode (Phase 3 severity ladder, Phase 5 banner).
@@ -143,6 +141,51 @@ const SELF_REPORT_TEMPLATE = [
   { id: 'se_plans',           type: 'text', prompt: 'Do you plan to continue employment, or would you like to share your plan for retirement or departure?' },
   { id: 'se_other',           type: 'text', prompt: 'Other comments?' },
 ];
+
+// Phase 4C — incident_reports + disciplinary_records are now template-driven (cf engine),
+// using these built-in definitions (stable, human-readable field ids). NOT review_templates
+// rows (no template picker — a fixed structure per type, like the self-report).
+const INCIDENT_TEMPLATE = [
+  { id: 'description',     type: 'text',    prompt: 'Description of Incident' },
+  { id: 'injuries',        type: 'boolean', prompt: 'Injuries?' },
+  { id: 'injuries_detail', type: 'text',    prompt: 'Describe the injuries', visibleWhen: { field: 'injuries', equals: true } },
+  { id: 'location',        type: 'text',    prompt: 'Location' },
+  { id: 'time_occurred',   type: 'text',    prompt: 'Time Occurred' },
+  { id: 'action_taken',    type: 'text',    prompt: 'Plan of Action / Action Taken' },
+];
+const DISCIPLINARY_TEMPLATE = [
+  {
+    id: 'action_type', type: 'group', prompt: 'Type of Action',
+    options: ['Warning', 'Improvement Plan', 'Suspension', 'Termination'],
+    branches: {
+      'Warning': [
+        { id: 'related_incident_warn', type: 'link', prompt: 'Related incident?', scope: 'incident', samePersonInstitution: true },
+        { id: 'warning_given',         type: 'text', prompt: 'Warning Given' },
+      ],
+      'Improvement Plan': [
+        { id: 'related_incident_ip', type: 'link',    prompt: 'Related incident?', scope: 'incident', samePersonInstitution: true },
+        { id: 'job_performance',     type: 'boolean', prompt: 'Job Performance' },
+        { id: 'noted_issue',         type: 'text',    prompt: 'Noted Issue with Job Performance', visibleWhen: { field: 'job_performance', equals: true } },
+        { id: 'corrective_plan',     type: 'text',    prompt: 'Corrective Action Plan' },
+        { id: 'follow_up_date',      type: 'date',    prompt: 'Date of Intended Follow-Up' },
+      ],
+      'Suspension': [
+        { id: 'effective_date_susp',   type: 'date', prompt: 'Effective Date' },
+        { id: 'related_incident_susp', type: 'link', prompt: 'Related incident?', scope: 'incident', samePersonInstitution: true },
+        { id: 'reason_suspension',     type: 'text', prompt: 'Reason for Suspension' },
+        { id: 'return_conditions',     type: 'text', prompt: 'Plan or Conditions for Return' },
+      ],
+      'Termination': [
+        { id: 'effective_date_term',   type: 'date',      prompt: 'Effective Date' },
+        { id: 'related_incident_term', type: 'link',      prompt: 'Related incident?', scope: 'incident', samePersonInstitution: true },
+        { id: 'reason_termination',    type: 'text',      prompt: 'Reason for Termination' },
+        { id: 'reemployment',          type: 'selective', prompt: 'Eligibility for Re-Employment', options: ['Yes', 'No'] },
+      ],
+    },
+  },
+];
+const TEMPLATE_FOR = { incident: INCIDENT_TEMPLATE, disciplinary: DISCIPLINARY_TEMPLATE };
+
 // Display kind for a record (a self-report shows its own chip, but persists in the
 // performance_reviews table — RECORD_META lookups still use r._type === 'review').
 function chipKey(r) { return (r._type === 'review' && r.is_self_report) ? 'self_report' : r._type; }
@@ -861,34 +904,36 @@ const todayISO = () => todayCST();
 // see). Re-renders the record's fields into the document (no DOM scraping); for
 // reviews, from frozen_definition + answers. Carries a provenance stamp instead
 // of the on-screen "don't replace the physical file" banner.
+// Flatten a frozen def-tree + answers into [label, value] PDF rows (recursive; only
+// visible fields; group → selector value + its branch). Shared by all cf record types.
+function cfPdfSections(defs, answers, out = []) {
+  for (const f of defs) {
+    if (f.type === 'section') { out.push([f.prompt || '', '']); continue; }
+    if (!cfVisible(f, answers)) continue;
+    const a = answers[f.id];
+    let val;
+    if (f.type === 'boolean')    val = a === true ? 'Yes' : (a === false ? 'No' : '—');
+    else if (f.type === 'date')  val = a ? formatDateMDY(String(a).slice(0, 10)) : '—';
+    else if (f.type === 'link')  val = a?.label || '—';
+    else                         val = (a === null || a === undefined || a === '') ? '—' : String(a);
+    out.push([f.prompt || '(field)', val]);
+    if (f.type === 'group' && a && f.branches?.[a]) cfPdfSections(f.branches[a], answers, out);
+  }
+  return out;
+}
 function recordToSections(type, rec) {
-  if (type === 'memo') {
-    return { title: 'Memo', sections: [['Subject', rec.subject || ''], ['Body', rec.body || '']] };
-  }
-  if (type === 'incident') {
-    return { title: 'Incident Report', sections: [['Description', rec.description || '']] };
-  }
-  if (type === 'disciplinary') {
-    return { title: 'Disciplinary Record', sections: [
-      ['Severity', rec.severity || '—'],
-      ['Narrative', rec.narrative || ''],
-      ['Corrective action', rec.corrective_action || '—'],
-      ['Signed physical copy on file', rec.signed_on_file ? `Yes${rec.signed_date ? ' (' + fmtDay(rec.signed_date) + ')' : ''}` : 'No'],
-    ] };
-  }
-  // review — render from the snapshot (frozen_definition + answers)
   const def = Array.isArray(rec.frozen_definition) ? rec.frozen_definition : [];
   const ans = rec.answers || {};
+  _cfBy = cfFlatten(def);
   const sections = [];
-  if (rec.review_period_start || rec.review_period_end) {
+  if (type === 'review' && (rec.review_period_start || rec.review_period_end)) {
     sections.push(['Review period', `${rec.review_period_start ? fmtDay(rec.review_period_start) : '…'} – ${rec.review_period_end ? fmtDay(rec.review_period_end) : '…'}`]);
   }
-  def.forEach(f => {
-    const a = ans[f.id];
-    sections.push([f.prompt || '(field)', (a === null || a === undefined || a === '') ? '—' : String(a)]);
-  });
-  sections.push(['Signed physical copy on file', rec.signed_on_file ? `Yes${rec.signed_date ? ' (' + fmtDay(rec.signed_date) + ')' : ''}` : 'No']);
-  return { title: 'Performance Review', sections };
+  cfPdfSections(def, ans, sections);
+  if (type === 'review') {
+    sections.push(['Signed physical copy on file', rec.signed_on_file ? `Yes${rec.signed_date ? ' (' + fmtDay(rec.signed_date) + ')' : ''}` : 'No']);
+  }
+  return { title: RECORD_META[type]?.label || 'Record', sections };
 }
 
 async function hrExportPdf(type, id) {
@@ -1572,9 +1617,9 @@ async function fetchPersonnelRecords(personId, institutionId) {
 }
 
 function recordSnippet(r) {
-  if (r._type === 'memo')         return r.subject || String(r.body || '').slice(0, 64) || 'Memo';
-  if (r._type === 'incident')     return String(r.description || '').slice(0, 64) || 'Incident report';
-  if (r._type === 'disciplinary') return (r.severity ? r.severity.toUpperCase() + ' — ' : '') + (String(r.narrative || '').slice(0, 52) || 'Disciplinary action');
+  const a = r.answers || {};
+  if (r._type === 'incident')     return String(a.description || '').slice(0, 64) || 'Incident report';
+  if (r._type === 'disciplinary') return a.action_type ? `${a.action_type}` : 'Disciplinary action';
   return 'Performance evaluation';
 }
 
@@ -1638,16 +1683,12 @@ function recordDetailHtml(r) {
   const meta = `<div style="font-size:11.5px;color:#6B7280;margin-bottom:.8rem;">By ${esc(authorName(r.author_id))}${r.record_date ? ' · dated ' + formatDateMDY(r.record_date) : ''}</div>`;
   const banner = `<div style="font-size:10.5px;color:#B9A88F;font-style:italic;border-top:.5px solid var(--stone);margin-top:1rem;padding-top:.55rem;line-height:1.5;">${esc(bannerText())}</div>`;
   const controls = recordControlsHtml(r);
-  if (r._type === 'incident') {
-    return header + meta + `<div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;">${esc(r.description || '')}</div>` + banner + controls;
-  }
-  if (r._type === 'disciplinary') {
-    const field = (l, v) => v ? `<div class="pf-flabel">${l}</div><div class="pf-fval">${esc(v)}</div>` : '';
-    const sev = r.severity ? `<div style="margin-bottom:.7rem;"><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:3px;background:#FDEAED;color:#8B1A2F;">${esc(r.severity.toUpperCase())}</span></div>` : '';
-    const signed = r.signed_on_file
-      ? `<div style="font-size:12px;color:#2E6B43;">✓ Signed physical copy on file${r.signed_date ? ` (${formatDateMDY(r.signed_date)})` : ''}</div>`
-      : `<div style="font-size:12px;color:#9CA3AF;">Signed copy not yet on file</div>`;
-    return header + meta + sev + field('Narrative', r.narrative) + field('Corrective action', r.corrective_action) + signed + banner + controls;
+  // Incident + Disciplinary — template-driven (cf engine), frozen def + answers.
+  if (r._type === 'incident' || r._type === 'disciplinary') {
+    const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
+    _cfBy = cfFlatten(def);
+    const rows = cfRenderAnswerTree(def, r.answers || {});   // FROZEN rules vs FROZEN answers
+    return header + meta + (rows || `<div style="font-size:12.5px;color:#9CA3AF;">Empty — use Edit to fill this in.</div>`) + banner + controls;
   }
   // review / self-report
   const status = isSelf
@@ -1762,7 +1803,10 @@ function hrPfCreate() {
 async function hrPfNew(type) {
   if (!_file) return;
   if (type === 'review') { hrPfPickReviewTemplate(); return; }
-  await hrPfInsert(type, {});
+  // Incident + Disciplinary are template-driven (cf engine) with a fixed built-in
+  // definition snapshotted at creation (like the self-report) — not a picker.
+  const def = TEMPLATE_FOR[type];
+  await hrPfInsert(type, def ? { frozen_definition: JSON.parse(JSON.stringify(def)) } : {});
 }
 // Evaluations need a frozen template structure at insert — offer templates assigned
 // to this person's position(s) here, else any template, else a starter library item.
@@ -1815,32 +1859,17 @@ function recordEditForm(r) {
     return `<div style="font-size:13px;color:#6B7280;line-height:1.6;">This is the employee’s self-report. ${r.finalized ? 'It is finalized and locked.' : 'You can finalize it from the read view, but its content is edited by the employee.'}</div>`;
   }
   const header = entryHeaderHtml(r);   // universal auto-filled header on every entry form
-  if (r._type === 'incident') {
-    return header + `
-      <label>Description</label><textarea id="pf-inc-desc" rows="7">${esc(r.description || '')}</textarea>
-      <label>Date</label><input type="date" id="pf-inc-date" value="${r.record_date || todayISO()}" />`;
-  }
-  if (r._type === 'disciplinary') {
-    const ladder = severityLadder();
-    const sevOpts = ['<option value="">— Select —</option>']
-      .concat(ladder.map(s => `<option value="${esc(s)}"${r.severity === s ? ' selected' : ''}>${esc(s.charAt(0).toUpperCase() + s.slice(1))}</option>`)).join('');
-    return header + `
-      <label>Narrative</label><textarea id="pf-dis-narr" rows="5">${esc(r.narrative || '')}</textarea>
-      <label>Severity</label><select id="pf-dis-sev">${sevOpts}</select>
-      <label>Corrective action</label><textarea id="pf-dis-corr" rows="3">${esc(r.corrective_action || '')}</textarea>
-      <label>Date</label><input type="date" id="pf-dis-date" value="${r.record_date || todayISO()}" />
-      <label style="display:flex;align-items:center;gap:8px;margin-top:.6rem;cursor:pointer;">
-        <input type="checkbox" id="pf-dis-signed" ${r.signed_on_file ? 'checked' : ''} style="width:auto;margin:0;" onchange="document.getElementById('pf-dis-signedwrap').style.display=this.checked?'':'none'" />
-        <span>Signed physical copy on file</span></label>
-      <div id="pf-dis-signedwrap" style="display:${r.signed_on_file ? '' : 'none'};">
-        <label>Signed date</label><input type="date" id="pf-dis-signeddate" value="${r.signed_date || ''}" /></div>`;
-  }
-  // review — answer fields from the frozen snapshot, via the conditional form engine.
   const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
   const ans = r.answers || {};
   _cfDef = def; _cfBy = cfFlatten(def);
-  _cfCtx = { recordType: 'review', recordId: r.id, personId: r.person_id, institutionId: r.institution_id };
+  _cfCtx = { recordType: r._type, recordId: r.id, personId: r.person_id, institutionId: r.institution_id };
   const fields = cfRenderFields(def, ans);
+
+  // Incident + Disciplinary — template-driven (cf engine); answers only, no review extras.
+  if (r._type === 'incident' || r._type === 'disciplinary') {
+    return header + (fields || '<div style="font-size:12.5px;color:#9CA3AF;">This template has no fields.</div>');
+  }
+  // review — the cf fields plus review-specific period / date / signed.
   return header + `
     <div style="font-size:12px;color:#6B7280;margin-bottom:.6rem;">Structure frozen at creation.</div>
     ${fields || '<div style="font-size:12.5px;color:#9CA3AF;">This evaluation’s template has no fields.</div>'}
@@ -1862,28 +1891,16 @@ async function savePersonnelRecord(r) {
   if (_file?.mode !== 'manage') return false;   // only managers use the shell edit
   if (r._type === 'review' && r.is_self_report) { alert('Self-reports are edited by the employee on their own file.'); return false; }
   const type = r._type;
-  let fields;
-  if (type === 'memo') {
-    fields = { subject: val('pf-memo-subject').trim() || null, body: val('pf-memo-body').trim() || null, record_date: val('pf-memo-date') || null };
-  } else if (type === 'incident') {
-    fields = { description: val('pf-inc-desc').trim() || null, record_date: val('pf-inc-date') || null };
-  } else if (type === 'disciplinary') {
-    const signed = checked('pf-dis-signed');
-    fields = {
-      narrative: val('pf-dis-narr').trim() || null,
-      severity: val('pf-dis-sev') || null,
-      corrective_action: val('pf-dis-corr').trim() || null,
-      record_date: val('pf-dis-date') || null,
-      signed_on_file: signed,
-      signed_date: signed ? (val('pf-dis-signeddate') || null) : null,
-    };
-  } else {
-    const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
-    _cfBy = cfFlatten(def);
-    const raw = cfReadRaw(def);
-    const verr = cfValidate(def, raw);
-    if (verr) { alert(verr); return false; }
-    const answers = cfCollect(def, raw, {});
+  // All manager record types (review / incident / disciplinary) are now cf-driven:
+  // collect VISIBLE answers from the frozen def-tree; review keeps its period/signed extras.
+  const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
+  _cfBy = cfFlatten(def);
+  const raw = cfReadRaw(def);
+  const verr = cfValidate(def, raw);
+  if (verr) { alert(verr); return false; }
+  const answers = cfCollect(def, raw, {});
+  let fields = { answers };
+  if (type === 'review') {
     const signed = checked('hr-rev-signed');
     fields = {
       answers,
@@ -1894,9 +1911,9 @@ async function savePersonnelRecord(r) {
       signed_on_file: signed,
       signed_date: signed ? (val('hr-rev-signeddate') || null) : null,
     };
-    // Dual-write link fields' record_links rows (the {id,label} is already in answers).
-    await cfWriteLinks(def, answers, 'review', r.id);
   }
+  // Dual-write any link fields' record_links rows (the {id,label} is already in answers).
+  await cfWriteLinks(def, answers, type, r.id);
   const { error } = await withWriteRetry(() => sb.from(RECORD_META[type].table).update({ ...fields, updated_at: nowIso() }).eq('id', r.id), { kind: 'update' });
   if (error) { alert('Save failed: ' + error.message); return false; }
   logActivity({ action: `updated ${RECORD_META[type].label.toLowerCase()}`, entityType: 'hr_record', entityName: RECORD_META[type].label });
