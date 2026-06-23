@@ -191,7 +191,7 @@ export function applyNavVisibility() {
   showSec('Pastoral Care', PASTORAL_PANELS.some(p => canAccessPanel(p)));
 
   show('school', isAdmin());
-  show('hr', isAdmin());
+  show('hr', canAccessPanel('hr'));   // Layer 0: HR visible IFF a node on any org tree (or super-admin)
   show('teams', canAccessPanel('teams'));
   const teamsSubNav = document.getElementById('teams-subnav');
   if (teamsSubNav && !canAccessPanel('teams')) teamsSubNav.style.display = 'none';

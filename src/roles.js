@@ -17,11 +17,16 @@ export async function loadUserRoles() {
   const isSuperAdm  = roles.some(r => r.role === 'super_admin');
   const isAdm       = roles.some(r => r.role === 'admin' || r.role === 'super_admin');
 
+  // HR Layer 0: institutions whose org tree this user is a CURRENT node on. Drives
+  // the HR nav link (gated by tree membership, NOT by admin role) and the tab set.
+  const hrInstitutionIds = await hrInstitutionIdsForUser(personnelId);
+
   // Super admins: access is entirely rule-based — no DB records needed
   if (isSuperAdm) {
     store.currentUserRoles = {
       isSuperAdmin: true, isAdmin: true, roles: roleNames,
       sacraments: [], panelGrants: [], teamIds: [], teamPersonnelIds: [], advocateCaseIds: [],
+      hrInstitutionIds,
     };
     return;
   }
@@ -43,6 +48,7 @@ export async function loadUserRoles() {
       teamIds:      [],
       teamPersonnelIds: [],
       advocateCaseIds: [],
+      hrInstitutionIds,
     };
     return;
   }
@@ -88,7 +94,19 @@ export async function loadUserRoles() {
     teamIds,
     teamPersonnelIds,
     advocateCaseIds,
+    hrInstitutionIds,
   };
+}
+
+// Institutions whose org tree a personnel record is a CURRENT node on (any active
+// occupancy). Used by Layer 0 (HR nav link + per-institution tabs).
+async function hrInstitutionIdsForUser(personnelId) {
+  if (!personnelId) return [];
+  const { data } = await sb.from('person_positions')
+    .select('positions(institution_id)')
+    .eq('person_id', personnelId)
+    .is('unlinked_at', null);
+  return [...new Set((data || []).map(r => r.positions?.institution_id).filter(Boolean))];
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -164,6 +182,10 @@ export function canAccessPanel(panel) {
 
   // School: admin+
   if (panel === 'school') return isAdmin();
+
+  // HR (Layer 0): visible IFF the user is a node on ANY institution's org tree
+  // (super-admin always). NOT gated by admin role.
+  if (panel === 'hr') return canAccessHr();
 
   // Annulments: coordinator/granted/super-admin, OR an advocate assigned to ≥1 case
   if (panel === 'annulments') return canAccessSacrament('annulments') || (r.advocateCaseIds?.length > 0);
@@ -256,6 +278,78 @@ export function coordinatorChipLabels(sacramentKeys) {
   return [...new Set(sacramentKeys || [])]
     .map(k => SACRAMENT_COORDINATOR_LABELS[k])
     .filter(Boolean);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// HR REDESIGN — PHASE 3 authority (JS-enforced; consistent with the app, NOT RLS)
+//
+// Two axes: the TREE = work/reporting structure; the SUPERVISOR boolean
+// (positions.is_administrator) = HR AUTHORITY. Pure functions take the tree
+// context built by hr.js (buildContext): ctx = { posById:Map<id,position>,
+// currentByPos:Map<posId,[occupancy]> }. All authority is per-institution.
+// ══════════════════════════════════════════════════════════════════════════
+
+// Layer 0 — HR panel visible IFF super-admin OR the user is a node on ≥1 tree.
+export function canAccessHr() {
+  if (isSuperAdmin()) return true;
+  return (store.currentUserRoles?.hrInstitutionIds || []).length > 0;
+}
+
+// Current positions a person holds in one institution (position objects).
+function hrPersonPositions(personId, institutionId, ctx) {
+  const out = [];
+  if (!personId || !ctx) return out;
+  for (const [posId, occs] of ctx.currentByPos) {
+    const pos = ctx.posById.get(posId);
+    if (pos && pos.institution_id === institutionId && occs.some(o => o.person_id === personId)) out.push(pos);
+  }
+  return out;
+}
+// Is ancestorPosId a STRICT ancestor of descendantPosId? (walk the parent chain)
+function hrIsAncestorPosition(ancestorPosId, descendantPosId, ctx) {
+  let cur = ctx.posById.get(descendantPosId);
+  cur = cur ? ctx.posById.get(cur.parent_position_id) : null;
+  while (cur) {
+    if (cur.id === ancestorPosId) return true;
+    cur = ctx.posById.get(cur.parent_position_id);
+  }
+  return false;
+}
+
+// HR AUTHORITY: the viewer can create/view/manage another person's HR entries in an
+// institution IFF super-admin, OR the viewer holds a SUPERVISOR (is_administrator)
+// position that is an ANCESTOR of any position the target holds there. Authority
+// flows down the ENTIRE subtree (transitive — intermediate supervisors don't block it).
+export function hrHasAuthority(viewerPersonId, targetPersonId, institutionId, ctx) {
+  if (isSuperAdmin()) return true;
+  if (!viewerPersonId || !targetPersonId || !institutionId || !ctx) return false;
+  const supPositions = hrPersonPositions(viewerPersonId, institutionId, ctx).filter(p => p.is_administrator);
+  if (!supPositions.length) return false;
+  const targetPositions = hrPersonPositions(targetPersonId, institutionId, ctx);
+  return supPositions.some(v => targetPositions.some(t => hrIsAncestorPosition(v.id, t.id, ctx)));
+}
+
+// Structural edits (position title/type, supervisor toggle, +Add Position, move,
+// delete, occupancy link/unlink) = SUPER-ADMIN ONLY.
+export function hrCanManageStructure() { return isSuperAdmin(); }
+
+// Finalize a self-report = a SUPERVISOR above the subject OR super-admin (same as
+// having authority over that person).
+export function hrCanFinalizeSelfReport(viewerPersonId, targetPersonId, institutionId, ctx) {
+  return hrHasAuthority(viewerPersonId, targetPersonId, institutionId, ctx);
+}
+
+// Institutions where a person is a CURRENT node (for per-institution tabs from a ctx).
+export function hrInstitutionsForPerson(personId, ctx) {
+  const set = new Set();
+  if (!ctx) return [];
+  for (const [posId, occs] of ctx.currentByPos) {
+    if (occs.some(o => o.person_id === personId)) {
+      const pos = ctx.posById.get(posId);
+      if (pos) set.add(pos.institution_id);
+    }
+  }
+  return [...set];
 }
 
 export function isTeamAdmin(teamId) {

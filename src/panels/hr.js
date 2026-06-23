@@ -12,7 +12,7 @@
 
 import { sb, deleteWithRetry, withWriteRetry } from '../supabase.js';
 import { store } from '../store.js';
-import { isAdmin, isSuperAdmin } from '../roles.js';
+import { isAdmin, isSuperAdmin, canAccessHr, hrHasAuthority, hrCanManageStructure, hrCanFinalizeSelfReport } from '../roles.js';
 import { closeModal } from '../ui/modal.js';
 import { logActivity, todayCST, compareByLastName, formatDateMDY } from '../utils.js';
 import { ensureIdentities, userName, fetchGrantRow } from '../ui/grants.js';
@@ -49,18 +49,11 @@ const RECORD_META = {
 // RECORD_META / the record_grants record_type values.
 const RECORD_CHIP = {
   review:       { label: 'Evaluation',   tone: 'active',   icon: 'fa-clipboard-check' },
+  self_report:  { label: 'Self-Report',  tone: 'neutral',  icon: 'fa-user-pen' },
   incident:     { label: 'Incident',     tone: 'urgent',   icon: 'fa-triangle-exclamation' },
   disciplinary: { label: 'Disciplinary', tone: 'pending',  icon: 'fa-gavel' },
   memo:         { label: 'Memo',         tone: 'complete', icon: 'fa-note-sticky' },
 };
-
-// Employment-type feature-gating for the CREATE surface (Stage 3 definition):
-// contract → incident + memo ONLY (no performance review/comp, no disciplinary).
-function creatableRecordTypes(empType) {
-  return empType === 'contract'
-    ? ['incident', 'memo']
-    : ['review', 'disciplinary', 'incident', 'memo'];
-}
 
 // Live settings reads — never hardcode (Phase 3 severity ladder, Phase 5 banner).
 function severityLadder() {
@@ -117,8 +110,8 @@ let _profilesByUser = new Map(); // auth user_id -> personnel_id (author names)
 let _templates = [];           // review_templates rows (parish-scoped)
 let _templatePositions = [];   // review_template_positions rows
 let _builder = null;           // active template-builder working state
-let _card = null;              // active occupancy-card context for record modals (legacy)
-let _file = null;              // active personnel file context: { personId, institutionId }
+let _file = null;              // active personnel file context: { personId, institutionId, mode }
+let _archiveCache = [];        // archived records currently shown in the super-admin Archive
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -127,16 +120,29 @@ function esc(s) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 function canManageTabs() { return isSuperAdmin(); }
-function canEditTree()   { return isAdmin(); }   // admin OR super_admin
+function canEditTree()   { return isAdmin(); }   // admin OR super_admin (legacy gate)
+// Phase 3: structural edits (tree title/type/supervisor/+Add/move/delete/occupancy)
+// are SUPER-ADMIN ONLY. Records authority is the two-axis subtree rule (roles.js).
+function canStruct()      { return hrCanManageStructure(); }
+function viewerPersonId() { return store.currentUserProfile?.personnel_id || null; }
+
+// A self-report is a performance_review the SUBJECT authors about themselves. Built-in
+// template (the builder/template integration is for managers' evaluations; self-reports
+// use this fixed reflective structure).
+const SELF_REPORT_TEMPLATE = [
+  { id: 'sr_accomplishments', type: 'text', prompt: 'Key accomplishments this period' },
+  { id: 'sr_challenges',      type: 'text', prompt: 'Challenges or obstacles' },
+  { id: 'sr_goals',           type: 'text', prompt: 'Goals for the next period' },
+  { id: 'sr_support',         type: 'text', prompt: 'Support or resources needed' },
+];
+// Display kind for a record (a self-report shows its own chip, but persists in the
+// performance_reviews table — RECORD_META lookups still use r._type === 'review').
+function chipKey(r) { return (r._type === 'review' && r.is_self_report) ? 'self_report' : r._type; }
 
 function empBadge(v) {
   const c = EMP_COLOR[v] || { bg: '#EEE', fg: '#555' };
   return `<span style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:3px;background:${c.bg};color:${c.fg};">${EMP_LABEL[v] || v}</span>`;
 }
-function adminBadge() {
-  return `<span title="Administrator seat" style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:3px;background:#FDEAED;color:#8B1A2F;">Administrator</span>`;
-}
-
 // Resolve a record's author_id (auth user id) to a display name via
 // user_profiles -> personnel.
 function authorName(userId) {
@@ -149,17 +155,14 @@ function authorName(userId) {
   return p ? p.name : 'Staff member';
 }
 
-// UI mirror of the Stage 1 UPDATE/DELETE RLS (author OR super_admin).
-function canModifyRecord(rec) {
-  return isSuperAdmin() || (rec.author_id && rec.author_id === _authUserId);
-}
-
 // ── Data ────────────────────────────────────────────────────────────────────
 
 export async function loadHr() {
   const root = document.getElementById('hr-root');
   if (!root) return;
-  if (!isAdmin()) {
+  // Layer 0: HR is open to anyone who is a node on an org tree (or super-admin),
+  // not just admins. Authority WITHIN the panel is enforced per-node/per-file.
+  if (!canAccessHr()) {
     root.innerHTML = '<div style="padding:2rem;color:#6B7280;font-size:13px;">You do not have access to Human Resources.</div>';
     return;
   }
@@ -274,12 +277,18 @@ function render() {
   const root = document.getElementById('hr-root');
   if (!root) return;
 
-  const tabs = _insts.map((inst, i) => {
+  // Layer 0: a non-super-admin sees a tab only for institutions whose org tree they
+  // are a current node on; super-admin sees every institution.
+  const myInstIds = store.currentUserRoles?.hrInstitutionIds || [];
+  const visibleInsts = isSuperAdmin() ? _insts : _insts.filter(i => myInstIds.includes(i.id));
+  if (!visibleInsts.some(i => i.id === _activeInstId)) _activeInstId = visibleInsts[0]?.id || null;
+
+  const tabs = visibleInsts.map((inst, i) => {
     const active = inst.id === _activeInstId;
-    // Reordering the global parish-wide order is admin+; renaming stays super-admin.
-    const arrows = canEditTree() ? `
+    // Structural: reorder + rename are super-admin only (canManageTabs).
+    const arrows = canManageTabs() ? `
       <span data-action="move-inst" data-inst-id="${inst.id}" data-dir="left"  title="Move left"  style="cursor:pointer;color:#9CA3AF;padding:0 2px;${i === 0 ? 'visibility:hidden;' : ''}">‹</span>
-      <span data-action="move-inst" data-inst-id="${inst.id}" data-dir="right" title="Move right" style="cursor:pointer;color:#9CA3AF;padding:0 2px;${i === _insts.length - 1 ? 'visibility:hidden;' : ''}">›</span>` : '';
+      <span data-action="move-inst" data-inst-id="${inst.id}" data-dir="right" title="Move right" style="cursor:pointer;color:#9CA3AF;padding:0 2px;${i === visibleInsts.length - 1 ? 'visibility:hidden;' : ''}">›</span>` : '';
     const gear = canManageTabs() ? `
       <span data-action="rename-inst" data-inst-id="${inst.id}" title="Rename institution" style="cursor:pointer;color:#9CA3AF;padding:0 2px;">⚙</span>` : '';
     const mgmt = arrows + gear;
@@ -298,7 +307,10 @@ function render() {
     <div style="padding:1.1rem 1.1rem 0;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 1rem;">
         <h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-size:22px;font-weight:700;color:var(--navy);margin:0;">Human Resources</h1>
-        ${isAdmin() ? `<button class="btn-secondary" data-action="open-templates">Review Templates</button>` : ''}
+        ${isSuperAdmin() ? `<div style="display:flex;gap:8px;">
+          <button class="btn-secondary" data-action="open-archive">Archive</button>
+          <button class="btn-secondary" data-action="open-templates">Review Templates</button>
+        </div>` : ''}
       </div>
       <div style="display:flex;align-items:flex-end;gap:0;border-bottom:.5px solid var(--stone);margin-bottom:1.1rem;overflow-x:auto;">
         ${tabs || '<span style="font-size:13px;color:#6B7280;padding:.5rem 0;">No institutions yet.</span>'}
@@ -402,11 +414,19 @@ function renderNodePanel() {
   const occ = current[0] || null;
   const vacant = !occ;
   const isRoot = !pos.parent_position_id;
-  const canEdit = canEditTree();
-  const ro = canEdit ? '' : 'disabled';
+
+  // Layer 3 gating. Structural edits (title/type/supervisor/+Add/move/delete/occupancy)
+  // = super-admin only. The "View Personnel Record" button = the viewer has authority
+  // over this person (supervisor-above or super-admin) OR it is their OWN node.
+  const struct = canStruct();
+  const vp = viewerPersonId();
+  const targetPerson = occ?.person_id || null;
+  const isOwn = !!(targetPerson && targetPerson === vp);
+  const hasAuthority = !!(targetPerson && hrHasAuthority(vp, targetPerson, pos.institution_id, _ctx));
+  const showRecordBtn = !!(targetPerson && (hasAuthority || isOwn));
 
   const occupantRow = vacant
-    ? (canEdit
+    ? (struct
       ? `<label>Link a person</label>
          <div class="op-row">
            <select id="op-person" style="flex:1;min-width:150px;"><option value="">— Select person —</option>${personPickerOptions()}</select>
@@ -416,28 +436,31 @@ function renderNodePanel() {
       : `<div style="font-size:13px;color:var(--cardinal);font-weight:600;">Vacant</div>`)
     : `<label>Employee${current.length > 1 ? 's' : ''}</label>
        <div class="op-row">
-         ${current.map(o => `<span style="display:inline-flex;align-items:center;gap:6px;font-size:13.5px;color:var(--navy);font-weight:600;">${esc(_ctx.personName(o.person_id))} ${empBadge(o.employment_type)}${canEdit ? `<span data-action="op-unlink" data-occ-id="${o.id}" title="Unlink" style="cursor:pointer;color:#B45309;font-size:12px;">✕</span>` : ''}</span>`).join('')}
+         ${current.map(o => `<span style="display:inline-flex;align-items:center;gap:6px;font-size:13.5px;color:var(--navy);font-weight:600;">${esc(_ctx.personName(o.person_id))} ${empBadge(o.employment_type)}${struct ? `<span data-action="op-unlink" data-occ-id="${o.id}" title="Unlink" style="cursor:pointer;color:#B45309;font-size:12px;">✕</span>` : ''}</span>`).join('')}
        </div>`;
 
-  const titleRow = `
-    <label>Position title</label>
-    <div class="op-row">
-      <input type="text" id="op-title" value="${esc(pos.title)}" style="flex:1;min-width:180px;" ${ro} />
-      ${canEdit ? `<button class="btn-secondary" data-action="op-save-title" data-pos-id="${pos.id}" style="padding:.4rem .8rem;font-size:12.5px;">Save</button>` : ''}
-    </div>`;
+  const titleRow = struct
+    ? `<label>Position title</label>
+       <div class="op-row">
+         <input type="text" id="op-title" value="${esc(pos.title)}" style="flex:1;min-width:180px;" />
+         <button class="btn-secondary" data-action="op-save-title" data-pos-id="${pos.id}" style="padding:.4rem .8rem;font-size:12.5px;">Save</button>
+       </div>`
+    : `<label>Position title</label><div style="font-size:13.5px;color:var(--navy);">${esc(pos.title)}</div>`;
 
-  const typeRow = occ
-    ? `<label>Type</label>
-       <select id="op-type" data-action="op-set-type" data-occ-id="${occ.id}" ${ro} style="min-width:150px;">${empTypeOptions(occ.employment_type)}</select>`
-    : '';
+  const typeRow = !occ ? ''
+    : (struct
+      ? `<label>Type</label>
+         <select id="op-type" data-action="op-set-type" data-occ-id="${occ.id}" style="min-width:150px;">${empTypeOptions(occ.employment_type)}</select>`
+      : `<label>Type</label><div>${empBadge(occ.employment_type)}</div>`);
 
-  const supRow = `
-    <label style="display:flex;align-items:center;gap:8px;margin-top:.75rem;cursor:${canEdit ? 'pointer' : 'default'};">
-      <input type="checkbox" id="op-sup" data-action="op-toggle-sup" data-pos-id="${pos.id}" ${pos.is_administrator ? 'checked' : ''} ${ro} style="width:auto;margin:0;accent-color:var(--cardinal);" />
-      <span style="font-size:13px;color:var(--navy);">Supervisor (supervises subordinate positions)</span>
-    </label>`;
+  const supRow = struct
+    ? `<label style="display:flex;align-items:center;gap:8px;margin-top:.75rem;cursor:pointer;">
+        <input type="checkbox" id="op-sup" data-action="op-toggle-sup" data-pos-id="${pos.id}" ${pos.is_administrator ? 'checked' : ''} style="width:auto;margin:0;accent-color:var(--cardinal);" />
+        <span style="font-size:13px;color:var(--navy);">Supervisor (supervises subordinate positions)</span>
+      </label>`
+    : '';   // supervisor status shows as the header chip when set (read-only)
 
-  const addMenu = (_addMenuPosId === pos.id && canEdit)
+  const addMenu = (_addMenuPosId === pos.id && struct)
     ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:.55rem;padding:.5rem .6rem;background:#F8F7F4;border-radius:6px;">
         ${isRoot ? '' : `<button class="btn-secondary" data-action="op-add-sibling" data-pos-id="${pos.id}" style="padding:.35rem .8rem;font-size:12.5px;">Add Sibling</button>`}
         <button class="btn-secondary" data-action="op-add-child" data-pos-id="${pos.id}" style="padding:.35rem .8rem;font-size:12.5px;">Add Child</button>
@@ -445,15 +468,21 @@ function renderNodePanel() {
       </div>`
     : '';
 
-  const footer = canEdit
+  const recordBtn = showRecordBtn
+    ? `<button class="btn-secondary" data-action="op-view-record" data-occ-id="${occ.id}" style="padding:.4rem .8rem;font-size:12.5px;">View Personnel Record</button>`
+    : '';
+
+  // Super-admin: full structural toolset + record button. Supervisor/own-node user:
+  // only the record button. Regular employee on someone else's node: neither (locked).
+  const footer = struct
     ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:.9rem;align-items:center;">
-        <button class="btn-secondary" data-action="op-view-record" ${occ ? `data-occ-id="${occ.id}"` : 'disabled style="opacity:.5;"'} style="padding:.4rem .8rem;font-size:12.5px;">View Personnel Record</button>
+        ${recordBtn}
         <button class="btn-primary" data-action="op-add-toggle" data-pos-id="${pos.id}" style="padding:.4rem .8rem;font-size:12.5px;">+ Add Position</button>
         ${isRoot ? '' : `<button data-action="op-move" data-pos-id="${pos.id}" style="background:none;border:none;color:#8FA8BF;font-size:12px;cursor:pointer;">Move</button>`}
         ${isRoot ? '' : `<button data-action="op-delete" data-pos-id="${pos.id}" style="background:none;border:none;color:#A32D2D;font-size:12px;cursor:pointer;margin-left:auto;">Delete</button>`}
       </div>
       ${addMenu}`
-    : `<div style="margin-top:.9rem;"><button class="btn-secondary" data-action="op-view-record" ${occ ? `data-occ-id="${occ.id}"` : 'disabled style="opacity:.5;"'} style="padding:.4rem .8rem;font-size:12.5px;">View Personnel Record</button></div>`;
+    : (recordBtn ? `<div style="margin-top:.9rem;">${recordBtn}</div>` : '');
 
   return `<div class="org-pop-backdrop" data-action="op-close"></div>
     <div class="org-pop" id="org-pop" role="dialog" aria-modal="true">
@@ -484,6 +513,7 @@ function onHrClick(e) {
     case 'move-inst':   reorderInstitution(instId, t.dataset.dir); break;
     case 'rename-inst': openInstitutionModal(instId); break;
     case 'open-templates': openTemplateManager(); break;
+    case 'open-archive':   openHrArchive(); break;
     case 'toggle':      _collapsed.has(posId) ? _collapsed.delete(posId) : _collapsed.add(posId); renderTree(); break;
     // ── Org-chart node + inline panel ──────────────────────────────────────
     case 'node':        _selectedPosId = posId; _addMenuPosId = null; renderTree(); break;
@@ -495,6 +525,8 @@ function onHrClick(e) {
     case 'file-back':   _selectedPosId = null; _addMenuPosId = null; _file = null;
                         if ((location.hash || '').startsWith('#/personnel')) location.hash = '';
                         render(); break;
+    case 'pf-add-self':     hrPfAddSelfReport(); break;
+    case 'pf-mark-departed': hrPfMarkDeparted(); break;
     case 'op-add-toggle': _addMenuPosId = (_addMenuPosId === posId ? null : posId); renderTree(); break;
     case 'op-add-sibling': hrAddPosition(_ctx.posById.get(posId)?.parent_position_id || null); break;
     case 'op-add-child': hrAddPosition(posId); break;
@@ -508,7 +540,6 @@ function onHrClick(e) {
     case 'archive':     archivePosition(posId); break;
     case 'delete':      deletePosition(posId); break;
     case 'unlink':      unlinkOccupancy(occId); break;
-    case 'view-occ':    openOccupancyCard(occId); break;
   }
 }
 
@@ -522,7 +553,7 @@ function onHrChange(e) {
 
 // ── Inline-panel persistence (reuses the existing positions / person_positions model) ──
 async function hrSetTitle(posId) {
-  if (!canEditTree()) return;
+  if (!canStruct()) return;
   const title = document.getElementById('op-title')?.value.trim();
   if (!title) { alert('Title is required.'); return; }
   const { error } = await sb.from('positions').update({ title, updated_at: new Date().toISOString() }).eq('id', posId);
@@ -531,19 +562,19 @@ async function hrSetTitle(posId) {
   window.flashSavedThen(async () => { await loadHr(); });
 }
 async function hrSetType(occId, type) {
-  if (!canEditTree() || !occId) return;
+  if (!canStruct() || !occId) return;
   const { error } = await sb.from('person_positions').update({ employment_type: type }).eq('id', occId);
   if (error) { alert('Update failed: ' + error.message); return; }
   await loadHr();
 }
 async function hrSetSupervisor(posId, checked) {
-  if (!canEditTree()) return;
+  if (!canStruct()) return;
   const { error } = await sb.from('positions').update({ is_administrator: !!checked, updated_at: new Date().toISOString() }).eq('id', posId);
   if (error) { alert('Update failed: ' + error.message); return; }
   await loadHr();
 }
 async function hrLinkInline(posId) {
-  if (!canEditTree()) return;
+  if (!canStruct()) return;
   const personId = document.getElementById('op-person')?.value;
   const empType  = document.getElementById('op-link-type')?.value || 'full_time';
   if (!personId) { alert('Select a person.'); return; }
@@ -554,7 +585,7 @@ async function hrLinkInline(posId) {
 }
 // "+ Add Position": create a VACANT position (sibling = same parent; child = under this).
 async function hrAddPosition(parentId) {
-  if (!canEditTree()) return;
+  if (!canStruct()) return;
   const { data, error } = await sb.from('positions').insert({
     institution_id: _activeInstId, parent_position_id: parentId || null, title: 'New Position', is_administrator: false,
   }).select().single();
@@ -604,7 +635,7 @@ async function hrSaveInstitution(id) {
 
 // Reorder by renumbering sort_order across all institutions in the new order.
 async function reorderInstitution(id, dir) {
-  if (!canEditTree()) return;
+  if (!canStruct()) return;
   const ordered = [..._insts];
   const idx = ordered.findIndex(i => i.id === id);
   const swap = dir === 'left' ? idx - 1 : idx + 1;
@@ -619,7 +650,7 @@ async function reorderInstitution(id, dir) {
 // ── PHASE 3 — position add / edit / move ────────────────────────────────────
 
 function openPositionModal(posId, parentId) {
-  if (!canEditTree()) return;
+  if (!canStruct()) return;
   const pos = posId ? _ctx.posById.get(posId) : null;
   const parent = parentId ? _ctx.posById.get(parentId) : (pos ? _ctx.posById.get(pos.parent_position_id) : null);
   const heading = pos ? 'Edit position' : (parent ? `Add position under “${esc(parent.title)}”` : 'Add root position');
@@ -660,7 +691,7 @@ async function hrSavePosition(posId, parentId) {
 }
 
 function openMoveModal(posId) {
-  if (!canEditTree()) return;
+  if (!canStruct()) return;
   const pos = _ctx.posById.get(posId);
   if (!pos) return;
   const banned = descendantsOf(posId, _ctx);   // cycle guard: self + descendants
@@ -704,7 +735,7 @@ function empTypeOptions(selected) {
 }
 
 function openLinkModal(posId) {
-  if (!canEditTree()) return;
+  if (!canStruct()) return;
   const pos = _ctx.posById.get(posId);
   if (!pos) return;
   openModalHtml(`
@@ -734,7 +765,7 @@ async function hrSaveLink(posId) {
 }
 
 async function unlinkOccupancy(occId) {
-  if (!canEditTree()) return;
+  if (!canStruct()) return;
   const occ = (_ctx.allByPos.get([..._ctx.allByPos.keys()].find(k => (_ctx.allByPos.get(k) || []).some(o => o.id === occId))) || [])
     .find(o => o.id === occId);
   const name = occ ? _ctx.personName(occ.person_id) : 'this person';
@@ -751,7 +782,7 @@ async function unlinkOccupancy(occId) {
 // ── PHASE 4 — removal rules (archive vs hard-delete) ────────────────────────
 
 async function archivePosition(posId) {
-  if (!canEditTree()) return;
+  if (!canStruct()) return;
   const pos = _ctx.posById.get(posId);
   if (!pos) return;
   if ((_ctx.childrenByParent.get(posId) || []).length) {
@@ -766,7 +797,7 @@ async function archivePosition(posId) {
 }
 
 async function deletePosition(posId) {
-  if (!canEditTree()) return;
+  if (!canStruct()) return;
   const pos = _ctx.posById.get(posId);
   if (!pos) return;
   // The permanent root is never deletable.
@@ -801,96 +832,6 @@ async function deletePosition(posId) {
   await loadHr();
 }
 
-// ── PHASE 6 — occupancy card (read view + feature-gating display) ────────────
-
-async function openOccupancyCard(occId) {
-  // Locate the occupancy and its position.
-  let occ = null, posId = null;
-  for (const [pid, list] of _ctx.allByPos) {
-    const found = list.find(o => o.id === occId);
-    if (found) { occ = found; posId = pid; break; }
-  }
-  if (!occ) return;
-  const pos = _ctx.posById.get(posId);
-  const personName = _ctx.personName(occ.person_id);
-  // Card context for record modals (record binds to THIS person_position id = occ.id).
-  _card = { occId, ppId: occ.id, positionId: posId, empType: occ.employment_type };
-
-  // Full link/unlink history for THIS position (succession).
-  const history = [...(_ctx.allByPos.get(posId) || [])]
-    .sort((a, b) => new Date(b.linked_at) - new Date(a.linked_at))
-    .map(o => {
-      const cur = !o.unlinked_at;
-      return `<div style="display:flex;justify-content:space-between;gap:10px;padding:.35rem 0;border-bottom:.5px solid #F0EDE8;font-size:12px;">
-        <span style="color:var(--navy);font-weight:${o.id === occId ? '700' : '500'};">${esc(_ctx.personName(o.person_id))} ${empBadge(o.employment_type)}</span>
-        <span style="color:#6B7280;white-space:nowrap;">${fmtDay(o.linked_at)} → ${cur ? '<strong style="color:#2E6B43;">current</strong>' : fmtDay(o.unlinked_at)}</span>
-      </div>`;
-    }).join('');
-
-  // Records on THIS occupancy the viewer may see (RLS returns only the permitted).
-  const records = await fetchOccupancyRecords(occ.id);
-  const recordsHtml = records.length
-    ? records.map(r => recordRow(r)).join('')
-    : `<div style="font-size:12.5px;color:#6B7280;font-style:italic;padding:.3rem 0;">No records on this occupancy yet.</div>`;
-
-  // Create surface — admin/super-admin only, gated by employment_type.
-  const createBtns = isAdmin()
-    ? creatableRecordTypes(occ.employment_type).map(rt =>
-        `<button class="btn-secondary" style="font-size:12px;" onclick="window.hrNewRecord('${rt}')">+ ${RECORD_META[rt].label}</button>`).join(' ')
-    : '';
-  const contractNote = (isAdmin() && occ.employment_type === 'contract')
-    ? `<div style="font-size:11px;color:#9CA3AF;margin-top:.35rem;">Contract occupancy — performance review &amp; disciplinary records do not apply.</div>` : '';
-
-  openModalHtml(`
-    <div class="modal-title">${esc(personName)}</div>
-    <div style="font-size:13px;color:var(--navy);font-weight:600;">${esc(pos?.title || '')}${pos?.is_administrator ? ' ' + adminBadge() : ''}</div>
-    <div style="margin:.3rem 0 .9rem;">${empBadge(occ.employment_type)}</div>
-    ${pos?.duties ? `<div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.25rem;">Duties</div><div style="font-size:13px;color:#374151;line-height:1.5;margin-bottom:1rem;">${esc(pos.duties)}</div>` : ''}
-
-    <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.3rem;">Occupancy history</div>
-    <div style="margin-bottom:1rem;">${history}</div>
-
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:.5rem;">
-      <span style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;">HR records</span>
-    </div>
-    ${createBtns ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:.7rem;">${createBtns}</div>${contractNote}` : ''}
-    <div style="margin-bottom:1rem;">${recordsHtml}</div>
-
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="closeModal()">Close</button>
-    </div>`);
-}
-
-// Fetch the four record types for a person_position; tag each with its record
-// type. RLS scopes the result to what the viewer may see.
-async function fetchOccupancyRecords(ppId) {
-  const [rev, dis, inc, mem] = await Promise.all([
-    sb.from('performance_reviews').select('*').eq('person_position_id', ppId),
-    sb.from('disciplinary_records').select('*').eq('person_position_id', ppId),
-    sb.from('incident_reports').select('*').eq('person_position_id', ppId),
-    sb.from('memos').select('*').eq('person_position_id', ppId),
-  ]);
-  const tag = (res, type) => (res.data || []).map(r => ({ ...r, _type: type }));
-  return [...tag(rev, 'review'), ...tag(dis, 'disciplinary'), ...tag(inc, 'incident'), ...tag(mem, 'memo')]
-    .sort((a, b) => new Date(b.record_date || b.created_at) - new Date(a.record_date || a.created_at));
-}
-
-function recordRow(r) {
-  const meta = RECORD_META[r._type];
-  const date = r.record_date ? fmtDay(r.record_date) : fmtDay(r.created_at);
-  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:.45rem .6rem;background:#F8F7F4;border:.5px solid var(--stone);border-radius:6px;margin-bottom:.4rem;">
-    <div style="min-width:0;">
-      <div style="font-size:12.5px;color:var(--navy);font-weight:600;">${meta.label}</div>
-      <div style="font-size:11px;color:#6B7280;">${date} · ${esc(authorName(r.author_id))}</div>
-    </div>
-    <div style="display:flex;gap:8px;flex-shrink:0;">
-      <button class="card-action" onclick="window.hrViewRecord('${r._type}','${r.id}')">View</button>
-      ${canModifyRecord(r) ? `<button class="card-action" onclick="window.hrEditRecord('${r._type}','${r.id}')">Edit</button>
-      <button class="card-action" style="color:#A32D2D;" onclick="window.hrDeleteRecord('${r._type}','${r.id}')">Delete</button>` : ''}
-    </div>
-  </div>`;
-}
-
 function fmtDay(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -906,38 +847,6 @@ const checked = (id) => !!document.getElementById(id)?.checked;
 const nowIso  = () => new Date().toISOString();
 const todayISO = () => todayCST();
 
-// Phase 5 banner — placed in disciplinary / incident / review VIEWS only.
-// Rendered as text (textContent) after the modal HTML is set, never innerHTML.
-function bannerBlock() {
-  return `<div class="hr-banner" style="font-size:10.5px;color:#B9A88F;font-style:italic;border-top:.5px solid var(--stone);margin-top:1rem;padding-top:.55rem;line-height:1.5;"></div>`;
-}
-function showRecordModal(html) {
-  openModalHtml(html);
-  document.querySelectorAll('#modal-content .hr-banner').forEach(el => { el.textContent = bannerText(); });
-}
-function metaLine(rec) {
-  const date = rec.record_date ? fmtDay(rec.record_date) : fmtDay(rec.created_at);
-  return `<div style="font-size:11.5px;color:#6B7280;margin-bottom:1rem;">${date} · ${esc(authorName(rec.author_id))}</div>`;
-}
-function reopenCard() { if (_card) openOccupancyCard(_card.occId); }
-
-// PHASE 3 — grantee header. Shown only when the CURRENT viewer sees the file
-// via a grant (not author, not super_admin). Reads the grant row live, so it
-// shows even before a reason note is added. Distinct from the Stage 3 banner.
-async function granteeHeaderHtml(type, rec) {
-  if (isSuperAdmin() || rec.author_id === _authUserId) return '';
-  await ensureIdentities();
-  const grant = await fetchGrantRow(type, rec.id, _authUserId);
-  if (!grant) return '';   // access not via grant — no header
-  const granter = grant.granted_by ? userName(grant.granted_by) : 'an administrator';
-  return `<div style="background:#EEEAF6;border:.5px solid #D6CDEC;border-radius:6px;padding:.5rem .7rem;margin-bottom:.85rem;font-size:12px;color:#4A3D74;">
-    <i class="fa-solid fa-key" style="margin-right:5px;"></i><strong>Access granted by ${esc(granter)}</strong>${grant.note ? ` — ${esc(grant.note)}` : ''}
-    <div style="font-size:10.5px;color:#7A6BA6;margin-top:2px;">This file is not yours — you are viewing it under a specific grant.</div>
-  </div>`;
-}
-function exportBtn(type, id) {
-  return `<button class="btn-secondary" onclick="window.hrExportPdf('${type}','${id}')">Export PDF</button>`;
-}
 
 // ── PHASE 5 — single-record PDF export (re-render, banner-swap, provenance) ──
 // Inherits view access (the button only exists on a record the user can already
@@ -1017,218 +926,9 @@ async function hrExportPdf(type, id) {
   doc.save(`${safe(title)}_${safe(who.replace(/<[^>]+>/g, ''))}.pdf`);
   logActivity({ action: 'exported record to PDF', entityType: 'hr_record', entityName: `${type}:${id}`, contextType: 'hr' });
 }
-
-// ── Dispatch (called from card / record-row buttons) ────────────────────────
-
-function hrNewRecord(type) {
-  if (!isAdmin() || !_card) return;
-  if (!creatableRecordTypes(_card.empType).includes(type)) return;
-  if (type === 'memo')              openMemoForm(null);
-  else if (type === 'incident')     openIncidentForm(null);
-  else if (type === 'disciplinary') openDisciplinaryForm(null);
-  else if (type === 'review')       openReviewCreate();
-}
 async function fetchRecord(type, id) {
   const { data } = await sb.from(RECORD_META[type].table).select('*').eq('id', id).maybeSingle();
   return data;
-}
-async function hrViewRecord(type, id) {
-  const rec = await fetchRecord(type, id);
-  if (!rec) return;
-  if (type === 'memo')              viewMemo(rec);
-  else if (type === 'incident')     viewIncident(rec);
-  else if (type === 'disciplinary') viewDisciplinary(rec);
-  else if (type === 'review')       viewReview(rec);
-}
-async function hrEditRecord(type, id) {
-  const rec = await fetchRecord(type, id);
-  if (!rec || !canModifyRecord(rec)) return;
-  if (type === 'memo')              openMemoForm(rec);
-  else if (type === 'incident')     openIncidentForm(rec);
-  else if (type === 'disciplinary') openDisciplinaryForm(rec);
-  else if (type === 'review')       openReviewEdit(rec);
-}
-async function hrDeleteRecord(type, id) {
-  const meta = RECORD_META[type];
-  if (!confirm(`Delete this ${meta.label.toLowerCase()}? This cannot be undone.`)) return;
-  const { error } = await deleteWithRetry(() => sb.from(meta.table).delete().eq('id', id));
-  if (error) { alert('Delete failed: ' + error.message); return; }
-  logActivity({ action: `deleted ${meta.label.toLowerCase()}`, entityType: 'hr_record', entityName: meta.label });
-  reopenCard();
-}
-
-// ── PHASE 2 — MEMO (no banner) ──────────────────────────────────────────────
-
-function openMemoForm(rec) {
-  openModalHtml(`
-    <div class="modal-title">${rec ? 'Edit memo' : 'New memo'}</div>
-    <label>Subject</label><input id="hr-memo-subject" value="${esc(rec?.subject || '')}" />
-    <label>Body</label><textarea id="hr-memo-body" rows="5">${esc(rec?.body || '')}</textarea>
-    <label>Date</label><input type="date" id="hr-memo-date" value="${rec?.record_date || todayISO()}" />
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="window.hrReopenCard()">Cancel</button>
-      <button class="btn-primary" onclick="window.hrSaveMemo(${rec ? `'${rec.id}'` : 'null'})">Save</button>
-    </div>`);
-}
-async function hrSaveMemo(id) {
-  const subject = val('hr-memo-subject').trim();
-  const body    = val('hr-memo-body').trim();
-  const record_date = val('hr-memo-date') || null;
-  if (!subject && !body) { alert('Enter a subject or body.'); return; }
-  const fields = { subject: subject || null, body: body || null, record_date };
-  let error;
-  if (id) ({ error } = await sb.from('memos').update({ ...fields, updated_at: nowIso() }).eq('id', id));
-  else    ({ error } = await sb.from('memos').insert({ ...fields, person_position_id: _card.ppId, author_id: _authUserId }));
-  if (error) { alert('Save failed: ' + error.message); return; }
-  window.flashSavedThen(() => reopenCard());
-}
-async function viewMemo(rec) {
-  const gh = await granteeHeaderHtml('memo', rec);
-  openModalHtml(`
-    <div class="modal-title">${esc(rec.subject || 'Memo')}</div>
-    ${gh}
-    ${metaLine(rec)}
-    <div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;">${esc(rec.body || '')}</div>
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="window.hrReopenCard()">Back</button>
-      ${exportBtn('memo', rec.id)}
-      ${canModifyRecord(rec) ? `<button class="btn-primary" onclick="window.hrEditRecord('memo','${rec.id}')">Edit</button>` : ''}
-    </div>`);
-}
-
-// ── PHASE 3 — INCIDENT REPORT (banner; cross-link to disciplinary) ──────────
-
-function openIncidentForm(rec) {
-  openModalHtml(`
-    <div class="modal-title">${rec ? 'Edit incident report' : 'New incident report'}</div>
-    <label>Description</label><textarea id="hr-inc-desc" rows="6">${esc(rec?.description || '')}</textarea>
-    <label>Date</label><input type="date" id="hr-inc-date" value="${rec?.record_date || todayISO()}" />
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="window.hrReopenCard()">Cancel</button>
-      <button class="btn-primary" onclick="window.hrSaveIncident(${rec ? `'${rec.id}'` : 'null'})">Save</button>
-    </div>`);
-}
-async function hrSaveIncident(id) {
-  const description = val('hr-inc-desc').trim();
-  const record_date = val('hr-inc-date') || null;
-  if (!description) { alert('A description is required.'); return; }
-  let error;
-  if (id) ({ error } = await sb.from('incident_reports').update({ description, record_date, updated_at: nowIso() }).eq('id', id));
-  else    ({ error } = await sb.from('incident_reports').insert({ description, record_date, person_position_id: _card.ppId, author_id: _authUserId }));
-  if (error) { alert('Save failed: ' + error.message); return; }
-  window.flashSavedThen(() => reopenCard());
-}
-async function viewIncident(rec) {
-  const [linked, gh] = await Promise.all([fetchLinks('incident', rec.id), granteeHeaderHtml('incident', rec)]);
-  showRecordModal(`
-    <div class="modal-title">Incident Report</div>
-    ${gh}
-    ${metaLine(rec)}
-    <div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;margin-bottom:1rem;">${esc(rec.description || '')}</div>
-    ${crossLinkSection('incident', rec.id, linked)}
-    ${bannerBlock()}
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="window.hrReopenCard()">Back</button>
-      ${exportBtn('incident', rec.id)}
-      ${canModifyRecord(rec) ? `<button class="btn-primary" onclick="window.hrEditRecord('incident','${rec.id}')">Edit</button>` : ''}
-    </div>`);
-}
-
-// ── PHASE 3 — DISCIPLINARY RECORD (banner; severity ladder; cross-link) ─────
-
-function openDisciplinaryForm(rec) {
-  const ladder = severityLadder();
-  const sevOpts = ['<option value="">— Select —</option>']
-    .concat(ladder.map(s => `<option value="${esc(s)}"${rec?.severity === s ? ' selected' : ''}>${esc(s.charAt(0).toUpperCase() + s.slice(1))}</option>`))
-    .join('');
-  openModalHtml(`
-    <div class="modal-title">${rec ? 'Edit disciplinary record' : 'New disciplinary record'}</div>
-    <label>Narrative</label><textarea id="hr-dis-narr" rows="5">${esc(rec?.narrative || '')}</textarea>
-    <label>Severity</label><select id="hr-dis-sev">${sevOpts}</select>
-    <label>Corrective action</label><textarea id="hr-dis-corr" rows="3">${esc(rec?.corrective_action || '')}</textarea>
-    <label>Date</label><input type="date" id="hr-dis-date" value="${rec?.record_date || todayISO()}" />
-    <label style="display:flex;align-items:center;gap:8px;margin-top:.6rem;cursor:pointer;">
-      <input type="checkbox" id="hr-dis-signed" ${rec?.signed_on_file ? 'checked' : ''} style="width:auto;margin:0;" onchange="window.hrDisSignedToggle()" />
-      <span>Signed physical copy on file</span>
-    </label>
-    <div id="hr-dis-signedwrap" style="display:${rec?.signed_on_file ? '' : 'none'};">
-      <label>Signed date</label><input type="date" id="hr-dis-signeddate" value="${rec?.signed_date || ''}" />
-    </div>
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="window.hrReopenCard()">Cancel</button>
-      <button class="btn-primary" onclick="window.hrSaveDisciplinary(${rec ? `'${rec.id}'` : 'null'})">Save</button>
-    </div>`);
-}
-function hrDisSignedToggle() {
-  document.getElementById('hr-dis-signedwrap').style.display = checked('hr-dis-signed') ? '' : 'none';
-}
-async function hrSaveDisciplinary(id) {
-  const narrative = val('hr-dis-narr').trim();
-  if (!narrative) { alert('A narrative is required.'); return; }
-  const signed = checked('hr-dis-signed');
-  const fields = {
-    narrative,
-    severity: val('hr-dis-sev') || null,
-    corrective_action: val('hr-dis-corr').trim() || null,
-    record_date: val('hr-dis-date') || null,
-    signed_on_file: signed,
-    signed_date: signed ? (val('hr-dis-signeddate') || null) : null,
-  };
-  let error;
-  if (id) ({ error } = await sb.from('disciplinary_records').update({ ...fields, updated_at: nowIso() }).eq('id', id));
-  else    ({ error } = await sb.from('disciplinary_records').insert({ ...fields, person_position_id: _card.ppId, author_id: _authUserId }));
-  if (error) { alert('Save failed: ' + error.message); return; }
-  window.flashSavedThen(() => reopenCard());
-}
-async function viewDisciplinary(rec) {
-  const [linked, gh] = await Promise.all([fetchLinks('disciplinary', rec.id), granteeHeaderHtml('disciplinary', rec)]);
-  const field = (label, value) => value
-    ? `<div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.2rem;">${label}</div><div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;margin-bottom:.85rem;">${esc(value)}</div>` : '';
-  const signed = rec.signed_on_file
-    ? `<div style="font-size:12px;color:#2E6B43;margin-bottom:.85rem;">✓ Signed physical copy on file${rec.signed_date ? ` (${fmtDay(rec.signed_date)})` : ''}</div>`
-    : `<div style="font-size:12px;color:#9CA3AF;margin-bottom:.85rem;">Signed copy not yet on file</div>`;
-  showRecordModal(`
-    <div class="modal-title">Disciplinary Record</div>
-    ${gh}
-    ${metaLine(rec)}
-    ${rec.severity ? `<div style="margin-bottom:.85rem;"><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:3px;background:#FDEAED;color:#8B1A2F;">${esc(rec.severity.toUpperCase())}</span></div>` : ''}
-    ${field('Narrative', rec.narrative)}
-    ${field('Corrective action', rec.corrective_action)}
-    ${signed}
-    ${crossLinkSection('disciplinary', rec.id, linked)}
-    ${bannerBlock()}
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="window.hrReopenCard()">Back</button>
-      ${exportBtn('disciplinary', rec.id)}
-      ${canModifyRecord(rec) ? `<button class="btn-primary" onclick="window.hrEditRecord('disciplinary','${rec.id}')">Edit</button>` : ''}
-    </div>`);
-}
-
-// ── Cross-linking (incident_disciplinary_links, read both directions) ───────
-
-// For a record of `type` ('incident'|'disciplinary') return the linked records
-// of the OPPOSITE type (full rows), via the single join table.
-async function fetchLinks(type, id) {
-  const col = type === 'incident' ? 'incident_id' : 'disciplinary_id';
-  const otherCol = type === 'incident' ? 'disciplinary_id' : 'incident_id';
-  const otherTable = type === 'incident' ? 'disciplinary_records' : 'incident_reports';
-  const { data: links } = await sb.from('incident_disciplinary_links').select('*').eq(col, id);
-  const otherIds = (links || []).map(l => l[otherCol]);
-  let rows = [];
-  if (otherIds.length) {
-    const { data } = await sb.from(otherTable).select('*').in('id', otherIds);
-    rows = (data || []).map(r => {
-      const link = links.find(l => l[otherCol] === r.id);
-      return { ...r, _linkId: link?.id };
-    });
-  }
-  return rows;
-}
-function linkLabel(otherType, rec) {
-  const who = labelForPP(rec.person_position_id);
-  const date = rec.record_date ? fmtDay(rec.record_date) : fmtDay(rec.created_at);
-  const head = otherType === 'incident' ? (rec.description || 'Incident') : (rec.severity ? rec.severity + ' — ' : '') + (rec.narrative || 'Disciplinary');
-  return `${who} · ${date} · ${esc(String(head).slice(0, 50))}`;
 }
 function labelForPP(ppId) {
   for (const [pid, list] of _ctx.allByPos) {
@@ -1237,88 +937,6 @@ function labelForPP(ppId) {
   }
   return 'Record';
 }
-function crossLinkSection(type, id, linkedRows) {
-  const otherType  = type === 'incident' ? 'disciplinary' : 'incident';
-  const otherLabel = type === 'incident' ? 'disciplinary records' : 'incident reports';
-  const rows = linkedRows.length
-    ? linkedRows.map(r => `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:.35rem 0;font-size:12px;border-bottom:.5px solid #F0EDE8;">
-        <span style="cursor:pointer;color:var(--navy);text-decoration:underline;text-decoration-color:#D6CEC2;" onclick="window.hrViewRecord('${otherType}','${r.id}')">${linkLabel(otherType, r)}</span>
-        ${isAdmin() ? `<span title="Remove link" style="cursor:pointer;color:#B45309;flex-shrink:0;" onclick="window.hrRemoveLink('${r._linkId}','${type}','${id}')">✕</span>` : ''}
-      </div>`).join('')
-    : `<div style="font-size:12px;color:#9CA3AF;font-style:italic;">None linked.</div>`;
-  const adder = isAdmin()
-    ? `<button class="card-action" style="margin-top:.4rem;" onclick="window.hrOpenLinkPicker('${type}','${id}')">+ Link ${otherLabel}</button>` : '';
-  return `<div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.3rem;margin-top:.4rem;">Linked ${otherLabel}</div>${rows}${adder}`;
-}
-// Picker: opposite-type records the viewer can see (RLS-scoped), not already linked.
-async function hrOpenLinkPicker(type, id) {
-  const otherType  = type === 'incident' ? 'disciplinary' : 'incident';
-  const otherTable = type === 'incident' ? 'disciplinary_records' : 'incident_reports';
-  const existing = (await fetchLinks(type, id)).map(r => r.id);
-  const { data } = await sb.from(otherTable).select('*');
-  const candidates = (data || []).filter(r => !existing.includes(r.id));
-  const opts = candidates.length
-    ? candidates.map(r => `<option value="${r.id}">${linkLabel(otherType, r)}</option>`).join('')
-    : '';
-  openModalHtml(`
-    <div class="modal-title">Link ${otherType === 'incident' ? 'incident report' : 'disciplinary record'}</div>
-    ${candidates.length
-      ? `<label>Choose a record</label><select id="hr-link-target">${opts}</select>`
-      : `<div style="font-size:13px;color:#6B7280;">No other records are available to link.</div>`}
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="window.hrViewRecord('${type}','${id}')">Cancel</button>
-      ${candidates.length ? `<button class="btn-primary" onclick="window.hrAddLink('${type}','${id}')">Link</button>` : ''}
-    </div>`);
-}
-async function hrAddLink(type, id) {
-  const targetId = val('hr-link-target');
-  if (!targetId) return;
-  const row = type === 'incident'
-    ? { incident_id: id, disciplinary_id: targetId }
-    : { disciplinary_id: id, incident_id: targetId };
-  const { error } = await sb.from('incident_disciplinary_links').insert(row);
-  if (error) { alert('Link failed: ' + error.message); return; }
-  window.flashSavedThen(() => hrViewRecord(type, id));   // reopen the originating record's view
-}
-async function hrRemoveLink(linkId, type, id) {
-  const { error } = await deleteWithRetry(() => sb.from('incident_disciplinary_links').delete().eq('id', linkId));
-  if (error) { alert('Remove failed: ' + error.message); return; }
-  hrViewRecord(type, id);
-}
-
-// ── PHASE 4b/4c — PERFORMANCE REVIEW (create with snapshot, view from snapshot)
-
-let _reviewDraft = null;   // { templateId, definition, editingId }
-
-function openReviewCreate() {
-  const posId = _card.positionId;
-  const assignedIds = new Set(_templatePositions.filter(tp => tp.position_id === posId).map(tp => tp.template_id));
-  const assigned = _templates.filter(t => assignedIds.has(t.id));
-  if (!assigned.length) {
-    openModalHtml(`
-      <div class="modal-title">Performance Review</div>
-      <div style="font-size:13px;color:#6B7280;line-height:1.6;">No review templates are assigned to this position. Assign one via <strong>Review Templates</strong> first.</div>
-      <div class="modal-actions"><button class="btn-secondary" onclick="window.hrReopenCard()">Back</button></div>`);
-    return;
-  }
-  if (assigned.length === 1) { renderReviewForm(assigned[0]); return; }
-  openModalHtml(`
-    <div class="modal-title">Choose a review template</div>
-    <div style="font-size:12px;color:#6B7280;margin-bottom:.6rem;">This position has multiple templates.</div>
-    ${assigned.map(t => `<button class="btn-secondary" style="display:block;width:100%;text-align:left;margin-bottom:6px;" onclick="window.hrPickReviewTemplate('${t.id}')">${esc(t.name)}</button>`).join('')}
-    <div class="modal-actions"><button class="btn-secondary" onclick="window.hrReopenCard()">Cancel</button></div>`);
-}
-function hrPickReviewTemplate(id) { renderReviewForm(_templates.find(t => t.id === id)); }
-
-// Editing a saved review renders from its FROZEN definition (never the live
-// template), preserving the snapshot.
-function openReviewEdit(rec) {
-  renderReviewForm(
-    { id: rec.template_id, name: 'Saved review', definition: Array.isArray(rec.frozen_definition) ? rec.frozen_definition : [] },
-    rec
-  );
-}
-
 function fieldInput(f, existingAnswer) {
   const aid = `hr-ans-${f.id}`;
   const head = `<label style="font-weight:600;">${esc(f.prompt || '(no prompt)')}</label>`;
@@ -1341,111 +959,10 @@ function fieldInput(f, existingAnswer) {
   return `${head}<textarea id="${aid}" rows="3" style="margin-bottom:.6rem;">${esc(existingAnswer ?? '')}</textarea>`;
 }
 
-function renderReviewForm(template, existing) {
-  const definition = Array.isArray(template.definition) ? template.definition : [];
-  _reviewDraft = { templateId: template.id || null, definition, editingId: existing?.id || null };
-  const answers = existing?.answers || {};
-  const fields = definition.map(f => fieldInput(f, answers[f.id])).join('');
-  openModalHtml(`
-    <div class="modal-title">${existing ? 'Edit' : 'New'} Performance Review</div>
-    <div style="font-size:12px;color:#6B7280;margin-bottom:.7rem;">Template: ${esc(template.name || '')}${existing ? ' (structure frozen at creation)' : ''}</div>
-    ${fields || '<div style="font-size:12.5px;color:#9CA3AF;">This template has no fields.</div>'}
-    <div style="border-top:.5px solid var(--stone);margin:.6rem 0 .4rem;padding-top:.6rem;"></div>
-    <div style="display:flex;gap:10px;">
-      <div style="flex:1;"><label>Period start</label><input type="date" id="hr-rev-start" value="${existing?.review_period_start || ''}" /></div>
-      <div style="flex:1;"><label>Period end</label><input type="date" id="hr-rev-end" value="${existing?.review_period_end || ''}" /></div>
-    </div>
-    <label>Review date</label><input type="date" id="hr-rev-date" value="${existing?.review_date || todayISO()}" />
-    <label style="display:flex;align-items:center;gap:8px;margin-top:.6rem;cursor:pointer;">
-      <input type="checkbox" id="hr-rev-signed" ${existing?.signed_on_file ? 'checked' : ''} style="width:auto;margin:0;" onchange="document.getElementById('hr-rev-signedwrap').style.display=this.checked?'':'none'" />
-      <span>Signed physical copy on file</span>
-    </label>
-    <div id="hr-rev-signedwrap" style="display:${existing?.signed_on_file ? '' : 'none'};">
-      <label>Signed date</label><input type="date" id="hr-rev-signeddate" value="${existing?.signed_date || ''}" />
-    </div>
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="window.hrReopenCard()">Cancel</button>
-      <button class="btn-primary" onclick="window.hrSaveReview()">Save</button>
-    </div>`);
-}
-
-async function hrSaveReview() {
-  const def = _reviewDraft.definition;
-  const answers = {};
-  for (const f of def) {
-    const aid = `hr-ans-${f.id}`;
-    if (f.type === 'numeric') {
-      if (f.allow_na && checked(`hr-na-${f.id}`)) { answers[f.id] = 'N/A'; continue; }
-      const raw = val(aid);
-      if (raw === '') { answers[f.id] = null; continue; }
-      const n = parseInt(raw, 10);
-      if (Number.isNaN(n) || n < f.min || n > f.max) { alert(`“${f.prompt}” must be a whole number from ${f.min} to ${f.max}.`); return; }
-      answers[f.id] = n;
-    } else {
-      answers[f.id] = val(aid) || null;
-    }
-  }
-  const signed = checked('hr-rev-signed');
-  const meta = {
-    review_period_start: val('hr-rev-start') || null,
-    review_period_end:   val('hr-rev-end') || null,
-    review_date:         val('hr-rev-date') || null,
-    record_date:         val('hr-rev-date') || todayISO(),
-    signed_on_file:      signed,
-    signed_date:         signed ? (val('hr-rev-signeddate') || null) : null,
-    answers,
-  };
-  let error;
-  if (_reviewDraft.editingId) {
-    // Update answers + meta ONLY — frozen_definition stays immutable.
-    ({ error } = await sb.from('performance_reviews').update({ ...meta, updated_at: nowIso() }).eq('id', _reviewDraft.editingId));
-  } else {
-    // THE SNAPSHOT: deep-copy the live definition into frozen_definition now.
-    const frozen_definition = JSON.parse(JSON.stringify(def));
-    ({ error } = await sb.from('performance_reviews').insert({
-      ...meta,
-      person_position_id: _card.ppId,
-      author_id: _authUserId,
-      template_id: _reviewDraft.templateId,
-      frozen_definition,
-    }));
-  }
-  if (error) { alert('Save failed: ' + error.message); return; }
-  window.flashSavedThen(() => reopenCard());
-}
-
 function renderAnswer(f, a) {
   if (a === null || a === undefined || a === '') return '<span style="color:#9CA3AF;">—</span>';
   return esc(String(a));
 }
-async function viewReview(rec) {
-  const gh = await granteeHeaderHtml('review', rec);
-  const def = Array.isArray(rec.frozen_definition) ? rec.frozen_definition : [];
-  const ans = rec.answers || {};
-  const rows = def.map(f => `
-    <div style="padding:.4rem 0;border-bottom:.5px solid #F0EDE8;">
-      <div style="font-size:12px;color:#6B7280;margin-bottom:1px;">${esc(f.prompt || '')}</div>
-      <div style="font-size:13.5px;color:var(--navy);font-weight:500;">${renderAnswer(f, ans[f.id])}</div>
-    </div>`).join('');
-  const period = (rec.review_period_start || rec.review_period_end)
-    ? `<div style="font-size:12px;color:#6B7280;margin-bottom:.6rem;">Period: ${rec.review_period_start ? fmtDay(rec.review_period_start) : '…'} – ${rec.review_period_end ? fmtDay(rec.review_period_end) : '…'}</div>` : '';
-  const signed = rec.signed_on_file
-    ? `<div style="font-size:12px;color:#2E6B43;margin-top:.6rem;">✓ Signed physical copy on file${rec.signed_date ? ` (${fmtDay(rec.signed_date)})` : ''}</div>` : '';
-  showRecordModal(`
-    <div class="modal-title">Performance Review</div>
-    ${gh}
-    ${metaLine(rec)}
-    ${period}
-    ${rows || '<div style="font-size:12.5px;color:#9CA3AF;">No fields.</div>'}
-    ${signed}
-    ${bannerBlock()}
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="window.hrReopenCard()">Back</button>
-      ${exportBtn('review', rec.id)}
-      ${canModifyRecord(rec) ? `<button class="btn-primary" onclick="window.hrEditRecord('review','${rec.id}')">Edit</button>` : ''}
-    </div>`);
-}
-
 // ── PHASE 4a — REVIEW TEMPLATE MANAGER + BUILDER (admin+) ───────────────────
 
 async function refreshTemplates() {
@@ -1720,12 +1237,25 @@ function openPersonnelFileFromOcc(occId) {
 // sacramental panel): person header + the reused master-detail shell.
 function openPersonnelFile(personId, institutionId) {
   if (!_ctx) return;
-  _file = { personId, institutionId };
+  // Layer 3: management (super-admin OR a supervisor above this person) vs OWN file.
+  // On your OWN file you are an EMPLOYEE (self-report), even if you're a supervisor
+  // elsewhere. Access is guarded here too (the launching button is already gated).
+  const vp = viewerPersonId();
+  const own = !!(vp && personId === vp);
+  const manage = hrHasAuthority(vp, personId, institutionId, _ctx);
+  if (!own && !manage) return;
+  // OWN file always wins: on your own file you are the EMPLOYEE (self-report), even
+  // if you're a supervisor/super-admin — you don't manage your own records.
+  const mode = own ? 'own' : 'manage';
+  _file = { personId, institutionId, mode };
   const root = document.getElementById('hr-root');
   if (!root) return;
   const name = _ctx.personName(personId);
   const titles = personTitlesIn(personId, institutionId);
   const instName = _insts.find(i => i.id === institutionId)?.name || '';
+  // Own file → "Add self report" (employee). Super-admin → archive a departed file.
+  const selfBtn = mode === 'own' ? `<button class="btn-primary" data-action="pf-add-self" style="padding:.4rem .8rem;font-size:12.5px;white-space:nowrap;">+ Add self report</button>` : '';
+  const departBtn = (mode === 'manage' && isSuperAdmin()) ? `<button class="btn-secondary" data-action="pf-mark-departed" style="padding:.4rem .8rem;font-size:12.5px;white-space:nowrap;">Archive (departed)</button>` : '';
   root.innerHTML = `
     <div class="pf-head">
       <button class="pf-back" data-action="file-back" aria-label="Back to org chart"><i class="fa-solid fa-arrow-left"></i> Org chart</button>
@@ -1736,6 +1266,7 @@ function openPersonnelFile(personId, institutionId) {
           <div class="pf-titles">${titles.length ? esc(titles.join(' · ')) : '<span style="color:#9CA3AF;">No current position</span>'}${instName ? ` <span style="color:#9CA3AF;">· ${esc(instName)}</span>` : ''}</div>
         </div>
       </div>
+      ${selfBtn || departBtn ? `<div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">${selfBtn}${departBtn}</div>` : ''}
     </div>
     <div id="pf-host" class="pf-host"></div>`;
   // Reset the shell's deep-link hash before mounting so a stale id doesn't preselect.
@@ -1746,7 +1277,8 @@ function openPersonnelFile(personId, institutionId) {
 // Merge the four record tables for (person, institution); tag each with its type;
 // order chronologically by creation. RLS scopes the result (Phase 3 widens this).
 async function fetchPersonnelRecords(personId, institutionId) {
-  const q = (table) => sb.from(table).select('*').eq('person_id', personId).eq('institution_id', institutionId);
+  // Live file = non-archived records (deleted records live only in the super-admin archive).
+  const q = (table) => sb.from(table).select('*').eq('person_id', personId).eq('institution_id', institutionId).is('archived_at', null);
   const [rev, dis, inc, mem] = await Promise.all([
     q('performance_reviews'), q('disciplinary_records'), q('incident_reports'), q('memos'),
   ]);
@@ -1770,19 +1302,21 @@ function personnelFileConfig(personId, institutionId) {
     panelKey: 'personnel',
     title: 'Personnel Record',
     newLabel: '+ Create new entry',
-    canManage: () => canEditTree(),
+    // Management mode → the shell's New/Edit/Delete (manager records). Own mode →
+    // read-only; the employee's self-report is handled by per-record controls.
+    canManage: () => _file?.mode === 'manage',
     fetchRecords: async () => { cache = await fetchPersonnelRecords(personId, institutionId); return cache; },
     fetchRecord: (id) => cache.find(r => r.id === id) || null,
     compare: (a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')),
-    searchText: (r) => `${RECORD_CHIP[r._type].label} ${createdMDY(r.created_at)} ${recordSnippet(r)}`,
+    searchText: (r) => `${RECORD_CHIP[chipKey(r)].label} ${createdMDY(r.created_at)} ${recordSnippet(r)}`,
     listItem: (r) => ({
       title: createdMDY(r.created_at),
       secondary: recordSnippet(r),
-      chips: [{ label: RECORD_CHIP[r._type].label, tone: RECORD_CHIP[r._type].tone }],
+      chips: [{ label: RECORD_CHIP[chipKey(r)].label, tone: RECORD_CHIP[chipKey(r)].tone }],
     }),
     detailHeader: (r) => ({
-      name: RECORD_CHIP[r._type].label,
-      avatarIcon: RECORD_CHIP[r._type].icon,
+      name: RECORD_CHIP[chipKey(r)].label,
+      avatarIcon: RECORD_CHIP[chipKey(r)].icon,
       chips: [{ label: `Created ${createdMDY(r.created_at)}`, tone: 'neutral' }],
     }),
     detailSections: [
@@ -1801,15 +1335,17 @@ function personnelFileConfig(personId, institutionId) {
 
 // ── Read viewer (detail) ─────────────────────────────────────────────────────
 function recordDetailHtml(r) {
+  const isSelf = r._type === 'review' && r.is_self_report;
   const meta = `<div style="font-size:11.5px;color:#6B7280;margin-bottom:.8rem;">Created ${createdMDY(r.created_at)} · ${esc(authorName(r.author_id))}${r.record_date ? ' · dated ' + formatDateMDY(r.record_date) : ''}</div>`;
   const banner = `<div style="font-size:10.5px;color:#B9A88F;font-style:italic;border-top:.5px solid var(--stone);margin-top:1rem;padding-top:.55rem;line-height:1.5;">${esc(bannerText())}</div>`;
+  const controls = recordControlsHtml(r);
   if (r._type === 'memo') {
     return meta
       + (r.subject ? `<div style="font-weight:600;color:var(--navy);margin-bottom:.3rem;">${esc(r.subject)}</div>` : '')
-      + `<div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;">${esc(r.body || '')}</div>`;
+      + `<div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;">${esc(r.body || '')}</div>` + controls;
   }
   if (r._type === 'incident') {
-    return meta + `<div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;">${esc(r.description || '')}</div>` + banner;
+    return meta + `<div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;">${esc(r.description || '')}</div>` + banner + controls;
   }
   if (r._type === 'disciplinary') {
     const field = (l, v) => v ? `<div class="pf-flabel">${l}</div><div class="pf-fval">${esc(v)}</div>` : '';
@@ -1817,9 +1353,14 @@ function recordDetailHtml(r) {
     const signed = r.signed_on_file
       ? `<div style="font-size:12px;color:#2E6B43;">✓ Signed physical copy on file${r.signed_date ? ` (${formatDateMDY(r.signed_date)})` : ''}</div>`
       : `<div style="font-size:12px;color:#9CA3AF;">Signed copy not yet on file</div>`;
-    return meta + sev + field('Narrative', r.narrative) + field('Corrective action', r.corrective_action) + signed + banner;
+    return meta + sev + field('Narrative', r.narrative) + field('Corrective action', r.corrective_action) + signed + banner + controls;
   }
-  // review
+  // review / self-report
+  const status = isSelf
+    ? (r.finalized
+        ? `<div style="font-size:12px;color:#2E6B43;margin-bottom:.6rem;"><i class="fa-solid fa-lock" style="margin-right:4px;"></i>Finalized${r.finalized_at ? ' ' + createdMDY(r.finalized_at) : ''}${r.finalized_by ? ' · by ' + esc(authorName(r.finalized_by)) : ''} — locked</div>`
+        : `<div style="font-size:12px;color:#9A6A1E;margin-bottom:.6rem;">Draft — editable by ${esc(authorName(r.author_id))} until a supervisor finalizes it.</div>`)
+    : '';
   const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
   const ans = r.answers || {};
   const period = (r.review_period_start || r.review_period_end)
@@ -1831,13 +1372,32 @@ function recordDetailHtml(r) {
     </div>`).join('');
   const signed = r.signed_on_file
     ? `<div style="font-size:12px;color:#2E6B43;margin-top:.6rem;">✓ Signed physical copy on file${r.signed_date ? ` (${formatDateMDY(r.signed_date)})` : ''}</div>` : '';
-  return meta + period + (rows || '<div style="font-size:12.5px;color:#9CA3AF;">Empty — use Edit to fill this evaluation in.</div>') + signed + banner;
+  const emptyMsg = isSelf ? 'Empty self-report.' : 'Empty — use Edit to fill this evaluation in.';
+  return meta + status + period + (rows || `<div style="font-size:12.5px;color:#9CA3AF;">${emptyMsg}</div>`) + signed + banner + controls;
+}
+
+// Per-record conditional controls (rendered inside the read viewer, fully gated by
+// mode + record). Self-reports only: manager FINALIZE, or the author EDIT/DELETE
+// until finalized. (Manager records use the shell's New/Edit/Delete; own-mode files
+// are otherwise read-only.)
+function recordControlsHtml(r) {
+  if (!(r._type === 'review' && r.is_self_report)) return '';
+  const vp = viewerPersonId();
+  const btns = [];
+  if (!r.finalized && _file?.mode === 'manage' && hrCanFinalizeSelfReport(vp, _file.personId, _file.institutionId, _ctx)) {
+    btns.push(`<button class="btn-primary" style="padding:.35rem .85rem;font-size:12.5px;" onclick="window.hrPfFinalize('${r.id}')">Finalize self-report</button>`);
+  }
+  if (!r.finalized && _file?.mode === 'own' && r.author_id === _authUserId) {
+    btns.push(`<button class="btn-secondary" style="padding:.35rem .85rem;font-size:12.5px;" onclick="window.hrPfEditSelfReport('${r.id}')">Edit</button>`);
+    btns.push(`<button style="background:none;border:none;color:#A32D2D;font-size:12px;cursor:pointer;" onclick="window.hrPfArchiveOwn('${r.id}')">Delete</button>`);
+  }
+  return btns.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:.9rem;">${btns.join('')}</div>` : '';
 }
 
 // ── Cross-file linking (generic record_links + the shared linked-row format) ──
 function linkedSectionHtml(r) {
   if (typeof window !== 'undefined') setTimeout(() => populatePfLinks(r._type, r.id), 0);
-  const picker = canEditTree()
+  const picker = _file?.mode === 'manage'
     ? `<button class="card-action" style="margin-top:.55rem;" onclick="window.hrPfOpenLinkPicker('${r._type}','${r.id}')">+ Link a record</button>` : '';
   return `<div id="pf-links-${esc(r.id)}"><div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">Loading…</div></div>${picker}`;
 }
@@ -1849,29 +1409,31 @@ async function populatePfLinks(type, id) {
   const byType = {}; ends.forEach(e => { (byType[e.type] ||= []).push(e.id); });
   const rowByKey = {};
   for (const t of Object.keys(byType)) {
-    const { data } = await sb.from(RECORD_META[t].table).select('*').in('id', byType[t]);
+    const { data } = await sb.from(RECORD_META[t].table).select('*').in('id', byType[t]).is('archived_at', null);
     (data || []).forEach(row => { rowByKey[`${t}:${row.id}`] = row; });
   }
+  const canManage = _file?.mode === 'manage';
   wrap.innerHTML = ends.map(e => {
-    const row = rowByKey[`${e.type}:${e.id}`]; if (!row) return '';
-    const title = `${RECORD_CHIP[e.type].label} · ${createdMDY(row.created_at)}`;
-    const chips = chipHtml({ label: RECORD_CHIP[e.type].label, tone: RECORD_CHIP[e.type].tone });
+    const row = rowByKey[`${e.type}:${e.id}`]; if (!row) return '';   // skips archived/missing
+    const ck = chipKey(row);
+    const title = `${RECORD_CHIP[ck].label} · ${createdMDY(row.created_at)}`;
+    const chips = chipHtml({ label: RECORD_CHIP[ck].label, tone: RECORD_CHIP[ck].tone });
     const openCall = `location.hash='#/personnel/${e.id}'`;   // select in this same file
-    const unlinkCall = canEditTree() ? `window.hrPfUnlink('${type}','${id}','${e.type}','${e.id}')` : '';
+    const unlinkCall = canManage ? `window.hrPfUnlink('${type}','${id}','${e.type}','${e.id}')` : '';
     return linkRowHtml({ openCall, title: esc(title), chipsHtml: chips, unlinkCall });
   }).join('') || `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No linked records.</div>`;
 }
 // Picker = this person's OTHER records in this institution of a DIFFERENT type
 // (the record_links mechanism forbids same-type pairs), not already linked.
 async function hrPfOpenLinkPicker(type, id) {
-  if (!_file) return;
+  if (!_file || _file.mode !== 'manage') return;
   const [all, ends] = await Promise.all([
     fetchPersonnelRecords(_file.personId, _file.institutionId),
     getLinks(type, id),
   ]);
   const linked = new Set(ends.map(e => `${e.type}:${e.id}`));
   const candidates = all.filter(r => r._type !== type && !linked.has(`${r._type}:${r.id}`));
-  const opts = candidates.map(r => `<option value="${r._type}:${r.id}">${esc(RECORD_CHIP[r._type].label)} · ${esc(createdMDY(r.created_at))} — ${esc(recordSnippet(r))}</option>`).join('');
+  const opts = candidates.map(r => `<option value="${r._type}:${r.id}">${esc(RECORD_CHIP[chipKey(r)].label)} · ${esc(createdMDY(r.created_at))} — ${esc(recordSnippet(r))}</option>`).join('');
   openModalHtml(`
     <div class="modal-title">Link a record</div>
     ${candidates.length
@@ -1895,7 +1457,7 @@ async function hrPfUnlink(type, id, t2, id2) {
 
 // ── Create new entry (type picker → seeded insert → open in the shell) ───────
 function hrPfCreate() {
-  if (!canEditTree() || !_file) return;
+  if (!_file || _file.mode !== 'manage') return;
   const btn = (type, emoji, label) => `<button class="btn-secondary" style="text-align:left;width:100%;display:flex;align-items:center;gap:8px;" onclick="window.hrPfNew('${type}')"><i class="fa-solid ${RECORD_CHIP[type].icon}" style="color:var(--cardinal);width:16px;"></i> ${label}</button>`;
   openModalHtml(`
     <div class="modal-title">Create new entry</div>
@@ -1957,6 +1519,11 @@ async function hrPfInsert(type, extra) {
 
 // ── Inline edit (the shell's edit pane) + save / delete ──────────────────────
 function recordEditForm(r) {
+  // Self-reports are authored + edited by the EMPLOYEE on their own file; a manager
+  // finalizes (read view), never edits the content here.
+  if (r._type === 'review' && r.is_self_report) {
+    return `<div style="font-size:13px;color:#6B7280;line-height:1.6;">This is the employee’s self-report. ${r.finalized ? 'It is finalized and locked.' : 'You can finalize it from the read view, but its content is edited by the employee.'}</div>`;
+  }
   if (r._type === 'memo') {
     return `
       <label>Subject</label><input id="pf-memo-subject" value="${esc(r.subject || '')}" />
@@ -2005,6 +1572,8 @@ function recordEditForm(r) {
 
 async function savePersonnelRecord(r) {
   if (!r) return false;
+  if (_file?.mode !== 'manage') return false;   // only managers use the shell edit
+  if (r._type === 'review' && r.is_self_report) { alert('Self-reports are edited by the employee on their own file.'); return false; }
   const type = r._type;
   let fields;
   if (type === 'memo') {
@@ -2054,34 +1623,186 @@ async function savePersonnelRecord(r) {
   return true;
 }
 
+// Manager delete = SOFT delete to the super-admin archive (never hard-deleted here;
+// records stay recoverable/auditable). Cross-file links are kept (they resolve only
+// to non-archived records, so an archived file's links simply stop showing).
 async function deletePersonnelRecord(r) {
   if (!r) return false;
+  if (_file?.mode !== 'manage') return false;
   const label = RECORD_META[r._type].label.toLowerCase();
-  if (!confirm(`Delete this ${label}? This cannot be undone.`)) return false;
-  // Remove any cross-file links touching this record first (avoid dangling pairs).
-  const ends = await getLinks(r._type, r.id);
-  await Promise.all(ends.map(e => unlinkRecords(r._type, r.id, e.type, e.id)));
-  const { error } = await deleteWithRetry(() => sb.from(RECORD_META[r._type].table).delete().eq('id', r.id));
+  if (!confirm(`Delete this ${label}? It moves to the archive (super-admin only) and leaves this file.`)) return false;
+  const { error } = await withWriteRetry(() => sb.from(RECORD_META[r._type].table).update({ archived_at: nowIso() }).eq('id', r.id), { kind: 'update' });
   if (error) { alert('Delete failed: ' + error.message); return false; }
-  logActivity({ action: `deleted ${label}`, entityType: 'hr_record', entityName: RECORD_META[r._type].label });
+  logActivity({ action: `archived ${label}`, entityType: 'hr_record', entityName: RECORD_META[r._type].label });
   return true;
+}
+
+// ── Self-report (own file): add / edit / delete until finalized; finalize (manager) ──
+async function hrPfAddSelfReport() {
+  if (!_file || _file.mode !== 'own') return;
+  const frozen = JSON.parse(JSON.stringify(SELF_REPORT_TEMPLATE));
+  const base = {
+    person_id: _file.personId, institution_id: _file.institutionId, author_id: _authUserId,
+    record_date: todayISO(), review_date: todayISO(), is_self_report: true, frozen_definition: frozen,
+  };
+  const { data, error } = await withWriteRetry(() => sb.from('performance_reviews').insert(base).select('id').single(), { kind: 'create' });
+  if (error) { alert('Create failed: ' + error.message); return; }
+  logActivity({ action: 'created self report', entityType: 'hr_record', entityName: 'Self-Report' });
+  await refreshActivePanel();
+  location.hash = `#/personnel/${data.id}`;
+  hrPfEditSelfReport(data.id);   // open straight into the editor
+}
+async function hrPfEditSelfReport(id) {
+  const { data: r } = await sb.from('performance_reviews').select('*').eq('id', id).maybeSingle();
+  if (!r || r.finalized || r.author_id !== _authUserId) { alert('This self-report can no longer be edited.'); return; }
+  const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
+  const ans = r.answers || {};
+  const fields = def.map(f => fieldInput(f, ans[f.id])).join('');
+  openModalHtml(`
+    <div class="modal-title">Self-Report</div>
+    <div style="font-size:12px;color:#6B7280;margin-bottom:.6rem;">Editable until a supervisor finalizes it.</div>
+    ${fields}
+    <label>Date</label><input type="date" id="hr-rev-date" value="${r.review_date || todayISO()}" />
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" onclick="window.hrPfSaveSelfReport('${id}')">Save</button>
+    </div>`);
+}
+async function hrPfSaveSelfReport(id) {
+  const { data: r } = await sb.from('performance_reviews').select('*').eq('id', id).maybeSingle();
+  if (!r || r.finalized || r.author_id !== _authUserId) { alert('This self-report can no longer be edited.'); return; }
+  const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
+  const answers = {};
+  for (const f of def) {
+    const aid = `hr-ans-${f.id}`;
+    if (f.type === 'numeric') {
+      if (f.allow_na && checked(`hr-na-${f.id}`)) { answers[f.id] = 'N/A'; continue; }
+      const raw = val(aid);
+      if (raw === '') { answers[f.id] = null; continue; }
+      const n = parseInt(raw, 10);
+      if (Number.isNaN(n) || n < f.min || n > f.max) { alert(`“${f.prompt}” must be a whole number from ${f.min} to ${f.max}.`); return; }
+      answers[f.id] = n;
+    } else { answers[f.id] = val(aid) || null; }
+  }
+  const { error } = await withWriteRetry(() => sb.from('performance_reviews').update({ answers, review_date: val('hr-rev-date') || null, updated_at: nowIso() }).eq('id', id), { kind: 'update' });
+  if (error) { alert('Save failed: ' + error.message); return; }
+  window.flashSavedThen(async () => { closeModal(); await refreshActivePanel(); });
+}
+async function hrPfFinalize(id) {
+  if (!_file || _file.mode !== 'manage') return;
+  if (!hrCanFinalizeSelfReport(viewerPersonId(), _file.personId, _file.institutionId, _ctx)) return;
+  if (!confirm('Finalize this self-report? The employee can no longer edit it; it becomes read-only.')) return;
+  const { error } = await withWriteRetry(() => sb.from('performance_reviews').update({ finalized: true, finalized_at: nowIso(), finalized_by: _authUserId, updated_at: nowIso() }).eq('id', id), { kind: 'update' });
+  if (error) { alert('Finalize failed: ' + error.message); return; }
+  logActivity({ action: 'finalized self report', entityType: 'hr_record', entityName: 'Self-Report' });
+  await refreshActivePanel();
+}
+async function hrPfArchiveOwn(id) {
+  const { data: r } = await sb.from('performance_reviews').select('*').eq('id', id).maybeSingle();
+  if (!r || r.finalized || r.author_id !== _authUserId) { alert('This self-report can no longer be deleted.'); return; }
+  if (!confirm('Delete this self-report? It moves to the archive.')) return;
+  const { error } = await withWriteRetry(() => sb.from('performance_reviews').update({ archived_at: nowIso() }).eq('id', id), { kind: 'update' });
+  if (error) { alert('Delete failed: ' + error.message); return; }
+  await refreshActivePanel();
+  location.hash = '#/personnel';
+}
+
+// ── Mark a person departed from this institution (super-admin) → file archives ──
+async function hrPfMarkDeparted() {
+  if (!_file || !isSuperAdmin()) return;
+  const name = _ctx.personName(_file.personId);
+  if (!confirm(`Mark ${name} as departed from this institution? Their positions here are vacated and their file moves to the archive (super-admin only).`)) return;
+  const { error } = await withWriteRetry(() => sb.from('institution_departures')
+    .upsert({ person_id: _file.personId, institution_id: _file.institutionId }, { onConflict: 'person_id,institution_id' }), { kind: 'create' });
+  if (error) { alert('Failed: ' + error.message); return; }
+  // Vacate their current occupancies in this institution (soft-end).
+  const occIds = [];
+  for (const [posId, occs] of _ctx.currentByPos) {
+    if (_ctx.posById.get(posId)?.institution_id !== _file.institutionId) continue;
+    occs.forEach(o => { if (o.person_id === _file.personId) occIds.push(o.id); });
+  }
+  if (occIds.length) await sb.from('person_positions').update({ unlinked_at: nowIso() }).in('id', occIds);
+  logActivity({ action: 'archived departed personnel file', entityType: 'hr_record', entityName: name });
+  _file = null;
+  if ((location.hash || '').startsWith('#/personnel')) location.hash = '';
+  await loadHr();
+}
+
+// ── Super-admin Archive: deleted records + departed-employee files, by name ────
+async function openHrArchive() {
+  if (!isSuperAdmin()) return;
+  openModalHtml(`<div class="modal-title">HR Archive</div><div style="font-size:12.5px;color:#9CA3AF;">Loading…</div>`);
+  const TABLES = [['review', 'performance_reviews'], ['disciplinary', 'disciplinary_records'], ['incident', 'incident_reports'], ['memo', 'memos']];
+  const out = [];
+  // (a) Individually deleted records.
+  for (const [type, table] of TABLES) {
+    const { data } = await sb.from(table).select('*').not('archived_at', 'is', null);
+    (data || []).forEach(r => out.push({ ...r, _type: type, _reason: 'deleted' }));
+  }
+  // (b) Whole files of departed (person, institution) pairs (their live records).
+  const { data: deps } = await sb.from('institution_departures').select('*');
+  for (const d of (deps || [])) {
+    for (const [type, table] of TABLES) {
+      const { data } = await sb.from(table).select('*').eq('person_id', d.person_id).eq('institution_id', d.institution_id).is('archived_at', null);
+      (data || []).forEach(r => out.push({ ...r, _type: type, _reason: 'departed' }));
+    }
+  }
+  const byPerson = new Map();
+  out.forEach(r => { const n = _ctx?.personName(r.person_id) || 'Unknown'; (byPerson.get(n) || byPerson.set(n, []).get(n)).push(r); });
+  const groups = [...byPerson.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  _archiveCache = out;
+  const body = groups.length
+    ? groups.map(([name, recs]) => `
+        <div style="margin-bottom:.85rem;">
+          <div style="font-weight:600;color:var(--navy);font-size:13.5px;margin-bottom:.35rem;">${esc(name)}</div>
+          ${recs.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).map(r => `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:.4rem .55rem;background:#F8F7F4;border:.5px solid var(--stone);border-radius:6px;margin-bottom:.3rem;">
+              <span style="font-size:12.5px;color:var(--navy);">${esc(RECORD_CHIP[chipKey(r)].label)} · ${esc(createdMDY(r.created_at))} <span style="color:#9CA3AF;">(${r._reason})</span></span>
+              <span style="display:flex;gap:8px;flex-shrink:0;">
+                <button class="card-action" onclick="window.hrArchiveView('${r._type}','${r.id}')">View</button>
+                <button class="card-action" style="color:#A32D2D;" onclick="window.hrArchiveDelete('${r._type}','${r.id}')">Delete permanently</button>
+              </span>
+            </div>`).join('')}
+        </div>`).join('')
+    : `<div style="font-size:13px;color:#6B7280;font-style:italic;">The archive is empty.</div>`;
+  openModalHtml(`
+    <div class="modal-title">HR Archive</div>
+    <div style="font-size:11.5px;color:#9CA3AF;margin-bottom:.7rem;">Deleted files and departed-employee files, filed by name. Super-admin only.</div>
+    ${body}
+    <div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Close</button></div>`);
+}
+function hrArchiveView(type, id) {
+  const r = (_archiveCache || []).find(x => x._type === type && x.id === id);
+  if (!r) return;
+  // _file is null here → recordControlsHtml renders nothing (read-only).
+  openModalHtml(`
+    <div class="modal-title">${esc(RECORD_CHIP[chipKey(r)].label)} — archived</div>
+    ${recordDetailHtml(r)}
+    <div class="modal-actions"><button class="btn-secondary" onclick="window.hrReopenArchive()">Back</button></div>`);
+}
+function hrReopenArchive() { openHrArchive(); }
+async function hrArchiveDelete(type, id) {
+  if (!isSuperAdmin()) return;
+  if (!confirm('Permanently delete this record from the archive? This cannot be undone.')) return;
+  const ends = await getLinks(type, id);
+  await Promise.all(ends.map(e => unlinkRecords(type, id, e.type, e.id)));
+  const { error } = await deleteWithRetry(() => sb.from(RECORD_META[type].table).delete().eq('id', id));
+  if (error) { alert('Delete failed: ' + error.message); return; }
+  logActivity({ action: 'permanently deleted archived record', entityType: 'hr_record', entityName: RECORD_META[type].label });
+  openHrArchive();
 }
 
 // ── Expose modal-button + record handlers (tree actions use delegation) ─────
 
 Object.assign(window, {
-  hrSaveInstitution, hrSavePosition, hrSaveMove, hrSaveLink,
-  // records
-  hrReopenCard: reopenCard, hrNewRecord, hrViewRecord, hrEditRecord, hrDeleteRecord, hrExportPdf,
-  hrSaveMemo, hrSaveIncident, hrSaveDisciplinary, hrDisSignedToggle,
-  // cross-linking
-  hrOpenLinkPicker, hrAddLink, hrRemoveLink,
-  // reviews
-  hrPickReviewTemplate, hrSaveReview,
+  hrSaveInstitution, hrSavePosition, hrSaveMove, hrSaveLink, hrExportPdf,
   // template builder
   hrNewTemplate, hrStartFromStarter, hrEditTemplate, hrDeleteTemplate,
   hrCloseBuilder, hrTbAdd, hrTbMove, hrTbDel, hrSaveTemplate,
   // personnel record panel (Phase 2)
   hrPfNew, hrPfNewReviewTemplate, hrPfNewReviewStarter,
   hrPfOpenLinkPicker, hrPfDoLink, hrPfUnlink,
+  // Phase 3 — self-report, finalize, archive
+  hrPfEditSelfReport, hrPfSaveSelfReport, hrPfFinalize, hrPfArchiveOwn,
+  hrArchiveView, hrReopenArchive, hrArchiveDelete,
 });
