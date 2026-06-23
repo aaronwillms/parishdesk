@@ -112,6 +112,8 @@ let _templatePositions = [];   // review_template_positions rows
 let _builder = null;           // active template-builder working state
 let _file = null;              // active personnel file context: { personId, institutionId, mode }
 let _archiveCache = [];        // archived records currently shown in the super-admin Archive
+let _cfDef = null;             // active conditional-form def tree (drives live visibility re-eval)
+let _cfCtx = null;             // { recordType, recordId, personId, institutionId } for link fields
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -937,31 +939,231 @@ function labelForPP(ppId) {
   }
   return 'Record';
 }
-function fieldInput(f, existingAnswer) {
+// ════════════════════════════════════════════════════════════════════════════
+// CONDITIONAL FORM ENGINE (cf*) — recursive, DATA-IN-DEF, freeze-safe.
+// A def is a TREE: a field def {id, type, prompt, ...cfg, visibleWhen?:{field,equals}}
+// or a group {id, type:'group', prompt, options:[...], branches:{value:[childDef]}}.
+// The SAME def drives: live edit rendering (cfRenderFields), answer collection
+// (cfReadAnswers — walks the tree, keeps only VISIBLE fields), and the FROZEN read
+// view (cfRenderAnswerTree — evaluates the FROZEN visibleWhen against FROZEN answers,
+// so a saved record renders exactly as it was, never re-applying live/current logic).
+// Field types: text · numeric · descriptive · selective · boolean · date · scale · link · group
+// ════════════════════════════════════════════════════════════════════════════
+function cfSlug(v) { return String(v).replace(/[^a-z0-9]+/gi, '_'); }
+// Flat index of every field by id (incl. group-branch children) for the active op.
+let _cfBy = {};
+function cfFlatten(defs, map) {
+  map = map || {};
+  for (const f of (defs || [])) { map[f.id] = f; if (f.type === 'group') for (const o of (f.options || [])) cfFlatten(f.branches?.[o] || [], map); }
+  return map;
+}
+// TRANSITIVE visibility: a field shows iff its own visibleWhen passes AND its
+// controlling field is itself visible. So a conditional nested behind another
+// conditional (3c) hides correctly even in a flat, builder-authored definition.
+function cfVisRec(f, answers, seen) {
+  if (!f.visibleWhen) return true;
+  if (seen.has(f.id)) return true;            // cycle guard
+  seen.add(f.id);
+  const ctrl = _cfBy[f.visibleWhen.field];
+  if (ctrl && !cfVisRec(ctrl, answers, seen)) return false;
+  return answers[f.visibleWhen.field] === f.visibleWhen.equals;
+}
+function cfVisible(f, answers) { return cfVisRec(f, answers, new Set()); }
+
+// ── Live edit rendering ──────────────────────────────────────────────────────
+function cfRenderFields(defs, answers) { return defs.map(f => cfRenderField(f, answers)).join(''); }
+function cfRenderField(f, answers) {
   const aid = `hr-ans-${f.id}`;
   const head = `<label style="font-weight:600;">${esc(f.prompt || '(no prompt)')}</label>`;
+  const a = answers[f.id];
+  const wrap = (inner) => `<div class="cf-f" id="cf-wrap-${f.id}" style="margin-bottom:.6rem;${cfVisible(f, answers) ? '' : 'display:none;'}">${inner}</div>`;
+
+  if (f.type === 'group') {
+    const sel = a ?? '';
+    const opts = `<option value="">— Select —</option>` + (f.options || []).map(o => `<option value="${esc(o)}"${sel === o ? ' selected' : ''}>${esc(o)}</option>`).join('');
+    const branches = (f.options || []).map(o =>
+      `<div class="cf-branch" id="cf-branch-${f.id}-${cfSlug(o)}" style="${sel === o ? '' : 'display:none;'}border-left:2px solid var(--stone);padding-left:.7rem;margin-top:.4rem;">${cfRenderFields(f.branches?.[o] || [], answers)}</div>`).join('');
+    return wrap(`${head}<select id="${aid}" data-cf="1" onchange="window.cfReeval()" style="margin-bottom:.3rem;">${opts}</select>${branches}`);
+  }
+  if (f.type === 'boolean') {
+    return wrap(`<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;"><input type="checkbox" id="${aid}" data-cf="1" ${a === true ? 'checked' : ''} onchange="window.cfReeval()" style="width:auto;margin:0;accent-color:var(--cardinal);" /><span>${esc(f.prompt || '')}</span></label>`);
+  }
+  if (f.type === 'date') {
+    return wrap(`${head}<input type="date" id="${aid}" value="${esc(String(a || '').slice(0, 10))}" />`);
+  }
+  if (f.type === 'scale') {
+    const min = f.min ?? 1, max = f.max ?? 5;
+    let btns = '';
+    for (let n = min; n <= max; n++) {
+      const on = a === n;
+      btns += `<button type="button" data-v="${n}" onclick="window.cfScalePick('${f.id}',${n})" style="min-width:36px;padding:.3rem .55rem;border:1px solid ${on ? 'var(--cardinal)' : '#D1C9BE'};background:${on ? 'var(--cardinal)' : '#fff'};color:${on ? '#fff' : 'var(--navy)'};border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">${n}</button>`;
+    }
+    const note = (f.lowLabel || f.highLabel) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:4px;">${esc(min)} = ${esc(f.lowLabel || 'lowest')} · ${esc(max)} = ${esc(f.highLabel || 'highest')}</div>` : '';
+    return wrap(`${head}<input type="hidden" id="${aid}" value="${a ?? ''}" /><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;" id="cf-scale-${f.id}">${btns}</div>${note}`);
+  }
+  if (f.type === 'link') {
+    const lbl = a?.label ? esc(a.label) : '<span style="color:#9CA3AF;">No record linked</span>';
+    return wrap(`${head}<input type="hidden" id="${aid}" value='${a ? esc(JSON.stringify(a)) : ''}' />
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px;">
+        <span id="cf-link-lbl-${f.id}" style="font-size:13px;color:var(--navy);">${lbl}</span>
+        <button type="button" class="btn-secondary" style="padding:.3rem .7rem;font-size:12px;" onclick="window.cfLinkPick('${f.id}','${esc(f.scope || 'incident')}')">${a ? 'Change' : 'Link a record'}</button>
+      </div>`);
+  }
   if (f.type === 'numeric') {
-    const naId = `hr-na-${f.id}`;
-    const isNa = existingAnswer === 'N/A';
+    const isNa = a === 'N/A';
     const naBox = f.allow_na
-      ? `<label style="display:inline-flex;align-items:center;gap:5px;font-weight:400;margin-left:10px;cursor:pointer;"><input type="checkbox" id="${naId}" ${isNa ? 'checked' : ''} style="width:auto;margin:0;" onchange="document.getElementById('${aid}').disabled=this.checked" /> N/A</label>` : '';
-    return `${head}<div style="display:flex;align-items:center;gap:4px;margin-bottom:.6rem;">
-      <input type="number" id="${aid}" min="${f.min}" max="${f.max}" step="1" value="${isNa ? '' : esc(existingAnswer ?? '')}" ${isNa ? 'disabled' : ''} style="width:90px;" />
-      <span style="font-size:11px;color:#9CA3AF;">(${f.min}–${f.max})</span>${naBox}
-    </div>`;
+      ? `<label style="display:inline-flex;align-items:center;gap:5px;font-weight:400;margin-left:10px;cursor:pointer;"><input type="checkbox" id="hr-na-${f.id}" ${isNa ? 'checked' : ''} style="width:auto;margin:0;" onchange="document.getElementById('${aid}').disabled=this.checked" /> N/A</label>` : '';
+    return wrap(`${head}<div style="display:flex;align-items:center;gap:4px;">
+      <input type="number" id="${aid}" min="${f.min}" max="${f.max}" step="1" value="${isNa ? '' : esc(a ?? '')}" ${isNa ? 'disabled' : ''} style="width:90px;" />
+      <span style="font-size:11px;color:#9CA3AF;">(${f.min}–${f.max})</span>${naBox}</div>`);
   }
   if (f.type === 'descriptive') {
-    return `${head}<select id="${aid}" style="margin-bottom:.6rem;"><option value="">— Select —</option>${(f.labels || []).map(l => `<option value="${esc(l)}"${existingAnswer === l ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+    return wrap(`${head}<select id="${aid}"><option value="">— Select —</option>${(f.labels || []).map(l => `<option value="${esc(l)}"${a === l ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`);
   }
   if (f.type === 'selective') {
-    return `${head}<select id="${aid}" style="margin-bottom:.6rem;"><option value="">— Select —</option>${(f.options || []).map(o => `<option value="${esc(o)}"${existingAnswer === o ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+    return wrap(`${head}<select id="${aid}"><option value="">— Select —</option>${(f.options || []).map(o => `<option value="${esc(o)}"${a === o ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`);
   }
-  return `${head}<textarea id="${aid}" rows="3" style="margin-bottom:.6rem;">${esc(existingAnswer ?? '')}</textarea>`;
+  return wrap(`${head}<textarea id="${aid}" rows="3">${esc(a ?? '')}</textarea>`);
 }
 
-function renderAnswer(f, a) {
+// Re-evaluate live visibility after a controlling input changes (boolean / group select).
+function cfReeval() {
+  if (!_cfDef) return;
+  _cfBy = cfFlatten(_cfDef);
+  const raw = cfReadRaw(_cfDef);
+  const apply = (defs) => {
+    for (const f of defs) {
+      const w = document.getElementById(`cf-wrap-${f.id}`);
+      if (w) w.style.display = cfVisible(f, raw) ? '' : 'none';
+      if (f.type === 'group') {
+        const sel = raw[f.id] ?? '';
+        for (const o of (f.options || [])) {
+          const br = document.getElementById(`cf-branch-${f.id}-${cfSlug(o)}`);
+          if (br) br.style.display = sel === o ? '' : 'none';
+          apply(f.branches?.[o] || []);
+        }
+      }
+    }
+  };
+  apply(_cfDef);
+}
+function cfScalePick(fieldId, n) {
+  const el = document.getElementById(`hr-ans-${fieldId}`);
+  if (el) el.value = String(n);
+  document.querySelectorAll(`#cf-scale-${fieldId} button`).forEach(b => {
+    const on = Number(b.dataset.v) === n;
+    b.style.background = on ? 'var(--cardinal)' : '#fff';
+    b.style.color = on ? '#fff' : 'var(--navy)';
+    b.style.borderColor = on ? 'var(--cardinal)' : '#D1C9BE';
+  });
+  cfReeval();
+}
+
+// ── Answer collection (walks the tree; keeps only VISIBLE fields) ─────────────
+function cfFieldValue(f) {
+  const el = document.getElementById(`hr-ans-${f.id}`);
+  if (f.type === 'boolean') return el ? el.checked : false;
+  if (f.type === 'scale') { const v = el?.value; return (v === '' || v == null) ? null : parseInt(v, 10); }
+  if (f.type === 'link') { try { return el?.value ? JSON.parse(el.value) : null; } catch { return null; } }
+  if (f.type === 'numeric') {
+    if (f.allow_na && document.getElementById(`hr-na-${f.id}`)?.checked) return 'N/A';
+    const raw = el?.value; if (raw === '' || raw == null) return null;
+    const n = parseInt(raw, 10); return Number.isNaN(n) ? null : n;
+  }
+  return el ? (el.value || null) : null;
+}
+function cfReadRaw(defs, out = {}) {
+  for (const f of defs) {
+    out[f.id] = cfFieldValue(f);
+    if (f.type === 'group') for (const o of (f.options || [])) cfReadRaw(f.branches?.[o] || [], out);
+  }
+  return out;
+}
+function cfValidate(defs, raw) {
+  for (const f of defs) {
+    if (!cfVisible(f, raw)) continue;
+    if (f.type === 'numeric') {
+      const v = raw[f.id];
+      if (v != null && v !== 'N/A' && (v < f.min || v > f.max)) return `“${f.prompt}” must be a whole number from ${f.min} to ${f.max}.`;
+    }
+    if (f.type === 'group') { const sel = raw[f.id]; if (sel && f.branches?.[sel]) { const e = cfValidate(f.branches[sel], raw); if (e) return e; } }
+  }
+  return null;
+}
+function cfCollect(defs, raw, out) {
+  for (const f of defs) {
+    if (!cfVisible(f, raw)) continue;     // hidden field (and its subtree) not saved
+    out[f.id] = raw[f.id] === undefined ? null : raw[f.id];
+    if (f.type === 'group') { const sel = raw[f.id]; if (sel && f.branches?.[sel]) cfCollect(f.branches[sel], raw, out); }
+  }
+  return out;
+}
+function cfReadAnswers(defs) { return cfCollect(defs, cfReadRaw(defs), {}); }
+
+// Dual-write the link fields' record_links rows (the {id,label} is already in answers,
+// which is the frozen source of truth; this makes the link discoverable live + both-sided).
+async function cfWriteLinks(defs, answers, recordType, recordId) {
+  const walk = async (ds) => {
+    for (const f of ds) {
+      if (!cfVisible(f, answers)) continue;
+      if (f.type === 'link' && answers[f.id]?.id) {
+        await linkRecords(recordType, recordId, f.scope || 'incident', answers[f.id].id);
+      }
+      if (f.type === 'group') { const sel = answers[f.id]; if (sel && f.branches?.[sel]) await walk(f.branches[sel]); }
+    }
+  };
+  await walk(defs);
+}
+
+// ── Frozen read view (evaluate FROZEN rules against FROZEN answers) ───────────
+function cfRenderAnswerTree(defs, answers) {
+  return defs.map(f => {
+    if (!cfVisible(f, answers)) return '';   // exactly what was visible at save
+    const row = (val, extra = '') => `<div style="padding:.4rem 0;border-bottom:.5px solid #F0EDE8;"><div style="font-size:12px;color:#6B7280;margin-bottom:1px;">${esc(f.prompt || '')}</div><div style="font-size:13.5px;color:var(--navy);font-weight:500;">${val}</div></div>${extra}`;
+    if (f.type === 'group') {
+      const sel = answers[f.id];
+      const branch = (sel && f.branches?.[sel]) ? cfRenderAnswerTree(f.branches[sel], answers) : '';
+      return row(cfAnswerValue(f, sel), branch ? `<div style="border-left:2px solid var(--stone);padding-left:.7rem;">${branch}</div>` : '');
+    }
+    return row(cfAnswerValue(f, answers[f.id]));
+  }).join('');
+}
+function cfAnswerValue(f, a) {
+  if (f.type === 'boolean') return a === true ? 'Yes' : (a === false ? 'No' : '<span style="color:#9CA3AF;">—</span>');
+  if (f.type === 'date') return a ? esc(formatDateMDY(String(a).slice(0, 10))) : '<span style="color:#9CA3AF;">—</span>';
+  if (f.type === 'link') return a?.label ? esc(a.label) : '<span style="color:#9CA3AF;">—</span>';
+  if (f.type === 'scale') return (a == null || a === '') ? '<span style="color:#9CA3AF;">—</span>' : `${esc(String(a))}${(f.lowLabel || f.highLabel) ? ` <span style="color:#9CA3AF;font-size:11px;">(of ${esc(f.min ?? 1)}–${esc(f.max ?? 5)})</span>` : ''}`;
   if (a === null || a === undefined || a === '') return '<span style="color:#9CA3AF;">—</span>';
   return esc(String(a));
+}
+
+// ── Link field picker (reuses the personnel-records data path; scoped) ───────
+async function cfLinkPick(fieldId, scope) {
+  if (!_cfCtx) return;
+  const all = await fetchPersonnelRecords(_cfCtx.personId, _cfCtx.institutionId);
+  const cands = all.filter(r => r._type === scope && r.id !== _cfCtx.recordId);
+  const optLabel = (r) => `${RECORD_CHIP[chipKey(r)].label} ${formatDateMDY((r.record_date || r.created_at || '').slice(0, 10))} — ${recordSnippet(r)}`;
+  const opts = cands.map(r => `<option value="${r.id}" data-lbl="${esc(optLabel(r))}">${esc(optLabel(r))}</option>`).join('');
+  openModalHtml(`
+    <div class="modal-title">Link a ${esc(RECORD_CHIP[scope]?.label || scope)} record</div>
+    ${cands.length
+      ? `<label>Choose a record</label><select id="cf-link-pick">${opts}</select>
+         <div style="font-size:11.5px;color:#9CA3AF;margin-top:.4rem;">The label is frozen into this form at save; the live link is also recorded both-sided.</div>`
+      : `<div style="font-size:13px;color:#6B7280;">No ${esc(RECORD_CHIP[scope]?.label || scope)} records exist for this person yet.</div>`}
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      ${cands.length ? `<button class="btn-primary" onclick="window.cfLinkConfirm('${fieldId}')">Link</button>` : ''}
+    </div>`);
+}
+function cfLinkConfirm(fieldId) {
+  const sel = document.getElementById('cf-link-pick');
+  if (!sel) return;
+  const id = sel.value, label = sel.options[sel.selectedIndex]?.dataset.lbl || '';
+  const el = document.getElementById(`hr-ans-${fieldId}`);
+  if (el) el.value = JSON.stringify({ id, label });
+  const lblEl = document.getElementById(`cf-link-lbl-${fieldId}`);
+  if (lblEl) lblEl.textContent = label;
+  closeModal();
 }
 // ── PHASE 4a — REVIEW TEMPLATE MANAGER + BUILDER (admin+) ───────────────────
 
@@ -1045,6 +1247,24 @@ function syncBuilderFromDom() {
       f.labels = val(`hr-tb-labels-${idx}`).split(',').map(s => s.trim()).filter(Boolean);
     } else if (f.type === 'selective') {
       f.options = val(`hr-tb-options-${idx}`).split(',').map(s => s.trim()).filter(Boolean);
+    } else if (f.type === 'scale') {
+      let mn = parseInt(val(`hr-tb-min-${idx}`), 10); if (Number.isNaN(mn)) mn = 1;
+      let mx = parseInt(val(`hr-tb-max-${idx}`), 10); if (Number.isNaN(mx)) mx = 5;
+      f.min = Math.min(9, Math.max(1, mn));
+      f.max = Math.min(10, Math.max(f.min + 1, mx));
+      f.lowLabel = val(`hr-tb-low-${idx}`).trim();
+      f.highLabel = val(`hr-tb-high-${idx}`).trim();
+    } else if (f.type === 'link') {
+      f.scope = val(`hr-tb-scope-${idx}`) || 'incident';
+      f.samePersonInstitution = true;
+    }
+    // visibleWhen — referenced controller field + equals value (boolean → equals true).
+    const vwf = val(`hr-tb-vwf-${idx}`);
+    if (vwf) {
+      const ctrl = _builder.definition.find(x => x.id === vwf);
+      f.visibleWhen = { field: vwf, equals: ctrl?.type === 'boolean' ? true : val(`hr-tb-vwv-${idx}`) };
+    } else {
+      delete f.visibleWhen;
     }
   });
   const pos = new Set();
@@ -1067,9 +1287,39 @@ function builderFieldHtml(f, idx) {
   } else if (f.type === 'selective') {
     cfg = `<label style="font-size:12px;color:#6B7280;">Options (comma-separated)</label>
       <input id="hr-tb-options-${idx}" value="${esc((f.options || []).join(', '))}" placeholder="yes, no" />`;
+  } else if (f.type === 'scale') {
+    cfg = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:#6B7280;">
+      <label style="display:inline-flex;align-items:center;gap:4px;">Min <input type="number" id="hr-tb-min-${idx}" min="1" max="9" step="1" value="${f.min ?? 1}" style="width:56px;" /></label>
+      <label style="display:inline-flex;align-items:center;gap:4px;">Max <input type="number" id="hr-tb-max-${idx}" min="2" max="10" step="1" value="${f.max ?? 5}" style="width:56px;" /></label>
+      <label style="display:inline-flex;align-items:center;gap:4px;">Low label <input type="text" id="hr-tb-low-${idx}" value="${esc(f.lowLabel || '')}" placeholder="lowest" style="width:90px;" /></label>
+      <label style="display:inline-flex;align-items:center;gap:4px;">High label <input type="text" id="hr-tb-high-${idx}" value="${esc(f.highLabel || '')}" placeholder="highest" style="width:90px;" /></label>
+    </div>`;
+  } else if (f.type === 'link') {
+    const scopeOpts = ['incident', 'disciplinary', 'review', 'memo'].map(s => `<option value="${s}"${(f.scope || 'incident') === s ? ' selected' : ''}>${esc(RECORD_CHIP[s].label)}</option>`).join('');
+    cfg = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#6B7280;">
+      <label style="display:inline-flex;align-items:center;gap:4px;">Links to <select id="hr-tb-scope-${idx}">${scopeOpts}</select></label>
+      <span>records for this person · this institution</span>
+    </div>`;
+  } else if (f.type === 'boolean') {
+    cfg = `<div style="font-size:12px;color:#9CA3AF;">Yes/No checkbox (the prompt is the checkbox label). Use it as a "Show only when" trigger for other fields.</div>`;
+  } else if (f.type === 'date') {
+    cfg = `<div style="font-size:12px;color:#9CA3AF;">Reviewer-entered date (MM/DD/YYYY).</div>`;
   } else {
     cfg = `<div style="font-size:12px;color:#9CA3AF;">Freeform text response.</div>`;
   }
+
+  // visibleWhen — a "Show only when" trigger referencing another field (boolean/select).
+  const triggers = _builder.definition.filter(x => x.id !== f.id && ['boolean', 'selective', 'descriptive'].includes(x.type));
+  const ctrl = f.visibleWhen ? _builder.definition.find(x => x.id === f.visibleWhen.field) : null;
+  const vwOpts = `<option value="">Always shown</option>` + triggers.map(t => `<option value="${t.id}"${f.visibleWhen?.field === t.id ? ' selected' : ''}>${esc((t.prompt || '(field)').slice(0, 40))}</option>`).join('');
+  const vwValShown = f.visibleWhen && ctrl && ctrl.type !== 'boolean';
+  const vwRow = triggers.length ? `
+    <label style="font-size:12px;color:#6B7280;margin-top:.5rem;">Show only when</label>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <select id="hr-tb-vwf-${idx}" onchange="window.hrTbVwChange(${idx})" style="flex:1;">${vwOpts}</select>
+      <input id="hr-tb-vwv-${idx}" placeholder="equals…" value="${esc(f.visibleWhen && ctrl?.type !== 'boolean' ? f.visibleWhen.equals : '')}" style="flex:1;${vwValShown ? '' : 'display:none;'}" />
+    </div>` : '';
+
   return `<div style="border:.5px solid var(--stone);border-radius:6px;padding:.6rem .7rem;margin-bottom:.5rem;background:#fff;">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:.4rem;">
       <span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8B1A2F;">${f.type}</span>
@@ -1081,6 +1331,7 @@ function builderFieldHtml(f, idx) {
     </div>
     <label>Prompt</label><input id="hr-tb-prompt-${idx}" value="${esc(f.prompt || '')}" placeholder="Question or criterion" />
     <div style="margin-top:.4rem;">${cfg}</div>
+    ${vwRow}
   </div>`;
 }
 
@@ -1110,8 +1361,12 @@ function renderBuilder() {
     ${fields || '<div style="font-size:12.5px;color:#9CA3AF;margin-bottom:.4rem;">No fields yet.</div>'}
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:.4rem;">
       <button class="btn-secondary" style="font-size:12px;" onclick="window.hrTbAdd('numeric')">+ Numeric</button>
+      <button class="btn-secondary" style="font-size:12px;" onclick="window.hrTbAdd('scale')">+ Rating scale</button>
       <button class="btn-secondary" style="font-size:12px;" onclick="window.hrTbAdd('descriptive')">+ Descriptive</button>
       <button class="btn-secondary" style="font-size:12px;" onclick="window.hrTbAdd('selective')">+ Selective</button>
+      <button class="btn-secondary" style="font-size:12px;" onclick="window.hrTbAdd('boolean')">+ Yes/No</button>
+      <button class="btn-secondary" style="font-size:12px;" onclick="window.hrTbAdd('date')">+ Date</button>
+      <button class="btn-secondary" style="font-size:12px;" onclick="window.hrTbAdd('link')">+ Linked record</button>
       <button class="btn-secondary" style="font-size:12px;" onclick="window.hrTbAdd('text')">+ Text</button>
     </div>
     <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;margin:.9rem 0 .4rem;">Assign to positions</div>
@@ -1128,8 +1383,17 @@ function hrTbAdd(type) {
   if (type === 'numeric')     Object.assign(base, { min: 1, max: 5, allow_na: false });
   if (type === 'descriptive') base.labels = ['Below', 'Meets', 'Exceeds'];
   if (type === 'selective')   base.options = ['yes', 'no'];
+  if (type === 'scale')       Object.assign(base, { min: 1, max: 5, lowLabel: 'lowest', highLabel: 'highest' });
+  if (type === 'link')        Object.assign(base, { scope: 'incident', samePersonInstitution: true });
   _builder.definition.push(base);
   renderBuilder();
+}
+// Toggle the visibleWhen value input when the controlling field is a boolean (equals true).
+function hrTbVwChange(idx) {
+  const fid = val(`hr-tb-vwf-${idx}`);
+  const ctrl = _builder.definition.find(x => x.id === fid);
+  const valInp = document.getElementById(`hr-tb-vwv-${idx}`);
+  if (valInp) valInp.style.display = (!fid || ctrl?.type === 'boolean') ? 'none' : '';
 }
 function hrTbMove(idx, dir) {
   syncBuilderFromDom();
@@ -1156,15 +1420,19 @@ async function hrSaveTemplate() {
       if (!(Number.isInteger(f.max) && f.max >= 2 && f.max <= 10)) { alert(`Numeric max must be a whole number from 2 to 10 (“${f.prompt}”).`); return; }
       f.min = 1;
     }
+    if (f.type === 'scale' && !(Number.isInteger(f.min) && Number.isInteger(f.max) && f.max > f.min)) { alert(`Rating scale “${f.prompt}” needs min < max.`); return; }
     if (f.type === 'descriptive' && (!f.labels || f.labels.length < 2)) { alert(`Descriptive field “${f.prompt}” needs at least two labels.`); return; }
     if (f.type === 'selective' && (!f.options || f.options.length < 2)) { alert(`Selective field “${f.prompt}” needs at least two options.`); return; }
   }
   const definition = _builder.definition.map(f => {
     const base = { id: f.id, type: f.type, prompt: f.prompt.trim() };
+    if (f.visibleWhen?.field) base.visibleWhen = { field: f.visibleWhen.field, equals: f.visibleWhen.equals };
     if (f.type === 'numeric')     return { ...base, min: 1, max: f.max, allow_na: !!f.allow_na };
+    if (f.type === 'scale')       return { ...base, min: f.min, max: f.max, lowLabel: f.lowLabel || '', highLabel: f.highLabel || '' };
     if (f.type === 'descriptive') return { ...base, labels: f.labels };
     if (f.type === 'selective')   return { ...base, options: f.options };
-    return base;
+    if (f.type === 'link')        return { ...base, scope: f.scope || 'incident', samePersonInstitution: true };
+    return base;   // text · boolean · date
   });
 
   let templateId = _builder.id;
@@ -1365,11 +1633,8 @@ function recordDetailHtml(r) {
   const ans = r.answers || {};
   const period = (r.review_period_start || r.review_period_end)
     ? `<div style="font-size:12px;color:#6B7280;margin-bottom:.5rem;">Period: ${r.review_period_start ? formatDateMDY(r.review_period_start) : '…'} – ${r.review_period_end ? formatDateMDY(r.review_period_end) : '…'}</div>` : '';
-  const rows = def.map(f => `
-    <div style="padding:.4rem 0;border-bottom:.5px solid #F0EDE8;">
-      <div style="font-size:12px;color:#6B7280;margin-bottom:1px;">${esc(f.prompt || '')}</div>
-      <div style="font-size:13.5px;color:var(--navy);font-weight:500;">${renderAnswer(f, ans[f.id])}</div>
-    </div>`).join('');
+  _cfBy = cfFlatten(def);
+  const rows = cfRenderAnswerTree(def, ans);   // recursive; FROZEN rules vs FROZEN answers
   const signed = r.signed_on_file
     ? `<div style="font-size:12px;color:#2E6B43;margin-top:.6rem;">✓ Signed physical copy on file${r.signed_date ? ` (${formatDateMDY(r.signed_date)})` : ''}</div>` : '';
   const emptyMsg = isSelf ? 'Empty self-report.' : 'Empty — use Edit to fill this evaluation in.';
@@ -1550,10 +1815,12 @@ function recordEditForm(r) {
       <div id="pf-dis-signedwrap" style="display:${r.signed_on_file ? '' : 'none'};">
         <label>Signed date</label><input type="date" id="pf-dis-signeddate" value="${r.signed_date || ''}" /></div>`;
   }
-  // review — answer fields from the frozen snapshot (reuses fieldInput)
+  // review — answer fields from the frozen snapshot, via the conditional form engine.
   const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
   const ans = r.answers || {};
-  const fields = def.map(f => fieldInput(f, ans[f.id])).join('');
+  _cfDef = def; _cfBy = cfFlatten(def);
+  _cfCtx = { recordType: 'review', recordId: r.id, personId: r.person_id, institutionId: r.institution_id };
+  const fields = cfRenderFields(def, ans);
   return `
     <div style="font-size:12px;color:#6B7280;margin-bottom:.6rem;">Structure frozen at creation.</div>
     ${fields || '<div style="font-size:12.5px;color:#9CA3AF;">This evaluation’s template has no fields.</div>'}
@@ -1592,20 +1859,11 @@ async function savePersonnelRecord(r) {
     };
   } else {
     const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
-    const answers = {};
-    for (const f of def) {
-      const aid = `hr-ans-${f.id}`;
-      if (f.type === 'numeric') {
-        if (f.allow_na && checked(`hr-na-${f.id}`)) { answers[f.id] = 'N/A'; continue; }
-        const raw = val(aid);
-        if (raw === '') { answers[f.id] = null; continue; }
-        const n = parseInt(raw, 10);
-        if (Number.isNaN(n) || n < f.min || n > f.max) { alert(`“${f.prompt}” must be a whole number from ${f.min} to ${f.max}.`); return false; }
-        answers[f.id] = n;
-      } else {
-        answers[f.id] = val(aid) || null;
-      }
-    }
+    _cfBy = cfFlatten(def);
+    const raw = cfReadRaw(def);
+    const verr = cfValidate(def, raw);
+    if (verr) { alert(verr); return false; }
+    const answers = cfCollect(def, raw, {});
     const signed = checked('hr-rev-signed');
     fields = {
       answers,
@@ -1616,6 +1874,8 @@ async function savePersonnelRecord(r) {
       signed_on_file: signed,
       signed_date: signed ? (val('hr-rev-signeddate') || null) : null,
     };
+    // Dual-write link fields' record_links rows (the {id,label} is already in answers).
+    await cfWriteLinks(def, answers, 'review', r.id);
   }
   const { error } = await withWriteRetry(() => sb.from(RECORD_META[type].table).update({ ...fields, updated_at: nowIso() }).eq('id', r.id), { kind: 'update' });
   if (error) { alert('Save failed: ' + error.message); return false; }
@@ -1657,7 +1917,9 @@ async function hrPfEditSelfReport(id) {
   if (!r || r.finalized || r.author_id !== _authUserId) { alert('This self-report can no longer be edited.'); return; }
   const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
   const ans = r.answers || {};
-  const fields = def.map(f => fieldInput(f, ans[f.id])).join('');
+  _cfDef = def; _cfBy = cfFlatten(def);
+  _cfCtx = { recordType: 'review', recordId: r.id, personId: r.person_id, institutionId: r.institution_id };
+  const fields = cfRenderFields(def, ans);
   openModalHtml(`
     <div class="modal-title">Self-Report</div>
     <div style="font-size:12px;color:#6B7280;margin-bottom:.6rem;">Editable until a supervisor finalizes it.</div>
@@ -1672,20 +1934,14 @@ async function hrPfSaveSelfReport(id) {
   const { data: r } = await sb.from('performance_reviews').select('*').eq('id', id).maybeSingle();
   if (!r || r.finalized || r.author_id !== _authUserId) { alert('This self-report can no longer be edited.'); return; }
   const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
-  const answers = {};
-  for (const f of def) {
-    const aid = `hr-ans-${f.id}`;
-    if (f.type === 'numeric') {
-      if (f.allow_na && checked(`hr-na-${f.id}`)) { answers[f.id] = 'N/A'; continue; }
-      const raw = val(aid);
-      if (raw === '') { answers[f.id] = null; continue; }
-      const n = parseInt(raw, 10);
-      if (Number.isNaN(n) || n < f.min || n > f.max) { alert(`“${f.prompt}” must be a whole number from ${f.min} to ${f.max}.`); return; }
-      answers[f.id] = n;
-    } else { answers[f.id] = val(aid) || null; }
-  }
+  _cfBy = cfFlatten(def);
+  const raw = cfReadRaw(def);
+  const verr = cfValidate(def, raw);
+  if (verr) { alert(verr); return; }
+  const answers = cfCollect(def, raw, {});
   const { error } = await withWriteRetry(() => sb.from('performance_reviews').update({ answers, review_date: val('hr-rev-date') || null, updated_at: nowIso() }).eq('id', id), { kind: 'update' });
   if (error) { alert('Save failed: ' + error.message); return; }
+  await cfWriteLinks(def, answers, 'review', id);
   window.flashSavedThen(async () => { closeModal(); await refreshActivePanel(); });
 }
 async function hrPfFinalize(id) {
@@ -1798,11 +2054,13 @@ Object.assign(window, {
   hrSaveInstitution, hrSavePosition, hrSaveMove, hrSaveLink, hrExportPdf,
   // template builder
   hrNewTemplate, hrStartFromStarter, hrEditTemplate, hrDeleteTemplate,
-  hrCloseBuilder, hrTbAdd, hrTbMove, hrTbDel, hrSaveTemplate,
+  hrCloseBuilder, hrTbAdd, hrTbMove, hrTbDel, hrTbVwChange, hrSaveTemplate,
   // personnel record panel (Phase 2)
   hrPfNew, hrPfNewReviewTemplate, hrPfNewReviewStarter,
   hrPfOpenLinkPicker, hrPfDoLink, hrPfUnlink,
   // Phase 3 — self-report, finalize, archive
   hrPfEditSelfReport, hrPfSaveSelfReport, hrPfFinalize, hrPfArchiveOwn,
   hrArchiveView, hrReopenArchive, hrArchiveDelete,
+  // Phase 4A — conditional form engine
+  cfReeval, cfScalePick, cfLinkPick, cfLinkConfirm,
 });
