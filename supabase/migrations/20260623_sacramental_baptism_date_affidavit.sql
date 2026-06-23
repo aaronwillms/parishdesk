@@ -12,8 +12,11 @@
 -- "column not found in schema cache" error). Run once in the SQL editor.
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- PART 1 — OCIA candidate baptism date.
-ALTER TABLE sacramental_ocia ADD COLUMN IF NOT EXISTS baptism_date date;
+-- PART 1 — OCIA candidate baptism date + affidavit. (baptism_by_affidavit was first
+-- proposed in 20260619_ocia_baptism_by_affidavit.sql, which was never applied — so add
+-- it here too; IF NOT EXISTS makes it a no-op if that migration was run after all.)
+ALTER TABLE sacramental_ocia ADD COLUMN IF NOT EXISTS baptism_date         date;
+ALTER TABLE sacramental_ocia ADD COLUMN IF NOT EXISTS baptism_by_affidavit boolean DEFAULT false;
 
 -- PART 3 — Marriage per-party baptism date + affidavit. The panel's BAPTISM columns
 -- use spouse1_*/spouse2_* (spouse1 = groom, spouse2 = bride — see spouse{n}_baptism_*),
