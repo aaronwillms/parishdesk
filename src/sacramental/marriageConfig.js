@@ -122,7 +122,10 @@ function spouseDetail(c, n) {
   const unbap = c[`spouse${n}_unbaptized`], noncath = c[`spouse${n}_non_catholic`], inOcia = c[`spouse${n}_in_ocia`];
   const ociaId = c[`spouse${n}_ocia_id`];
   const ociaName = ociaId ? (getOciaDisplay(ociaId)?.name || '') : '';
-  const baptism = unbap ? '' : [c[`spouse${n}_baptism_church`], c[`spouse${n}_baptism_city`], c[`spouse${n}_baptism_state`]].filter(Boolean).map(esc).join(', ');
+  const bapAff = !unbap && c[`spouse${n}_baptism_by_affidavit`];
+  const baptismLoc = unbap ? '' : [c[`spouse${n}_baptism_church`], c[`spouse${n}_baptism_city`], c[`spouse${n}_baptism_state`]].filter(Boolean).map(esc).join(', ');
+  const baptism = baptismLoc ? baptismLoc + (bapAff ? ' (By Affidavit)' : '') : (bapAff ? '(By Affidavit)' : '');
+  const baptismDate = (!unbap && c[`spouse${n}_baptism_date`]) ? esc(formatDateDisplay(c[`spouse${n}_baptism_date`])) : '';
   const statusBits = [
     unbap ? 'Unbaptized' : null,
     (!unbap && noncath) ? 'Non-Catholic' : null,
@@ -140,6 +143,7 @@ function spouseDetail(c, n) {
     row('Email', email ? esc(email) : ''),
     statusBits.length ? row('Status', statusBits.join(' · ')) : '',
     (!ext && baptism) ? row('Baptism', baptism) : '',
+    (!ext && baptismDate) ? row('Date of Baptism', baptismDate) : '',
     (!ext && prior.length) ? row('Prior marriages', priorList(prior)) : '',
   ].filter(Boolean).join('');
   return out || '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No details.</div>';

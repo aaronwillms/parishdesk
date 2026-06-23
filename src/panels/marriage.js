@@ -532,7 +532,7 @@ function renderSpouseSection(c, n) {
       <div id="mf-${p}-ocia-chip" style="margin-top:6px;"></div>
     </div>
   </div>`;
-  h += `<div id="mf-${p}-baptism-wrap" style="display:${(_M.external || s.unbaptized) ? 'none' : 'block'};">${_row(_input(`mf-${p}-bchurch`, 'Church of Baptism', c?.[`spouse${n}_baptism_church`] || ''), _input(`mf-${p}-bcity`, 'City', c?.[`spouse${n}_baptism_city`] || ''), _input(`mf-${p}-bstate`, 'State/Country', c?.[`spouse${n}_baptism_state`] || ''))}</div>`;
+  h += `<div id="mf-${p}-baptism-wrap" style="display:${(_M.external || s.unbaptized) ? 'none' : 'block'};">${_row(_input(`mf-${p}-bchurch`, 'Church of Baptism', c?.[`spouse${n}_baptism_church`] || ''), _input(`mf-${p}-bcity`, 'City', c?.[`spouse${n}_baptism_city`] || ''), _input(`mf-${p}-bstate`, 'State/Country', c?.[`spouse${n}_baptism_state`] || ''))}${_input(`mf-${p}-bdate`, 'Date of Baptism', (c?.[`spouse${n}_baptism_date`] && /^\d{4}-\d{2}-\d{2}/.test(c[`spouse${n}_baptism_date`])) ? c[`spouse${n}_baptism_date`].slice(0, 10) : '', 'date')}${_toggle(`mf-${p}-baffidavit`, 'By Affidavit', !!c?.[`spouse${n}_baptism_by_affidavit`])}</div>`;
   // Prior marriages (hidden for External)
   h += `<div id="mf-${p}-prior-block" style="display:${_M.external ? 'none' : 'block'};margin-top:.75rem;">${_toggle(`mf-${p}-priortoggle`, 'Prior Marriage?', _M[`${p}Prior`].length > 0, `marPriorToggle(${n})`)}
     <div id="mf-${p}-prior-wrap" style="display:${_M[`${p}Prior`].length > 0 ? 'block' : 'none'};margin-top:.5rem;"></div></div>`;
@@ -800,10 +800,12 @@ function _marReadPayload() {
     spouse1_first: s1first || null, spouse1_middle: _v('mf-s1-middle') || null, spouse1_last: s1last || null, spouse1_dob: _v('mf-s1-dob') || null,
     spouse1_unbaptized: _M.s1.unbaptized, spouse1_non_catholic: !_M.s1.unbaptized && _M.s1.nonCatholic, spouse1_in_ocia: _M.s1.inOcia, spouse1_ocia_id: _M.s1.ocia?.id || null,
     spouse1_baptism_church: _M.s1.unbaptized ? null : (_v('mf-s1-bchurch') || null), spouse1_baptism_city: _M.s1.unbaptized ? null : (_v('mf-s1-bcity') || null), spouse1_baptism_state: _M.s1.unbaptized ? null : (_v('mf-s1-bstate') || null),
+    spouse1_baptism_date: _M.s1.unbaptized ? null : (_v('mf-s1-bdate') || null), spouse1_baptism_by_affidavit: _M.s1.unbaptized ? false : _chk('mf-s1-baffidavit'),
     spouse1_prior_marriages: _M.s1Prior,
     spouse2_first: s2first || null, spouse2_middle: _v('mf-s2-middle') || null, spouse2_last: s2last || null, spouse2_dob: _v('mf-s2-dob') || null,
     spouse2_unbaptized: _M.s2.unbaptized, spouse2_non_catholic: !_M.s2.unbaptized && _M.s2.nonCatholic, spouse2_in_ocia: _M.s2.inOcia, spouse2_ocia_id: _M.s2.ocia?.id || null,
     spouse2_baptism_church: _M.s2.unbaptized ? null : (_v('mf-s2-bchurch') || null), spouse2_baptism_city: _M.s2.unbaptized ? null : (_v('mf-s2-bcity') || null), spouse2_baptism_state: _M.s2.unbaptized ? null : (_v('mf-s2-bstate') || null),
+    spouse2_baptism_date: _M.s2.unbaptized ? null : (_v('mf-s2-bdate') || null), spouse2_baptism_by_affidavit: _M.s2.unbaptized ? false : _chk('mf-s2-baffidavit'),
     spouse2_prior_marriages: _M.s2Prior,
     // contact fields (legacy columns)
     groom_phone: normalizePhone(_v('mf-s1-cell')) || null, groom_email: _v('mf-s1-email') || null,

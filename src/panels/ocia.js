@@ -300,13 +300,11 @@ function _ociaSyncPermLock(id) {
   const p = allOcia.find(x => x.id === id); if (!p) return;
   const box = document.getElementById(`ocia-perm-box-${id}`); if (!box) return;
   const filled = String(p.minor_guardian_name || '').trim() && String(p.minor_permission_date || '').trim();
-  if (filled) {
-    box.setAttribute('onclick', `ociaTogglePermission('${id}',true)`);
-    box.style.cursor = 'pointer'; box.style.opacity = '1'; box.removeAttribute('title');
-  } else {
-    box.removeAttribute('onclick');
-    box.style.cursor = 'not-allowed'; box.style.opacity = '0.45'; box.setAttribute('title', PERM_LOCK_TIP);
-  }
+  // Real checkbox now (whole label clickable). Lock-gate = the `disabled` attr.
+  box.disabled = !filled;
+  box.style.cursor = filled ? 'pointer' : 'not-allowed';
+  box.style.opacity = filled ? '1' : '0.45';
+  if (filled) box.removeAttribute('title'); else box.setAttribute('title', PERM_LOCK_TIP);
   const note = document.getElementById(`ocia-perm-note-${id}`);
   if (note) note.style.display = filled ? 'none' : 'block';
 }
@@ -476,6 +474,10 @@ function buildModalHtml(p, opts = {}) {
   h += `<div id="of-bchurch-other-wrap" style="display:${obchOther ? 'block' : 'none'};margin-top:6px;">${_input('of-bchurch-name', 'Church name', obchOther ? obchName : '')}</div>`;
   h += _row(_input('of-bcity', 'City', p?.baptism_city || p?.baptism_city_state || ''), _stateSelect('of-bstate', p?.baptism_state || ''));
   h += `<label>Country</label><select id="of-bcountry">${COUNTRIES.map(co => `<option${(p?.baptism_country || 'United States of America') === co ? ' selected' : ''}>${co}</option>`).join('')}</select>`;
+  // Date of Baptism (native date input, stored ISO) + independent "By Affidavit" proof
+  // toggle — mirrors the annulment baptism affidavit pattern. Candidate (baptized) only.
+  h += _input('of-bdate', 'Date of Baptism', (p?.baptism_date && /^\d{4}-\d{2}-\d{2}/.test(p.baptism_date)) ? p.baptism_date.slice(0, 10) : '', 'date');
+  h += _toggle('of-baffidavit', 'By Affidavit', !!p?.baptism_by_affidavit);
   h += `</div>`;
 
   // Section 5 — Sponsor
@@ -758,6 +760,8 @@ function _ociaReadPayload() {
     baptism_city: type === 'candidate' ? (_v('of-bcity') || null) : null,
     baptism_state: type === 'candidate' ? (_v('of-bstate') || null) : null,
     baptism_country: type === 'candidate' ? (_v('of-bcountry') || null) : null,
+    baptism_date: type === 'candidate' ? (_v('of-bdate') || null) : null,
+    baptism_by_affidavit: type === 'candidate' ? _chk('of-baffidavit') : false,
     sponsor_name: _v('of-sponsor') || null,
     prior_marriages: _M.prior.filter(m => m.first || m.middle || m.last || m.maiden || m.annulment_case_id).map(_priorToStore),
     documents: _M.docs,

@@ -81,7 +81,8 @@ function personDetails(p) {
     row('Place of birth', p.place_of_birth ? esc(p.place_of_birth) : ''),
     row('Contact', contact),
     row('Sponsor', (p.sponsor_name || p.sponsor1) ? esc(p.sponsor_name || p.sponsor1) : ''),
-    row('Baptism', bap.map(esc).join(', ')),
+    row('Baptism', bap.length ? bap.map(esc).join(', ') + (p.baptism_by_affidavit ? ' (By Affidavit)' : '') : (p.baptism_by_affidavit ? '(By Affidavit)' : '')),
+    row('Date of Baptism', p.baptism_date ? esc(formatDateDisplay(p.baptism_date)) : ''),
     row('Prior marriages', prior),
     row('OCIA Prep', p.preparer ? esc(p.preparer) : ''),
     row('Reception', receptionLine(p)),
@@ -130,8 +131,8 @@ function minorPermission(p) {
       <input type="text" id="ocia-perm-name-${p.id}" value="${esc(p.minor_guardian_name || '')}" placeholder="Parent/Guardian name" onchange="ociaSavePermField('${p.id}','name',this)" style="${inS}flex:2;min-width:0;" />
       <input type="date" id="ocia-perm-date-${p.id}" value="${esc((p.minor_permission_date || '').slice(0, 10))}" onchange="ociaSavePermField('${p.id}','date',this)" style="${inS}flex:1;min-width:0;" />
     </div>
-    <label style="display:inline-flex;align-items:center;gap:6px;margin-top:8px;font-size:13px;cursor:${filled ? 'pointer' : 'not-allowed'};color:var(--navy);">
-      <span id="ocia-perm-box-${p.id}" style="font-size:15px;${filled ? 'cursor:pointer;' : 'cursor:not-allowed;opacity:.45;'}" ${filled ? `onclick="ociaTogglePermission('${p.id}',true)"` : `title="${esc(PERM_LOCK_TIP)}"`}>⬜</span>
+    <label style="display:inline-flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;cursor:${filled ? 'pointer' : 'not-allowed'};color:var(--navy);">
+      <input type="checkbox" id="ocia-perm-box-${p.id}" ${filled ? '' : 'disabled'} onchange="ociaTogglePermission('${p.id}',this.checked)" ${filled ? '' : `title="${esc(PERM_LOCK_TIP)}"`} style="width:15px;height:15px;accent-color:var(--cardinal);${filled ? '' : 'opacity:.45;cursor:not-allowed;'}" />
       Parent/Guardian Permission Granted
     </label>
     <div id="ocia-perm-note-${p.id}" style="display:${filled ? 'none' : 'block'};font-size:11px;color:#9A6A1E;margin-top:5px;"><i class="fa-solid fa-circle-info" style="margin-right:4px;"></i>${esc(PERM_LOCK_TIP)}</div>`;
