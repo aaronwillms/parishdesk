@@ -10,12 +10,16 @@
 // e.target.closest('[data-action]'). Structural writes lean on Stage 1 RLS
 // (parish-scoped SELECT, is_admin() writes) — no new policies here.
 
-import { sb, deleteWithRetry } from '../supabase.js';
+import { sb, deleteWithRetry, withWriteRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { isAdmin, isSuperAdmin } from '../roles.js';
 import { closeModal } from '../ui/modal.js';
-import { logActivity, todayCST, compareByLastName } from '../utils.js';
+import { logActivity, todayCST, compareByLastName, formatDateMDY } from '../utils.js';
 import { ensureIdentities, userName, fetchGrantRow } from '../ui/grants.js';
+// Phase 2 — reuse the sacramental master-detail shell + the generic cross-file linker
+// for the per-(person, institution) personnel record panel (no fork).
+import { renderSacramentalPanel, refreshActivePanel, chipHtml } from '../sacramental/panelShell.js';
+import { linkRecords, unlinkRecords, getLinks, linkRowHtml } from '../sacramental/recordLinks.js';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -38,6 +42,16 @@ const RECORD_META = {
   disciplinary: { table: 'disciplinary_records', label: 'Disciplinary Record', banner: true  },
   incident:     { table: 'incident_reports',     label: 'Incident Report',     banner: true  },
   memo:         { table: 'memos',                label: 'Memo',                banner: false },
+};
+
+// Personnel-file presentation per record type: the left-card TYPE CHIP (label +
+// tone → an existing badge token) and the detail-header avatar icon. Keys match
+// RECORD_META / the record_grants record_type values.
+const RECORD_CHIP = {
+  review:       { label: 'Evaluation',   tone: 'active',   icon: 'fa-clipboard-check' },
+  incident:     { label: 'Incident',     tone: 'urgent',   icon: 'fa-triangle-exclamation' },
+  disciplinary: { label: 'Disciplinary', tone: 'pending',  icon: 'fa-gavel' },
+  memo:         { label: 'Memo',         tone: 'complete', icon: 'fa-note-sticky' },
 };
 
 // Employment-type feature-gating for the CREATE surface (Stage 3 definition):
@@ -103,7 +117,8 @@ let _profilesByUser = new Map(); // auth user_id -> personnel_id (author names)
 let _templates = [];           // review_templates rows (parish-scoped)
 let _templatePositions = [];   // review_template_positions rows
 let _builder = null;           // active template-builder working state
-let _card = null;              // active occupancy-card context for record modals
+let _card = null;              // active occupancy-card context for record modals (legacy)
+let _file = null;              // active personnel file context: { personId, institutionId }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -476,7 +491,10 @@ function onHrClick(e) {
     case 'op-save-title': hrSetTitle(posId); break;
     case 'op-link':     hrLinkInline(posId); break;
     case 'op-unlink':   unlinkOccupancy(occId); break;
-    case 'op-view-record': if (occId) openOccupancyCard(occId); break;
+    case 'op-view-record': if (occId) openPersonnelFileFromOcc(occId); break;
+    case 'file-back':   _selectedPosId = null; _addMenuPosId = null; _file = null;
+                        if ((location.hash || '').startsWith('#/personnel')) location.hash = '';
+                        render(); break;
     case 'op-add-toggle': _addMenuPosId = (_addMenuPosId === posId ? null : posId); renderTree(); break;
     case 'op-add-sibling': hrAddPosition(_ctx.posById.get(posId)?.parent_position_id || null); break;
     case 'op-add-child': hrAddPosition(posId); break;
@@ -966,7 +984,9 @@ async function hrExportPdf(type, id) {
   let y = M;
   const { title, sections } = recordToSections(type, rec);
 
-  const who = labelForPP(rec.person_position_id);   // person — position (best effort)
+  // Person line: (person, institution)-scoped records carry person_id directly;
+  // legacy occupancy-scoped records fall back to the person_position label.
+  const who = rec.person_id ? esc(_ctx.personName(rec.person_id)) : labelForPP(rec.person_position_id);
   doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(28, 43, 58);
   doc.text(title, M, y); y += 20;
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(107, 114, 128);
@@ -1650,6 +1670,403 @@ async function hrSaveTemplate() {
   window.flashSavedThen(async () => { await refreshTemplates(); openTemplateManager(); });
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// PHASE 2 — PERSONNEL RECORD PANEL  (per-PERSON-per-INSTITUTION file)
+// Reuses the sacramental master-detail shell (renderSacramentalPanel) for the
+// left card column + read viewer, the chip pattern, and the generic record_links
+// cross-file linker. Records key to (person_id, institution_id) — independent of
+// any single occupancy, so all of a person's records at one institution (across
+// however many positions) share ONE file. Permission enforcement = Phase 3.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Creation date (uneditable) as MM/DD/YYYY in the PARISH timezone. created_at is a
+// UTC timestamp; a naive ISO slice can roll to the next day in CST, so convert in-tz.
+function createdMDY(ts) {
+  if (!ts) return '';
+  const tz = store.parishSettings?.timezone || 'America/Chicago';
+  try { return new Date(ts).toLocaleDateString('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }); }
+  catch { return formatDateMDY(String(ts).slice(0, 10)); }
+}
+
+function initialsOf(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+}
+
+// The person's CURRENT position titles in THIS institution (one file may span
+// several positions — show them all).
+function personTitlesIn(personId, institutionId) {
+  const titles = [];
+  for (const [posId, list] of _ctx.currentByPos) {
+    if (!list.some(o => o.person_id === personId)) continue;
+    const pos = _ctx.posById.get(posId);
+    if (pos && pos.institution_id === institutionId) titles.push(pos.title);
+  }
+  return [...new Set(titles)].sort((a, b) => a.localeCompare(b));
+}
+
+// Entry point from a node's "View Personnel Record" button (occId → person).
+function openPersonnelFileFromOcc(occId) {
+  let personId = null;
+  for (const list of _ctx.allByPos.values()) {
+    const o = list.find(x => x.id === occId);
+    if (o) { personId = o.person_id; break; }
+  }
+  if (personId) openPersonnelFile(personId, _activeInstId);
+}
+
+// Replace the HR panel body with the personnel file (its own panel, like a
+// sacramental panel): person header + the reused master-detail shell.
+function openPersonnelFile(personId, institutionId) {
+  if (!_ctx) return;
+  _file = { personId, institutionId };
+  const root = document.getElementById('hr-root');
+  if (!root) return;
+  const name = _ctx.personName(personId);
+  const titles = personTitlesIn(personId, institutionId);
+  const instName = _insts.find(i => i.id === institutionId)?.name || '';
+  root.innerHTML = `
+    <div class="pf-head">
+      <button class="pf-back" data-action="file-back" aria-label="Back to org chart"><i class="fa-solid fa-arrow-left"></i> Org chart</button>
+      <div class="pf-id">
+        <div class="pf-avatar">${esc(initialsOf(name))}</div>
+        <div>
+          <div class="pf-name">${esc(name)}</div>
+          <div class="pf-titles">${titles.length ? esc(titles.join(' · ')) : '<span style="color:#9CA3AF;">No current position</span>'}${instName ? ` <span style="color:#9CA3AF;">· ${esc(instName)}</span>` : ''}</div>
+        </div>
+      </div>
+    </div>
+    <div id="pf-host" class="pf-host"></div>`;
+  // Reset the shell's deep-link hash before mounting so a stale id doesn't preselect.
+  if ((location.hash || '') !== '#/personnel') location.hash = '#/personnel';
+  renderSacramentalPanel(document.getElementById('pf-host'), personnelFileConfig(personId, institutionId));
+}
+
+// Merge the four record tables for (person, institution); tag each with its type;
+// order chronologically by creation. RLS scopes the result (Phase 3 widens this).
+async function fetchPersonnelRecords(personId, institutionId) {
+  const q = (table) => sb.from(table).select('*').eq('person_id', personId).eq('institution_id', institutionId);
+  const [rev, dis, inc, mem] = await Promise.all([
+    q('performance_reviews'), q('disciplinary_records'), q('incident_reports'), q('memos'),
+  ]);
+  const tag = (res, type) => (res.data || []).map(r => ({ ...r, _type: type }));
+  return [...tag(rev, 'review'), ...tag(dis, 'disciplinary'), ...tag(inc, 'incident'), ...tag(mem, 'memo')]
+    .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+}
+
+function recordSnippet(r) {
+  if (r._type === 'memo')         return r.subject || String(r.body || '').slice(0, 64) || 'Memo';
+  if (r._type === 'incident')     return String(r.description || '').slice(0, 64) || 'Incident report';
+  if (r._type === 'disciplinary') return (r.severity ? r.severity.toUpperCase() + ' — ' : '') + (String(r.narrative || '').slice(0, 52) || 'Disciplinary action');
+  return 'Performance evaluation';
+}
+
+// The sacramental-shell config for one personnel file. `cache` mirrors the shell's
+// fetched records so fetchRecord/save/delete can resolve a record's _type by id.
+function personnelFileConfig(personId, institutionId) {
+  let cache = [];
+  return {
+    panelKey: 'personnel',
+    title: 'Personnel Record',
+    newLabel: '+ Create new entry',
+    canManage: () => canEditTree(),
+    fetchRecords: async () => { cache = await fetchPersonnelRecords(personId, institutionId); return cache; },
+    fetchRecord: (id) => cache.find(r => r.id === id) || null,
+    compare: (a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')),
+    searchText: (r) => `${RECORD_CHIP[r._type].label} ${createdMDY(r.created_at)} ${recordSnippet(r)}`,
+    listItem: (r) => ({
+      title: createdMDY(r.created_at),
+      secondary: recordSnippet(r),
+      chips: [{ label: RECORD_CHIP[r._type].label, tone: RECORD_CHIP[r._type].tone }],
+    }),
+    detailHeader: (r) => ({
+      name: RECORD_CHIP[r._type].label,
+      avatarIcon: RECORD_CHIP[r._type].icon,
+      chips: [{ label: `Created ${createdMDY(r.created_at)}`, tone: 'neutral' }],
+    }),
+    detailSections: [
+      { title: 'Details', render: (r) => recordDetailHtml(r) },
+      { title: 'Linked records', render: (r) => linkedSectionHtml(r) },
+    ],
+    actions: [
+      { label: 'Export PDF', icon: 'fa-file-pdf', handler: (r) => hrExportPdf(r._type, r.id) },
+    ],
+    editForm: (r) => recordEditForm(r),
+    saveRecord: async (id) => ({ ok: await savePersonnelRecord(cache.find(r => r.id === id)) }),
+    deleteRecord: async (id) => ({ ok: await deletePersonnelRecord(cache.find(r => r.id === id)) }),
+    openCreate: () => hrPfCreate(),
+  };
+}
+
+// ── Read viewer (detail) ─────────────────────────────────────────────────────
+function recordDetailHtml(r) {
+  const meta = `<div style="font-size:11.5px;color:#6B7280;margin-bottom:.8rem;">Created ${createdMDY(r.created_at)} · ${esc(authorName(r.author_id))}${r.record_date ? ' · dated ' + formatDateMDY(r.record_date) : ''}</div>`;
+  const banner = `<div style="font-size:10.5px;color:#B9A88F;font-style:italic;border-top:.5px solid var(--stone);margin-top:1rem;padding-top:.55rem;line-height:1.5;">${esc(bannerText())}</div>`;
+  if (r._type === 'memo') {
+    return meta
+      + (r.subject ? `<div style="font-weight:600;color:var(--navy);margin-bottom:.3rem;">${esc(r.subject)}</div>` : '')
+      + `<div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;">${esc(r.body || '')}</div>`;
+  }
+  if (r._type === 'incident') {
+    return meta + `<div style="font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;">${esc(r.description || '')}</div>` + banner;
+  }
+  if (r._type === 'disciplinary') {
+    const field = (l, v) => v ? `<div class="pf-flabel">${l}</div><div class="pf-fval">${esc(v)}</div>` : '';
+    const sev = r.severity ? `<div style="margin-bottom:.7rem;"><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:3px;background:#FDEAED;color:#8B1A2F;">${esc(r.severity.toUpperCase())}</span></div>` : '';
+    const signed = r.signed_on_file
+      ? `<div style="font-size:12px;color:#2E6B43;">✓ Signed physical copy on file${r.signed_date ? ` (${formatDateMDY(r.signed_date)})` : ''}</div>`
+      : `<div style="font-size:12px;color:#9CA3AF;">Signed copy not yet on file</div>`;
+    return meta + sev + field('Narrative', r.narrative) + field('Corrective action', r.corrective_action) + signed + banner;
+  }
+  // review
+  const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
+  const ans = r.answers || {};
+  const period = (r.review_period_start || r.review_period_end)
+    ? `<div style="font-size:12px;color:#6B7280;margin-bottom:.5rem;">Period: ${r.review_period_start ? formatDateMDY(r.review_period_start) : '…'} – ${r.review_period_end ? formatDateMDY(r.review_period_end) : '…'}</div>` : '';
+  const rows = def.map(f => `
+    <div style="padding:.4rem 0;border-bottom:.5px solid #F0EDE8;">
+      <div style="font-size:12px;color:#6B7280;margin-bottom:1px;">${esc(f.prompt || '')}</div>
+      <div style="font-size:13.5px;color:var(--navy);font-weight:500;">${renderAnswer(f, ans[f.id])}</div>
+    </div>`).join('');
+  const signed = r.signed_on_file
+    ? `<div style="font-size:12px;color:#2E6B43;margin-top:.6rem;">✓ Signed physical copy on file${r.signed_date ? ` (${formatDateMDY(r.signed_date)})` : ''}</div>` : '';
+  return meta + period + (rows || '<div style="font-size:12.5px;color:#9CA3AF;">Empty — use Edit to fill this evaluation in.</div>') + signed + banner;
+}
+
+// ── Cross-file linking (generic record_links + the shared linked-row format) ──
+function linkedSectionHtml(r) {
+  if (typeof window !== 'undefined') setTimeout(() => populatePfLinks(r._type, r.id), 0);
+  const picker = canEditTree()
+    ? `<button class="card-action" style="margin-top:.55rem;" onclick="window.hrPfOpenLinkPicker('${r._type}','${r.id}')">+ Link a record</button>` : '';
+  return `<div id="pf-links-${esc(r.id)}"><div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">Loading…</div></div>${picker}`;
+}
+async function populatePfLinks(type, id) {
+  const wrap = document.getElementById(`pf-links-${id}`);
+  if (!wrap) return;
+  const ends = (await getLinks(type, id)).filter(e => RECORD_META[e.type]);
+  if (!ends.length) { wrap.innerHTML = `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No linked records.</div>`; return; }
+  const byType = {}; ends.forEach(e => { (byType[e.type] ||= []).push(e.id); });
+  const rowByKey = {};
+  for (const t of Object.keys(byType)) {
+    const { data } = await sb.from(RECORD_META[t].table).select('*').in('id', byType[t]);
+    (data || []).forEach(row => { rowByKey[`${t}:${row.id}`] = row; });
+  }
+  wrap.innerHTML = ends.map(e => {
+    const row = rowByKey[`${e.type}:${e.id}`]; if (!row) return '';
+    const title = `${RECORD_CHIP[e.type].label} · ${createdMDY(row.created_at)}`;
+    const chips = chipHtml({ label: RECORD_CHIP[e.type].label, tone: RECORD_CHIP[e.type].tone });
+    const openCall = `location.hash='#/personnel/${e.id}'`;   // select in this same file
+    const unlinkCall = canEditTree() ? `window.hrPfUnlink('${type}','${id}','${e.type}','${e.id}')` : '';
+    return linkRowHtml({ openCall, title: esc(title), chipsHtml: chips, unlinkCall });
+  }).join('') || `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">No linked records.</div>`;
+}
+// Picker = this person's OTHER records in this institution of a DIFFERENT type
+// (the record_links mechanism forbids same-type pairs), not already linked.
+async function hrPfOpenLinkPicker(type, id) {
+  if (!_file) return;
+  const [all, ends] = await Promise.all([
+    fetchPersonnelRecords(_file.personId, _file.institutionId),
+    getLinks(type, id),
+  ]);
+  const linked = new Set(ends.map(e => `${e.type}:${e.id}`));
+  const candidates = all.filter(r => r._type !== type && !linked.has(`${r._type}:${r.id}`));
+  const opts = candidates.map(r => `<option value="${r._type}:${r.id}">${esc(RECORD_CHIP[r._type].label)} · ${esc(createdMDY(r.created_at))} — ${esc(recordSnippet(r))}</option>`).join('');
+  openModalHtml(`
+    <div class="modal-title">Link a record</div>
+    ${candidates.length
+      ? `<label>Choose a record to link</label><select id="pf-link-target">${opts}</select>
+         <div style="font-size:11.5px;color:#9CA3AF;margin-top:.4rem;">Links are reciprocal — they show on both files.</div>`
+      : `<div style="font-size:13px;color:#6B7280;">No other records of a different type are available to link.</div>`}
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      ${candidates.length ? `<button class="btn-primary" onclick="window.hrPfDoLink('${type}','${id}')">Link</button>` : ''}
+    </div>`);
+}
+async function hrPfDoLink(type, id) {
+  const v = val('pf-link-target');
+  if (!v) return;
+  const [t2, id2] = v.split(':');
+  if (await linkRecords(type, id, t2, id2)) { closeModal(); populatePfLinks(type, id); }
+}
+async function hrPfUnlink(type, id, t2, id2) {
+  if (await unlinkRecords(type, id, t2, id2)) populatePfLinks(type, id);
+}
+
+// ── Create new entry (type picker → seeded insert → open in the shell) ───────
+function hrPfCreate() {
+  if (!canEditTree() || !_file) return;
+  const btn = (type, emoji, label) => `<button class="btn-secondary" style="text-align:left;width:100%;display:flex;align-items:center;gap:8px;" onclick="window.hrPfNew('${type}')"><i class="fa-solid ${RECORD_CHIP[type].icon}" style="color:var(--cardinal);width:16px;"></i> ${label}</button>`;
+  openModalHtml(`
+    <div class="modal-title">Create new entry</div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:.3rem;">
+      ${btn('review', '', 'Personnel Evaluation')}
+      ${btn('incident', '', 'Incident Report')}
+      ${btn('disciplinary', '', 'Disciplinary Action')}
+      ${btn('memo', '', 'Memo')}
+    </div>
+    <div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancel</button></div>`);
+}
+async function hrPfNew(type) {
+  if (!_file) return;
+  if (type === 'review') { hrPfPickReviewTemplate(); return; }
+  await hrPfInsert(type, {});
+}
+// Evaluations need a frozen template structure at insert — offer templates assigned
+// to this person's position(s) here, else any template, else a starter library item.
+function hrPfPickReviewTemplate() {
+  const posIds = [...(_ctx.currentByPos)]
+    .filter(([pid, list]) => list.some(o => o.person_id === _file.personId) && _ctx.posById.get(pid)?.institution_id === _file.institutionId)
+    .map(([pid]) => pid);
+  const assignedIds = new Set(_templatePositions.filter(tp => posIds.includes(tp.position_id)).map(tp => tp.template_id));
+  let choices = _templates.filter(t => assignedIds.has(t.id));
+  if (!choices.length) choices = _templates.slice();
+  const tmplBtns = choices.map(t => `<button class="btn-secondary" style="text-align:left;width:100%;" onclick="window.hrPfNewReviewTemplate('${t.id}')">${esc(t.name)}</button>`).join('');
+  const starterBtns = STARTER_TEMPLATES.map((s, i) => `<button class="btn-secondary" style="text-align:left;width:100%;" onclick="window.hrPfNewReviewStarter(${i})">${esc(s.name)} <span style="color:#9CA3AF;font-size:11px;">· starter</span></button>`).join('');
+  openModalHtml(`
+    <div class="modal-title">New Personnel Evaluation</div>
+    <div style="font-size:12px;color:#6B7280;margin-bottom:.6rem;">Choose a template — its structure is frozen into this evaluation. (Template management lives under <strong>Review Templates</strong>.)</div>
+    <div style="display:flex;flex-direction:column;gap:6px;">
+      ${tmplBtns}
+      ${tmplBtns && starterBtns ? '<div style="height:1px;background:var(--stone);margin:.35rem 0;"></div>' : ''}
+      ${starterBtns}
+    </div>
+    <div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancel</button></div>`);
+}
+function hrPfNewReviewTemplate(tid) {
+  const t = _templates.find(x => x.id === tid);
+  hrPfInsertReview(t?.definition || [], tid);
+}
+function hrPfNewReviewStarter(i) { hrPfInsertReview(STARTER_TEMPLATES[i].definition, null); }
+function hrPfInsertReview(definition, templateId) {
+  const frozen = JSON.parse(JSON.stringify((definition || []).map(f => ({ ...f, id: f.id || genId() }))));
+  return hrPfInsert('review', { frozen_definition: frozen, template_id: templateId, review_date: todayISO() });
+}
+async function hrPfInsert(type, extra) {
+  const base = {
+    person_id: _file.personId, institution_id: _file.institutionId,
+    author_id: _authUserId, record_date: todayISO(), ...extra,
+  };
+  const { data, error } = await withWriteRetry(() => sb.from(RECORD_META[type].table).insert(base).select('id').single(), { kind: 'create' });
+  if (error) { alert('Create failed: ' + error.message); return; }
+  closeModal();
+  logActivity({ action: `created ${RECORD_META[type].label.toLowerCase()}`, entityType: 'hr_record', entityName: RECORD_META[type].label });
+  await refreshActivePanel();
+  location.hash = `#/personnel/${data.id}`;   // open the new (empty) file in the read viewer
+}
+
+// ── Inline edit (the shell's edit pane) + save / delete ──────────────────────
+function recordEditForm(r) {
+  if (r._type === 'memo') {
+    return `
+      <label>Subject</label><input id="pf-memo-subject" value="${esc(r.subject || '')}" />
+      <label>Body</label><textarea id="pf-memo-body" rows="6">${esc(r.body || '')}</textarea>
+      <label>Date</label><input type="date" id="pf-memo-date" value="${r.record_date || todayISO()}" />`;
+  }
+  if (r._type === 'incident') {
+    return `
+      <label>Description</label><textarea id="pf-inc-desc" rows="7">${esc(r.description || '')}</textarea>
+      <label>Date</label><input type="date" id="pf-inc-date" value="${r.record_date || todayISO()}" />`;
+  }
+  if (r._type === 'disciplinary') {
+    const ladder = severityLadder();
+    const sevOpts = ['<option value="">— Select —</option>']
+      .concat(ladder.map(s => `<option value="${esc(s)}"${r.severity === s ? ' selected' : ''}>${esc(s.charAt(0).toUpperCase() + s.slice(1))}</option>`)).join('');
+    return `
+      <label>Narrative</label><textarea id="pf-dis-narr" rows="5">${esc(r.narrative || '')}</textarea>
+      <label>Severity</label><select id="pf-dis-sev">${sevOpts}</select>
+      <label>Corrective action</label><textarea id="pf-dis-corr" rows="3">${esc(r.corrective_action || '')}</textarea>
+      <label>Date</label><input type="date" id="pf-dis-date" value="${r.record_date || todayISO()}" />
+      <label style="display:flex;align-items:center;gap:8px;margin-top:.6rem;cursor:pointer;">
+        <input type="checkbox" id="pf-dis-signed" ${r.signed_on_file ? 'checked' : ''} style="width:auto;margin:0;" onchange="document.getElementById('pf-dis-signedwrap').style.display=this.checked?'':'none'" />
+        <span>Signed physical copy on file</span></label>
+      <div id="pf-dis-signedwrap" style="display:${r.signed_on_file ? '' : 'none'};">
+        <label>Signed date</label><input type="date" id="pf-dis-signeddate" value="${r.signed_date || ''}" /></div>`;
+  }
+  // review — answer fields from the frozen snapshot (reuses fieldInput)
+  const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
+  const ans = r.answers || {};
+  const fields = def.map(f => fieldInput(f, ans[f.id])).join('');
+  return `
+    <div style="font-size:12px;color:#6B7280;margin-bottom:.6rem;">Structure frozen at creation.</div>
+    ${fields || '<div style="font-size:12.5px;color:#9CA3AF;">This evaluation’s template has no fields.</div>'}
+    <div style="border-top:.5px solid var(--stone);margin:.6rem 0;padding-top:.6rem;"></div>
+    <div style="display:flex;gap:10px;">
+      <div style="flex:1;"><label>Period start</label><input type="date" id="hr-rev-start" value="${r.review_period_start || ''}" /></div>
+      <div style="flex:1;"><label>Period end</label><input type="date" id="hr-rev-end" value="${r.review_period_end || ''}" /></div>
+    </div>
+    <label>Review date</label><input type="date" id="hr-rev-date" value="${r.review_date || todayISO()}" />
+    <label style="display:flex;align-items:center;gap:8px;margin-top:.6rem;cursor:pointer;">
+      <input type="checkbox" id="hr-rev-signed" ${r.signed_on_file ? 'checked' : ''} style="width:auto;margin:0;" onchange="document.getElementById('hr-rev-signedwrap').style.display=this.checked?'':'none'" />
+      <span>Signed physical copy on file</span></label>
+    <div id="hr-rev-signedwrap" style="display:${r.signed_on_file ? '' : 'none'};">
+      <label>Signed date</label><input type="date" id="hr-rev-signeddate" value="${r.signed_date || ''}" /></div>`;
+}
+
+async function savePersonnelRecord(r) {
+  if (!r) return false;
+  const type = r._type;
+  let fields;
+  if (type === 'memo') {
+    fields = { subject: val('pf-memo-subject').trim() || null, body: val('pf-memo-body').trim() || null, record_date: val('pf-memo-date') || null };
+  } else if (type === 'incident') {
+    fields = { description: val('pf-inc-desc').trim() || null, record_date: val('pf-inc-date') || null };
+  } else if (type === 'disciplinary') {
+    const signed = checked('pf-dis-signed');
+    fields = {
+      narrative: val('pf-dis-narr').trim() || null,
+      severity: val('pf-dis-sev') || null,
+      corrective_action: val('pf-dis-corr').trim() || null,
+      record_date: val('pf-dis-date') || null,
+      signed_on_file: signed,
+      signed_date: signed ? (val('pf-dis-signeddate') || null) : null,
+    };
+  } else {
+    const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
+    const answers = {};
+    for (const f of def) {
+      const aid = `hr-ans-${f.id}`;
+      if (f.type === 'numeric') {
+        if (f.allow_na && checked(`hr-na-${f.id}`)) { answers[f.id] = 'N/A'; continue; }
+        const raw = val(aid);
+        if (raw === '') { answers[f.id] = null; continue; }
+        const n = parseInt(raw, 10);
+        if (Number.isNaN(n) || n < f.min || n > f.max) { alert(`“${f.prompt}” must be a whole number from ${f.min} to ${f.max}.`); return false; }
+        answers[f.id] = n;
+      } else {
+        answers[f.id] = val(aid) || null;
+      }
+    }
+    const signed = checked('hr-rev-signed');
+    fields = {
+      answers,
+      review_period_start: val('hr-rev-start') || null,
+      review_period_end: val('hr-rev-end') || null,
+      review_date: val('hr-rev-date') || null,
+      record_date: val('hr-rev-date') || r.record_date || todayISO(),
+      signed_on_file: signed,
+      signed_date: signed ? (val('hr-rev-signeddate') || null) : null,
+    };
+  }
+  const { error } = await withWriteRetry(() => sb.from(RECORD_META[type].table).update({ ...fields, updated_at: nowIso() }).eq('id', r.id), { kind: 'update' });
+  if (error) { alert('Save failed: ' + error.message); return false; }
+  logActivity({ action: `updated ${RECORD_META[type].label.toLowerCase()}`, entityType: 'hr_record', entityName: RECORD_META[type].label });
+  return true;
+}
+
+async function deletePersonnelRecord(r) {
+  if (!r) return false;
+  const label = RECORD_META[r._type].label.toLowerCase();
+  if (!confirm(`Delete this ${label}? This cannot be undone.`)) return false;
+  // Remove any cross-file links touching this record first (avoid dangling pairs).
+  const ends = await getLinks(r._type, r.id);
+  await Promise.all(ends.map(e => unlinkRecords(r._type, r.id, e.type, e.id)));
+  const { error } = await deleteWithRetry(() => sb.from(RECORD_META[r._type].table).delete().eq('id', r.id));
+  if (error) { alert('Delete failed: ' + error.message); return false; }
+  logActivity({ action: `deleted ${label}`, entityType: 'hr_record', entityName: RECORD_META[r._type].label });
+  return true;
+}
+
 // ── Expose modal-button + record handlers (tree actions use delegation) ─────
 
 Object.assign(window, {
@@ -1664,4 +2081,7 @@ Object.assign(window, {
   // template builder
   hrNewTemplate, hrStartFromStarter, hrEditTemplate, hrDeleteTemplate,
   hrCloseBuilder, hrTbAdd, hrTbMove, hrTbDel, hrSaveTemplate,
+  // personnel record panel (Phase 2)
+  hrPfNew, hrPfNewReviewTemplate, hrPfNewReviewStarter,
+  hrPfOpenLinkPicker, hrPfDoLink, hrPfUnlink,
 });

@@ -227,13 +227,21 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 .org-tree li::before,.org-tree li::after{content:'';position:absolute;top:0;width:50%;height:24px;border-top:2px solid var(--stone);}
 .org-tree li::before{right:50%;}
 .org-tree li::after{left:50%;border-left:2px solid var(--stone);}
-.org-tree li:only-child::before,.org-tree li:only-child::after{display:none;}
 .org-tree li:only-child{padding-top:24px;}
 .org-tree li:first-child::before,.org-tree li:last-child::after{border:0 none;}
 .org-tree li:last-child::before{border-right:2px solid var(--stone);border-radius:0 7px 0 0;}
 .org-tree li:first-child::after{border-radius:7px 0 0 0;}
+/* Single child: one centered vertical line spanning the li's top gap so the connector
+   reaches the child card (combines with ul ul::before above for the full parent→child
+   run). Placed AFTER the first/last-child rules so it overrides them (an only-child is
+   both :first-child and :last-child, which would otherwise zero its borders). */
+.org-tree li:only-child::before{display:none;}
+.org-tree li:only-child::after{display:block;left:50%;right:auto;width:0;height:24px;border:0;border-left:2px solid var(--stone);border-radius:0;}
 .org-tree ul ul::before{content:'';position:absolute;top:0;left:50%;width:0;height:24px;border-left:2px solid var(--stone);}
-.org-node{position:relative;display:inline-block;box-sizing:border-box;width:152px;border:1.5px solid var(--navy);border-radius:10px;background:#FBF6EA;padding:.5rem .7rem .55rem;cursor:pointer;text-align:center;transition:box-shadow .12s,border-color .12s,transform .12s;}
+/* Cards sit ABOVE the connectors: nodes get a positive z-index (each becomes a
+   stacking context painted after the z-auto connector pseudo-elements), so every line
+   disappears cleanly behind the rectangle where it meets it. */
+.org-node{position:relative;z-index:1;display:inline-block;box-sizing:border-box;width:152px;border:1.5px solid var(--navy);border-radius:10px;background:#FBF6EA;padding:.5rem .7rem .55rem;cursor:pointer;text-align:center;transition:box-shadow .12s,border-color .12s,transform .12s;}
 .org-node:hover{box-shadow:0 3px 12px rgba(28,43,58,.16);}
 .org-node.sel{border-color:var(--cardinal);box-shadow:0 0 0 2.5px rgba(139,26,47,.18);}
 .org-node.vacant{border-style:dashed;border-color:var(--gold);background:#FFFDF6;}
@@ -255,6 +263,18 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 @media(max-width:767px){
   .org-pop{left:50%;right:auto;top:auto;bottom:0;transform:translateX(-50%);width:100%;max-width:520px;max-height:82vh;border-left:.5px solid var(--stone);border-top:3px solid var(--cardinal);border-radius:16px 16px 0 0;box-shadow:0 -10px 40px rgba(28,43,58,.32);}
 }
+
+/* ── Personnel record panel (Phase 2) — person header above the reused sac shell ─ */
+.pf-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:1.1rem 1.1rem .55rem;}
+.pf-back{background:none;border:.5px solid var(--stone);border-radius:6px;padding:.4rem .7rem;font-size:12.5px;color:var(--navy);cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:'Inter',sans-serif;white-space:nowrap;}
+.pf-back:hover{background:#F8F7F4;}
+.pf-id{display:flex;align-items:center;gap:11px;min-width:0;}
+.pf-avatar{width:42px;height:42px;border-radius:50%;background:var(--navy);color:var(--gold);display:flex;align-items:center;justify-content:center;font-family:'Cormorant Garamond',serif;font-weight:700;font-size:17px;flex-shrink:0;}
+.pf-name{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:var(--navy);line-height:1.15;}
+.pf-titles{font-size:12.5px;color:#6B7280;margin-top:1px;}
+.pf-host{padding:0 1.1rem 1.1rem;}
+.pf-flabel{font-size:11px;font-weight:700;letter-spacing:.06em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.2rem;}
+.pf-fval{font-size:13.5px;color:#374151;line-height:1.6;white-space:pre-wrap;margin-bottom:.85rem;}
 
 /* MOBILE */
 #hamburger{display:none;}
@@ -329,6 +349,12 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
   body.dark-mode .org-pop input,body.dark-mode .org-pop select{background:#0F1923;border-color:#3A4D60;color:#F8F7F4;}
   /* Inline color:var(--navy) labels/values are near-invisible on the dark panel — lift them. */
   body.dark-mode .org-pop [style*="var(--navy)"]{color:#E6ECF2 !important;}
+  /* Personnel record panel header (dark) */
+  body.dark-mode .pf-back{border-color:#3A4D60;color:#F8F7F4;}
+  body.dark-mode .pf-back:hover{background:#22344A;}
+  body.dark-mode .pf-name{color:#F8F7F4;}
+  body.dark-mode .pf-titles{color:#9FB1C4;}
+  body.dark-mode .pf-fval{color:#D7DEE6;}
   /* Sacramental / record / named panel cards */
   body.dark-mode .couple-card,body.dark-mode .record-card,body.dark-mode .marriage-card,
   body.dark-mode .annulment-card,body.dark-mode .baptism-card,body.dark-mode .ocia-card,
