@@ -2041,14 +2041,23 @@ async function openHrArchive() {
       (data || []).forEach(r => out.push({ ...r, _type: type, _reason: 'departed' }));
     }
   }
-  const byPerson = new Map();
-  out.forEach(r => { const n = _ctx?.personName(r.person_id) || 'Unknown'; (byPerson.get(n) || byPerson.set(n, []).get(n)).push(r); });
-  const groups = [...byPerson.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  // Group by (person, institution) — never merge institutions. A person who served
+  // in two institutions gets two headings ("Name — Parish", "Name — School").
+  const instName = (id) => _insts.find(i => i.id === id)?.name || 'Unknown institution';
+  const byKey = new Map();   // composite key → { name, inst, recs }
+  out.forEach(r => {
+    const name = _ctx?.personName(r.person_id) || 'Unknown';
+    const inst = instName(r.institution_id);
+    const key = `${name} ${inst}`;
+    if (!byKey.has(key)) byKey.set(key, { name, inst, recs: [] });
+    byKey.get(key).recs.push(r);
+  });
+  const groups = [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name) || a.inst.localeCompare(b.inst));
   _archiveCache = out;
   const body = groups.length
-    ? groups.map(([name, recs]) => `
+    ? groups.map(({ name, inst, recs }) => `
         <div style="margin-bottom:.85rem;">
-          <div style="font-weight:600;color:var(--navy);font-size:13.5px;margin-bottom:.35rem;">${esc(name)}</div>
+          <div style="font-weight:600;color:var(--navy);font-size:13.5px;margin-bottom:.35rem;">${esc(name)} <span style="color:#9CA3AF;font-weight:500;">— ${esc(inst)}</span></div>
           ${recs.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).map(r => `
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:.4rem .55rem;background:#F8F7F4;border:.5px solid var(--stone);border-radius:6px;margin-bottom:.3rem;">
               <span style="font-size:12.5px;color:var(--navy);">${esc(RECORD_CHIP[chipKey(r)].label)} · ${esc(createdMDY(r.created_at))} <span style="color:#9CA3AF;">(${r._reason})</span></span>
