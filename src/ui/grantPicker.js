@@ -7,6 +7,7 @@
 import { sb } from '../supabase.js';
 import { isSuperAdmin } from '../roles.js';
 import { closeModal } from './modal.js';
+import { showToast } from './toast.js';
 import {
   searchGrantableRecords, grantableUsers, writeGrant, revokeGrant, setGrantNote, recordTypeLabel,
 } from './grants.js';
@@ -194,16 +195,54 @@ export function renderGrantControllers(metadata, { mine = false } = {}) {
     const dead = _revoked.has(g.grant_id);
     const bg = dead ? '#9CA3AF' : (mine ? 'rgba(255,255,255,.18)' : '#5B4A8A');
     const deco = dead ? 'text-decoration:line-through;opacity:.8;' : '';
-    const revokeX = (isSA && !dead)
-      ? `<span class="grant-revoke" title="Revoke access" onclick="event.stopPropagation();window._revokeGrantController('${g.grant_id}')" style="cursor:pointer;color:#F3DADA;font-size:11px;padding:0 2px;">✕</span>` : '';
-    const onClick = (isSA && !dead) ? ` onclick="event.stopPropagation();window._editGrantNote('${g.grant_id}')"` : '';
-    return `<span class="grant-controller" data-grant-id="${g.grant_id}"${onClick}
-      style="display:inline-flex;align-items:center;gap:6px;background:${bg};color:#fff;border-radius:13px;padding:3px 8px 3px 10px;font-size:11.5px;${deco}cursor:${isSA && !dead ? 'pointer' : 'default'};max-width:240px;">
+    // BODY click = OPEN the granted record (recipient AND granter). Super-admin keeps
+    // a pencil (edit reason) + an X (revoke) on the right, both stopPropagation so
+    // they never trigger the open. A revoked chip is inert.
+    const controls = (isSA && !dead)
+      ? `<span class="grant-edit" title="Edit reason" onclick="event.stopPropagation();window._editGrantNote('${g.grant_id}')" style="cursor:pointer;color:#E8DEF6;font-size:10px;padding:0 2px;"><i class="fa-solid fa-pencil"></i></span>`
+        + `<span class="grant-revoke" title="Revoke access" onclick="event.stopPropagation();window._revokeGrantController('${g.grant_id}')" style="cursor:pointer;color:#F3DADA;font-size:11px;padding:0 2px;">✕</span>`
+      : '';
+    const bodyClick = dead ? '' : ` onclick="event.stopPropagation();window._openGrantedRecord('${_esc(g.record_type)}','${_esc(g.record_id)}')"`;
+    return `<span class="grant-controller" data-grant-id="${g.grant_id}"${bodyClick} title="${dead ? '' : 'Open record'}"
+      style="display:inline-flex;align-items:center;gap:6px;background:${bg};color:#fff;border-radius:13px;padding:3px 8px 3px 10px;font-size:11.5px;${deco}cursor:${dead ? 'default' : 'pointer'};max-width:240px;">
       <i class="fa-solid fa-key" style="font-size:10px;opacity:.9;"></i>
       <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(g.label || recordTypeLabel(g.record_type))}${dead ? ' · revoked' : ''}</span>
-      ${revokeX}
+      ${controls}
     </span>`;
   }).join('') + `</div>`;
+}
+
+// Open the granted record from the chip body — recipient AND granter. Maps the
+// record_grants.record_type to the right opener. Sacramental/project reuse the '#'
+// mention opener (which already has the access gate + lazy-load expand* stubs);
+// discerner + homebound_recipient are NOT mention-link types and have no case in
+// openLinkedRecord, so they're handled explicitly here. NEVER silent — any miss
+// surfaces a toast so this class of wiring gap can't recur invisibly.
+const _GRANT_MENTION_TYPE = {
+  marriage: 'marriage', annulment: 'annulment', ocia: 'ocia',
+  baptism: 'baptism', first_communion: 'firstcomm', confirmation: 'confirmation',
+};
+async function _openGrantedRecord(recordType, recordId) {
+  try {
+    const mention = _GRANT_MENTION_TYPE[recordType];
+    if (mention) {
+      if (typeof window._openLinkedRecord === 'function') return window._openLinkedRecord(mention, recordId);
+      throw new Error('link opener unavailable');
+    }
+    if (recordType === 'discerner') {
+      if (typeof window.expandDiscerner === 'function') return window.expandDiscerner(recordId);
+      throw new Error('discernment opener unavailable');
+    }
+    if (recordType === 'homebound_recipient') {
+      location.hash = `#/homebound/${recordId}`;          // hash first; the shell opens it on mount
+      if (typeof window.switchPanel === 'function') return window.switchPanel('homebound');
+      throw new Error('panel switch unavailable');
+    }
+    showToast(`Can't open this record type (${recordType}).`, { type: 'error' });
+  } catch (e) {
+    console.error('[grant] open failed:', e);
+    showToast("Couldn't open the granted record. Contact an administrator.", { type: 'error' });
+  }
 }
 
 // Global dispatchers (controller links are rendered as HTML strings).
@@ -231,4 +270,5 @@ async function _editGrantNote(grantId) {
 if (typeof window !== 'undefined') {
   window._revokeGrantController = _revokeGrantController;
   window._editGrantNote = _editGrantNote;
+  window._openGrantedRecord = _openGrantedRecord;
 }
