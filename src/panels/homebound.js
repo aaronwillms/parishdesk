@@ -13,7 +13,8 @@ import { sb, withWriteRetry, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { logActivity, formatAddressBlock, formatAddressFlat, formatDateMDY, todayCST } from '../utils.js';
 import { renderSacramentalPanel, refreshActivePanel } from '../sacramental/panelShell.js';
-import { isHomeboundBroad, canAccessHomebound, canAccessHomeboundRecipient } from '../roles.js';
+import { isHomeboundBroad, canAccessHomebound, canAccessHomeboundRecipient, isSuperAdmin } from '../roles.js';
+import { notifyUsers } from '../notifications.js';
 import { setFieldLocked } from '../sacramental/churchLocation.js';
 import { closeModal } from '../ui/modal.js';
 import { flashSavedThen } from '../ui/saveButton.js';
@@ -29,6 +30,7 @@ const CARE_LABEL   = { home: 'Home', facility: 'Facility', hospital: 'Hospital' 
 const STATUS_LABEL = { active: 'Active', resolved_discharged: 'Resolved / Discharged', deceased: 'Deceased' };
 
 const ROLE_LABEL = { sacramental: 'Sacramental', communion: 'Communion', visitor: 'Visitor' };
+const KIND_LABEL = { confession: 'Confession', anointing: 'Anointing', priest_visit: 'Priest Visit' };
 // "brought" records sacramental logistics only. NO "Confession" (recording received
 // Penance on a dated multi-user record breaches the seal). NO "pastoral visit" (every
 // logged visit is pastoral by nature — redundant). An EMPTY brought[] is valid/normal
@@ -44,7 +46,10 @@ let _rosterLinkedIds = [];   // personnel ids = program_coordinators(program='ho
 let _rosterInline = [];      // homebound_roster_inline rows (record-only members)
 let _assignments = [];       // homebound_assignments rows
 let _visits = [];            // homebound_visits rows
+let _requests = [];          // OPEN care_requests rows (resolved_at IS NULL)
+let _requestRecipients = []; // homebound_request_recipients rows (personnel_id list)
 let _authUserId = null;      // current auth user (author-scoped visit edits, _isCreator)
+const RESOLVED_PURGE_DAYS = 7;   // resolved requests are NOT archived — purged after this window
 async function loadFacilities() {
   const { data } = await sb.from('homebound_facilities').select('*');
   _facilities = data || [];
@@ -53,6 +58,20 @@ async function loadFacilities() {
 async function loadVisits() {
   const { data } = await sb.from('homebound_visits').select('*');
   _visits = data || [];
+}
+async function loadRequests() {
+  const { data } = await sb.from('care_requests').select('*').is('resolved_at', null).order('requested_at', { ascending: false });
+  _requests = data || [];
+}
+async function loadRequestRecipients() {
+  const { data } = await sb.from('homebound_request_recipients').select('*');
+  _requestRecipients = data || [];
+}
+// Resolved requests are NOT archived — hard-delete those older than the window so a
+// stale notification clicked days later opens the file but finds nothing pending.
+async function purgeOldRequests() {
+  const cutoff = new Date(Date.now() - RESOLVED_PURGE_DAYS * 864e5).toISOString();
+  await sb.from('care_requests').delete().not('resolved_at', 'is', null).lt('resolved_at', cutoff);
 }
 const visitsFor = (recipientId) => _visits.filter(v => v.recipient_id === recipientId)
   // newest-first: by visit_date, then created_at (so same-day Quick Logs surface on top).
@@ -75,12 +94,13 @@ async function loadHomeboundData() {
   _authUserId = user?.id || null;
   const [recRes] = await Promise.all([
     sb.from('homebound_recipients').select('*'),
-    loadFacilities(), loadRoster(), loadAssignments(), loadVisits(),
+    loadFacilities(), loadRoster(), loadAssignments(), loadVisits(), loadRequests(), loadRequestRecipients(),
     loadMyGrants().catch(() => {}),   // % grant cache (powers the grantee view path)
     ensureIdentities().catch(() => {}),
   ]);
   _recipients = recRes.data || [];
   store.homeboundRecipients = _recipients;
+  if (isHomeboundBroad()) purgeOldRequests().catch(() => {});   // no archive — fire-and-forget cleanup
   return _recipients;
 }
 
@@ -450,8 +470,25 @@ function _renderFacilitiesManager() {
         <button class="card-action" style="color:#A32D2D;" onclick="window.hbFacilityRemove('${f.id}')">Remove</button>
       </div></div>`;
   }).join('') : `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;margin-bottom:.5rem;">No facilities yet.</div>`;
+  // Pastoral-request recipients (super-admin only) — a shared queue; requests notify
+  // everyone listed. Available = directory people not already a recipient.
+  const taken = new Set(_requestRecipients.map(rr => rr.personnel_id));
+  const addOpts = (store.personnel || []).filter(p => !taken.has(p.id)).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    .map(p => `<option value="${p.id}">${esc(p.name || '(no name)')}</option>`).join('');
+  const prr = isSuperAdmin() ? `
+    <div style="margin-bottom:1rem;">
+      <div style="${SECT}">Pastoral-request recipients</div>
+      ${requestRecipientsHtml()}
+      <div style="display:flex;gap:6px;margin-top:.4rem;">
+        <select id="hb-prr-add" style="${IS}flex:1;"><option value="">— Add a recipient… —</option>${addOpts}</select>
+        <button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;white-space:nowrap;" onclick="window.hbAddRequestRecipient()">+ Add</button>
+      </div>
+      <div style="font-size:11px;color:#9CA3AF;margin-top:3px;">Requests notify everyone here (a shared queue); resolving clears it for all. Falls back to the pastor when empty.</div>
+    </div>` : '';
   document.getElementById('modal-content').innerHTML = `
-    <div class="modal-title">Facilities &amp; Hospitals</div>
+    <div class="modal-title">Sick &amp; Homebound Settings</div>
+    ${prr}
+    <div style="${SECT}">Facilities &amp; hospitals</div>
     <div style="font-size:11.5px;color:#9CA3AF;margin-bottom:.7rem;">Shared by facility &amp; hospital recipients — manage the list so locations group and autofill consistently.</div>
     <div style="max-height:240px;overflow-y:auto;margin-bottom:.8rem;">${rows}</div>
     <div data-hbfac style="background:var(--parch);border:.5px solid var(--stone);border-radius:var(--radius-sm);padding:.7rem;">
@@ -683,13 +720,16 @@ function visitFormFields(v = {}) {
       <div style="flex:1;min-width:150px;"><label style="${LS}">Who visited</label><input type="text" id="hb-visit-minister" value="${esc(v.minister != null ? v.minister : _myName())}" style="${IS}" /></div>
     </div>
     <label style="${LS}">Brought</label>
-    <div style="display:flex;flex-wrap:wrap;">${checks}</div>`;
+    <div style="display:flex;flex-wrap:wrap;">${checks}</div>
+    <label style="${LS}">Note</label>
+    <textarea id="hb-visit-note" rows="2" placeholder="Optional note…" style="${IS}resize:vertical;">${esc(v.note || '')}</textarea>`;
 }
 function readVisitForm(root) {
   return {
     visit_date: root?.querySelector('#hb-visit-date')?.value || null,
     minister: (root?.querySelector('#hb-visit-minister')?.value || '').trim() || null,
     brought: [...(root?.querySelectorAll('input[data-brought]:checked') || [])].map(c => c.dataset.brought),
+    note: (root?.querySelector('#hb-visit-note')?.value || '').trim() || null,
   };
 }
 
@@ -710,6 +750,7 @@ function visitLogSection(r) {
         <div style="min-width:0;">
           <div style="font-size:12.5px;color:var(--navy);font-weight:600;">${esc(formatDateMDY(v.visit_date) || '—')}${time ? ` at ${esc(time)}` : ''}${who ? ` · ${esc(who)}` : ''}<span style="font-weight:400;color:#9CA3AF;">${noteEditedMarker(v.edited_at)}</span></div>
           ${broughtChips ? `<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;">${broughtChips}</div>` : ''}
+          ${v.note ? `<div style="margin-top:4px;font-size:11.5px;color:#9CA3AF;white-space:pre-wrap;">${esc(v.note)}</div>` : ''}
         </div>${ctrls}
       </div>
     </div>`;
@@ -729,10 +770,10 @@ async function hbVisitAdd(recipientId) {
   const r = _recipients.find(x => x.id === recipientId);
   if (!r || !canLogVisit(r)) return;
   const f = readVisitForm(document.getElementById('hb-visit-add-' + recipientId));
-  // Seal-of-confession guard on the entry's free-text (the only free-text field is
-  // "who visited"). brought has no Confession option, so it never triggers.
-  if (!(await sealGuardConfirm(f.minister))) return;
-  const { error } = await withWriteRetry(() => sb.from('homebound_visits').insert({ recipient_id: recipientId, visit_date: f.visit_date, minister: f.minister, brought: f.brought, author_id: _authUserId }), { kind: 'create' });
+  // Seal-of-confession guard fires on the free-text NOTE field (brought has no
+  // Confession option; Quick Log has no note → never triggers).
+  if (!(await sealGuardConfirm(f.note))) return;
+  const { error } = await withWriteRetry(() => sb.from('homebound_visits').insert({ recipient_id: recipientId, visit_date: f.visit_date, minister: f.minister, brought: f.brought, note: f.note, author_id: _authUserId }), { kind: 'create' });
   if (error) { alert('Add failed: ' + error.message); return; }
   logActivity({ action: 'logged homebound visit', entityType: 'homebound_visit', entityName: r.name || 'Recipient', contextType: 'homebound', contextId: recipientId });
   await loadVisits(); refreshActivePanel();
@@ -751,8 +792,8 @@ async function hbVisitSave(visitId) {
   const v = _visits.find(x => x.id === visitId); const r = _recipients.find(x => x.id === v?.recipient_id);
   if (!v || !canManageVisit(v, r)) return;
   const f = readVisitForm(document.querySelector('#modal-content [data-hbvisit]'));
-  if (!(await sealGuardConfirm(f.minister))) return;   // seal guard on the free-text
-  const { error } = await withWriteRetry(() => sb.from('homebound_visits').update({ visit_date: f.visit_date, minister: f.minister, brought: f.brought, edited_at: nowIso() }).eq('id', visitId), { kind: 'update' });
+  if (!(await sealGuardConfirm(f.note))) return;   // seal guard on the free-text note
+  const { error } = await withWriteRetry(() => sb.from('homebound_visits').update({ visit_date: f.visit_date, minister: f.minister, brought: f.brought, note: f.note, edited_at: nowIso() }).eq('id', visitId), { kind: 'update' });
   if (error) { alert('Save failed: ' + error.message); return; }
   await loadVisits();
   flashSavedThen(() => { closeModal(); refreshActivePanel(); });
@@ -800,6 +841,128 @@ async function hbVisitDelete(visitId) {
 
 function granteeBanner() {
   return `<div style="font-size:12.5px;color:#6B7280;background:#FBF6EC;border:.5px solid #E8D9B8;border-radius:6px;padding:.5rem .65rem;"><i class="fa-solid fa-key" style="color:#B9A88F;margin-right:6px;"></i>You're viewing this file through a shared grant — read-only.</div>`;
+}
+
+// ── Pastoral request channel (durable + triple-surfaced) ──────────────────────
+// Pressable by anyone with WRITE file access (broad OR assigned — not a read-only
+// %-grantee). Three surfaces: (i) a durable care_requests row, (ii) a notification
+// ping to the designated recipient, (iii) the pending-requests banner. "Requested
+// Confession" is a forward-looking REQUEST (logistics), NOT a record that Penance
+// occurred — distinct from the visit log, where Confession is barred (seal).
+function requestsSection(r) {
+  if (!canAccessHomeboundRecipient(r.id)) return _muted('Read-only — requests are logged by the care team.');
+  const btn = (kind, label, icon) => `<button class="btn-secondary" style="padding:.4rem .8rem;font-size:12px;white-space:nowrap;" onclick="window.hbRequest('${r.id}','${kind}')"><i class="fa-solid ${icon}" style="margin-right:5px;"></i>${label}</button>`;
+  return `<div style="display:flex;flex-wrap:wrap;gap:6px;">
+    ${btn('confession', 'Requested Confession', 'fa-hands-praying')}
+    ${btn('anointing', 'Requested Anointing', 'fa-droplet')}
+    ${btn('priest_visit', 'Requested Priest Visit', 'fa-person-walking')}
+  </div>`;
+}
+async function hbRequest(recipientId, kind) {
+  const r = _recipients.find(x => x.id === recipientId);
+  if (!r || !canAccessHomeboundRecipient(recipientId) || !KIND_LABEL[kind]) return;
+  // (i) durable row
+  const { error } = await withWriteRetry(() => sb.from('care_requests').insert({ recipient_id: recipientId, kind, requested_by: _authUserId }), { kind: 'create' });
+  if (error) { alert('Request failed: ' + error.message); return; }
+  logActivity({ action: `requested ${KIND_LABEL[kind]}`, entityType: 'care_request', entityName: recipientName(r), contextType: 'homebound', contextId: recipientId });
+  // (ii) notification ping → designated recipient (deep-links to the file on click)
+  try {
+    const targets = await designatedRecipientUserIds();
+    await notifyUsers(targets, _authUserId, `${KIND_LABEL[kind]} requested for ${recipientName(r)}`, 'warning', 'homebound', recipientId);
+  } catch (e) { console.warn('[homebound] request notify failed', e); }
+  await loadRequests(); refreshActivePanel(); renderPendingRequests();
+  showToast('Your request has been logged', { type: 'success', duration: 1800 });
+}
+// Designated recipients → user id(s), FANNED OUT over the join table (each set
+// recipient's personnel_id → user). Falls back to the pastor / super-admins when none.
+async function designatedRecipientUserIds() {
+  const pids = _requestRecipients.map(r => r.personnel_id).filter(Boolean);
+  if (pids.length) {
+    const { data } = await sb.from('user_profiles').select('user_id').in('personnel_id', pids);
+    const uids = (data || []).map(p => p.user_id).filter(Boolean);
+    if (uids.length) return [...new Set(uids)];
+  }
+  const { data } = await sb.from('user_roles').select('user_id').eq('role', 'super_admin');
+  return (data || []).map(x => x.user_id).filter(Boolean);
+}
+
+// Pending-requests view (surface iii) — open care_requests, for the designated
+// recipient + super-admin/pastor. Resolve = mark resolved_at (independent of the
+// visit log; never forces a visit entry).
+function canSeePendingRequests() {
+  if (isSuperAdmin()) return true;
+  const myPid = store.currentUserProfile?.personnel_id;
+  return !!(myPid && _requestRecipients.some(rr => rr.personnel_id === myPid));
+}
+function renderPendingRequests() {
+  const host = document.getElementById('hb-pending');
+  if (!host) return;
+  if (!canSeePendingRequests() || !_requests.length) { host.innerHTML = ''; return; }
+  const rows = _requests.map(req => {
+    const r = _recipients.find(x => x.id === req.recipient_id);
+    const t = visitTimeOf(req.requested_at);
+    const when = `${formatDateMDY((req.requested_at || '').slice(0, 10))}${t ? ' at ' + t : ''}`;
+    const who = req.requested_by ? userName(req.requested_by) : '';
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:.45rem .55rem;border-top:.5px solid var(--stone);">
+      <div style="min-width:0;cursor:pointer;" onclick="window.hbOpenRequest('${req.recipient_id}')">
+        <div style="font-size:13px;color:var(--navy);"><strong>${esc(KIND_LABEL[req.kind] || req.kind)}</strong> — ${esc(r ? recipientName(r) : 'Unknown recipient')}</div>
+        <div style="font-size:11px;color:#9CA3AF;margin-top:2px;">Requested ${esc(when)}${who ? ' · by ' + esc(who) : ''}</div>
+      </div>
+      <button class="card-action" onclick="window.hbResolveRequest('${req.id}')" title="Mark handled" style="flex-shrink:0;">Resolve</button>
+    </div>`;
+  }).join('');
+  host.innerHTML = `<div style="background:#FBF6EC;border:.5px solid #E8D9B8;border-radius:8px;padding:.6rem .7rem;margin-bottom:1rem;">
+    <div style="display:flex;align-items:center;gap:7px;${rows ? 'padding-bottom:.2rem;' : ''}"><i class="fa-solid fa-bell" style="color:#B9892F;"></i><span style="font-weight:700;font-size:13px;color:var(--navy);">Pending pastoral requests (${_requests.length})</span></div>
+    ${rows}
+  </div>`;
+}
+async function hbResolveRequest(id) {
+  if (!canSeePendingRequests()) return;
+  const req = _requests.find(x => x.id === id);
+  const { error } = await withWriteRetry(() => sb.from('care_requests').update({ resolved_at: nowIso(), resolved_by: _authUserId }).eq('id', id), { kind: 'update' });
+  if (error) { alert('Resolve failed: ' + error.message); return; }
+  const r = req && _recipients.find(x => x.id === req.recipient_id);
+  logActivity({ action: `resolved ${KIND_LABEL[req?.kind] || 'care'} request`, entityType: 'care_request', entityName: r ? recipientName(r) : 'Recipient', contextType: 'homebound', contextId: req?.recipient_id });
+  // Resolution notification → all request recipients EXCEPT the resolver (notifyUsers
+  // skips the triggering user). The CARE recipient's name (the sick person), not the
+  // resolver's or the original requester's. The requester is NOT notified on resolve.
+  try {
+    const targets = await designatedRecipientUserIds();
+    const careName = r ? recipientName(r) : 'a parishioner';
+    await notifyUsers(targets, _authUserId, `${_myName() || 'A minister'} resolved ${careName}'s request.`, 'info', 'homebound', req?.recipient_id);
+  } catch (e) { console.warn('[homebound] resolve notify failed', e); }
+  await loadRequests(); renderPendingRequests();
+}
+function hbOpenRequest(recipientId) {
+  document.querySelector('[data-hbtab="recipients"]')?.click();
+  location.hash = `#/homebound/${recipientId}`;
+}
+// Multi-recipient settings (super-admin) — add/remove rows on the join table.
+function requestRecipientsHtml() {
+  if (!_requestRecipients.length) return `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;margin-bottom:.3rem;">None set — requests route to the pastor.</div>`;
+  return _requestRecipients.map(rr => {
+    const nm = (store.personnel || []).find(p => p.id === rr.personnel_id)?.name || '(unknown)';
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:.35rem .5rem;background:#F8F7F4;border:.5px solid var(--stone);border-radius:6px;margin-bottom:.3rem;">
+      <span style="font-size:13px;color:var(--navy);">${esc(nm)}</span>
+      <button class="card-action" style="color:#A32D2D;" onclick="window.hbRemoveRequestRecipient('${rr.id}')">Remove</button>
+    </div>`;
+  }).join('');
+}
+async function hbAddRequestRecipient() {
+  if (!isSuperAdmin()) return;
+  const pid = document.getElementById('hb-prr-add')?.value || '';
+  if (!pid) return;
+  const { error } = await withWriteRetry(() => sb.from('homebound_request_recipients').insert({ personnel_id: pid }), { kind: 'create' });
+  if (error) { alert('Add failed: ' + error.message); return; }
+  logActivity({ action: 'added pastoral request recipient', entityType: 'homebound_request_recipient', entityName: (store.personnel || []).find(p => p.id === pid)?.name || 'Recipient', contextType: 'homebound' });
+  await loadRequestRecipients(); _renderFacilitiesManager();
+}
+async function hbRemoveRequestRecipient(id) {
+  if (!isSuperAdmin()) return;
+  const { error } = await deleteWithRetry(() => sb.from('homebound_request_recipients').delete().eq('id', id));
+  if (error) { alert('Remove failed: ' + error.message); return; }
+  logActivity({ action: 'removed pastoral request recipient', entityType: 'homebound_request_recipient', contextType: 'homebound' });
+  await loadRequestRecipients(); _renderFacilitiesManager();
 }
 
 // ── Shell config — Tab 1 Recipients ──────────────────────────────────────────
@@ -860,9 +1023,10 @@ const homeboundConfig = {
   }),
   detailSections: [
     { title: 'Shared access',    render: () => granteeBanner(), when: (r) => isGranteeOnly(r) },
-    { title: 'Contact',          render: (r) => contactRead(r) },
-    { title: 'Ministers',        render: (r) => ministersSection(r) },
-    { title: 'Visit Log',        render: (r) => visitLogSection(r) },
+    { title: 'Contact',           render: (r) => contactRead(r) },
+    { title: 'Pastoral Requests', render: (r) => requestsSection(r) },
+    { title: 'Ministers',         render: (r) => ministersSection(r) },
+    { title: 'Visit Log',         render: (r) => visitLogSection(r) },
     { title: 'Current Location', render: (r) => locationRead(r) },
     { title: 'Mailing Address',  render: (r) => mailingRead(r) },
   ],
@@ -883,6 +1047,7 @@ export async function loadHomebound() {
   await loadHomeboundData();
   const tab = (key, label) => `<button data-hbtab="${key}" class="hb-tab" style="${TAB}${key === 'recipients' ? TAB_ON : ''}">${label}</button>`;
   root.innerHTML = `
+    <div id="hb-pending"></div>
     <div class="hb-tabbar" style="display:flex;gap:4px;border-bottom:.5px solid var(--stone);margin-bottom:1rem;">
       ${tab('recipients', 'Recipients')}
       ${tab('ministers', 'Ministers to the Sick')}
@@ -898,6 +1063,7 @@ export async function loadHomebound() {
   });
   renderSacramentalPanel(document.getElementById('hb-tab-recipients'), homeboundConfig);
   renderRosterTab();
+  renderPendingRequests();
 }
 
 Object.assign(window, {
@@ -907,4 +1073,6 @@ Object.assign(window, {
   _hbRosterPickChange, hbRosterAdd, hbRosterRemoveLinked, hbRosterRemoveInline,
   hbAssign, hbUnassign,
   hbVisitAdd, hbVisitEdit, hbVisitSave, hbVisitDelete, hbQuickLog,
+  hbRequest, hbResolveRequest, hbOpenRequest,
+  hbAddRequestRecipient, hbRemoveRequestRecipient,
 });
