@@ -1,5 +1,5 @@
 import { sb } from '../supabase.js';
-import { isSuperAdmin, isAdmin, canAccessSacrament, canAccessPanel } from '../roles.js';
+import { isSuperAdmin, isAdmin, canAccessSacrament, canAccessPanel, canAccessHomeboundRecipient, canAccessDiscernment } from '../roles.js';
 import { getUserScope, isVisible } from './userScope.js';
 import { hasMyGrantForLink } from './grants.js';
 import { showToast } from './toast.js';
@@ -22,6 +22,17 @@ const TYPES = {
                   cols: ['name'],                    label: r => r.name || '?' },
   project:      { table: 'projects',                 project: true,                typeLabel: 'Project',          icon: 'fa-folder',
                   cols: ['title'],                   label: r => r.title || '?',  selectCols: 'id,title,created_by,team_id,assigned_to' },
+  // Sick & Homebound recipient (person file). Not sacrament-gated — access is the
+  // homebound model (broad/roster/assignment OR a % grant), via `access` below.
+  homebound_recipient: { table: 'homebound_recipients', typeLabel: 'Sick & Homebound', icon: 'fa-house-medical',
+                  cols: ['first_name', 'last_name', 'name'], label: r => r.name || [r.first_name, r.last_name].filter(Boolean).join(' ') || '?',
+                  access: (id) => canAccessHomeboundRecipient(id) },
+  // Discerner (person file). Gated to discernment PANEL access — a non-discernment
+  // user gets no discerner results in '#' (same privacy boundary as today). The '%'
+  // grant remains the path for sharing one file to someone WITHOUT panel access.
+  discerner:    { table: 'discerners',               typeLabel: 'Discerner',        icon: 'fa-hands-praying',
+                  cols: ['first_name', 'last_name', 'name'], label: r => r.name || [r.first_name, r.last_name].filter(Boolean).join(' ') || '?',
+                  access: () => canAccessDiscernment() },
 };
 
 export const MENTION_ICONS = Object.fromEntries(Object.entries(TYPES).map(([k, v]) => [k, v.icon]));
@@ -40,6 +51,8 @@ export function canAccessLink(type, id) {
   const cfg = TYPES[type];
   if (!cfg) return true;
   if (cfg.project) return canAccessPanel('projects');
+  // Custom (non-sacrament) access predicate, e.g. homebound: own access OR a % grant.
+  if (cfg.access) return cfg.access(id) || hasMyGrantForLink(type, id);
   if (canAccessSacrament(cfg.sacrament)) return true;
   return hasMyGrantForLink(type, id);   // false unless an explicit grant exists
 }
@@ -264,6 +277,10 @@ export function openLinkedRecord(type, id) {
     case 'firstcomm':    return window.expandFirstComm ? window.expandFirstComm(id) : window.expandSacramental?.('firstcomm', id);
     case 'confirmation': return window.expandConfirmation ? window.expandConfirmation(id) : window.expandSacramental?.('confirmation', id);
     case 'project':      return window.showProjectDashboard?.(id);
+    case 'homebound_recipient': location.hash = `#/homebound/${id}`; return window.switchPanel?.('homebound');
+    case 'discerner':    // expandDiscerner stub (main.js) lazy-loads the panel then opens
+      if (typeof window.expandDiscerner === 'function') return window.expandDiscerner(id);
+      return showToast("Couldn't open the discerner file.", { type: 'error' });
     default: console.warn('[mention] unknown link type', type);
   }
 }
