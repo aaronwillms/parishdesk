@@ -65,6 +65,25 @@ export function formatDateMDY(isoDate) {
 // Back-compat name kept so existing call sites (31 of them) need no churn.
 export const formatDateDisplay = formatDateMDY;
 
+// ── Shared address formatter ────────────────────────────────────────────────
+// One place to format an address from { street, city, state, zip } (any subset),
+// so every surface (Sick & Homebound location/mailing/facility, and other panels)
+// renders consistently and drops missing parts without stray commas or blank lines.
+//   formatAddressBlock → two lines: "Street\nCity, State Zip"  (display)
+//   formatAddressFlat  → one line:  "Street, City, State Zip"  (maps / clipboard)
+function _addrCityZip(addr) {
+  const cityState = [addr.city, addr.state].filter(Boolean).join(', ');
+  return [cityState, addr.zip].filter(Boolean).join(' ').trim();
+}
+export function formatAddressBlock(addr) {
+  if (!addr) return '';
+  return [addr.street, _addrCityZip(addr)].filter(Boolean).join('\n');
+}
+export function formatAddressFlat(addr) {
+  if (!addr) return '';
+  return [addr.street, _addrCityZip(addr)].filter(Boolean).join(', ');
+}
+
 // Parse a DD/MM/YYYY string back to ISO (YYYY-MM-DD) for storage. Returns null if blank/invalid.
 export function parseDateInput(displayDate) {
   if (!displayDate) return null;
