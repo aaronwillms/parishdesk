@@ -27,6 +27,15 @@ const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 const CARE_LABEL   = { home: 'Home', facility: 'Facility', hospital: 'Hospital' };
+// Care-type chip colors: Home = blue, Facility = green, Hospital = yellow. Applied as
+// an explicit chip `style` (overrides the tone palette in light mode; dark mode
+// flattens all chips uniformly, app-wide). Used on BOTH the card and the file header.
+const CARE_CHIP_STYLE = {
+  home:     'background:#E4EEF7;color:#1B4F72;',   // blue
+  facility: 'background:#E5F3E4;color:#2E6B2E;',   // green
+  hospital: 'background:#FBF1C7;color:#7A6200;',   // yellow
+};
+const careChip = (r) => ({ label: CARE_LABEL[r.care_type] || '—', style: CARE_CHIP_STYLE[r.care_type] || '' });
 const STATUS_LABEL = { active: 'Active', resolved_discharged: 'Resolved / Discharged', deceased: 'Deceased' };
 
 const ROLE_LABEL = { sacramental: 'Sacramental', communion: 'Communion', visitor: 'Visitor' };
@@ -89,9 +98,20 @@ async function loadAssignments() {
   const { data } = await sb.from('homebound_assignments').select('*');
   _assignments = data || [];
 }
+// Targeted reload — just the recipient list. Used after a recipient mutation so a
+// save costs ONE round trip (the write) + this, not the full loadHomeboundData
+// (which also does a sequential sb.auth.getUser() + 9 other queries).
+async function loadRecipients() {
+  const { data } = await sb.from('homebound_recipients').select('*');
+  _recipients = data || [];
+  store.homeboundRecipients = _recipients;
+  return _recipients;
+}
 async function loadHomeboundData() {
-  const { data: { user } } = await sb.auth.getUser();
-  _authUserId = user?.id || null;
+  if (!_authUserId) {   // auth user id is stable per session — fetch once, not on every reload
+    const { data: { user } } = await sb.auth.getUser();
+    _authUserId = user?.id || null;
+  }
   const [recRes] = await Promise.all([
     sb.from('homebound_recipients').select('*'),
     loadFacilities(), loadRoster(), loadAssignments(), loadVisits(), loadRequests(), loadRequestRecipients(),
@@ -242,23 +262,15 @@ function facilityOptionsHtml(r) {
 }
 
 function recipientFormHtml(r = {}) {
-  const linked = r.personnel_id || '';
-  const personnelOptions = `<option value="">— Not in directory (enter name) —</option>` +
-    (store.personnel || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-      .map(p => `<option value="${p.id}"${linked === p.id ? ' selected' : ''}>${esc(p.name || '(no name)')}</option>`).join('');
   return `<div data-hbform>
-    <label style="${LS}">Directory person (optional)</label>
-    <select id="hb-personnel" onchange="window._hbIdentityToggle(this)" style="${IS}">${personnelOptions}</select>
-    <div id="hb-inline-identity">
-      <div style="display:flex;gap:6px;">
-        <div style="flex:1;">${_field('hb-first', 'First', r.first_name)}</div>
-        <div style="flex:1;">${_field('hb-middle', 'Middle', r.middle_name)}</div>
-        <div style="flex:1;">${_field('hb-last', 'Last', r.last_name)}</div>
-      </div>
-      <div style="display:flex;gap:6px;">
-        <div style="flex:1;">${_field('hb-phone', 'Phone', r.phone, 'tel')}</div>
-        <div style="flex:1;">${_field('hb-email', 'Email', r.email, 'email')}</div>
-      </div>
+    <div style="display:flex;gap:6px;">
+      <div style="flex:1;">${_field('hb-first', 'First', r.first_name)}</div>
+      <div style="flex:1;">${_field('hb-middle', 'Middle', r.middle_name)}</div>
+      <div style="flex:1;">${_field('hb-last', 'Last', r.last_name)}</div>
+    </div>
+    <div style="display:flex;gap:6px;">
+      <div style="flex:1;">${_field('hb-phone', 'Phone', r.phone, 'tel')}</div>
+      <div style="flex:1;">${_field('hb-email', 'Email', r.email, 'email')}</div>
     </div>
 
     <div style="display:flex;gap:6px;margin-top:.4rem;">
@@ -318,11 +330,6 @@ function _applyMailing(root, same) {
       else setFieldLocked(me, false);
     });
 }
-function _hbIdentityToggle(el) {
-  const root = el.closest('[data-hbform]');
-  const block = _q(root, 'hb-inline-identity');
-  if (block) block.style.display = _q(root, 'hb-personnel')?.value ? 'none' : 'block';
-}
 function _hbSwapLocation(el) {
   const root = el.closest('[data-hbform]');
   const ct = _q(root, 'hb-ct')?.value || 'home';
@@ -360,8 +367,6 @@ function _hbMailingToggle(el) {
 // Set initial visibility + mailing default after the form mounts.
 function _hbHydrateForm(root) {
   if (!root) return;
-  const idBlock = _q(root, 'hb-inline-identity');
-  if (idBlock) idBlock.style.display = _q(root, 'hb-personnel')?.value ? 'none' : 'block';
   const ct = _q(root, 'hb-ct')?.value || 'home';
   const home = _q(root, 'hb-loc-home'); if (home) home.style.display = ct === 'home' ? 'block' : 'none';
   const fac = _q(root, 'hb-loc-facility'); if (fac) fac.style.display = (ct === 'facility' || ct === 'hospital') ? 'block' : 'none';
@@ -378,12 +383,9 @@ function _hbHydrateForm(root) {
 function _hbReadForm(root) {
   if (!root) return null;
   const v = id => (_q(root, id)?.value || '').trim();
-  const personnel_id = v('hb-personnel') || null;
   const first = v('hb-first'), middle = v('hb-middle'), last = v('hb-last');
-  const name = personnel_id
-    ? ((store.personnel || []).find(p => p.id === personnel_id)?.name || null)
-    : ([first, middle, last].filter(Boolean).join(' ') || null);
-  if (!personnel_id && !name) { alert('Enter a name or link a directory person.'); return null; }
+  const name = [first, middle, last].filter(Boolean).join(' ') || null;
+  if (!name) { alert('Enter a name.'); return null; }
   const ct = v('hb-ct') || 'home';
   let facility_id = null, facility_inline_name = null, room_unit = null;
   if (ct === 'facility' || ct === 'hospital') {
@@ -393,13 +395,13 @@ function _hbReadForm(root) {
     room_unit = v('hb-fac-room') || null;
   }
   return {
-    personnel_id,
-    first_name:  personnel_id ? null : (first || null),
-    middle_name: personnel_id ? null : (middle || null),
-    last_name:   personnel_id ? null : (last || null),
+    personnel_id: null,   // recipients are always inline (the directory link was removed)
+    first_name: first || null,
+    middle_name: middle || null,
+    last_name: last || null,
     name,
-    phone: personnel_id ? null : (v('hb-phone') || null),
-    email: personnel_id ? null : (v('hb-email') || null),
+    phone: v('hb-phone') || null,
+    email: v('hb-email') || null,
     care_type: ct,
     status: v('hb-status') || 'active',
     home_street: v('hb-home-street') || null, home_city: v('hb-home-city') || null, home_state: v('hb-home-state') || null, home_zip: v('hb-home-zip') || null,
@@ -423,7 +425,10 @@ async function homeboundSaveEdit(id) {
   const { error } = await withWriteRetry(() => sb.from('homebound_recipients').update(payload).eq('id', id), { kind: 'update' });
   if (error) { alert('Save failed: ' + error.message); return { ok: false }; }
   logActivity({ action: 'updated homebound recipient', entityType: 'homebound_recipient', entityName: payload.name || 'Recipient', contextType: 'homebound', contextId: id });
-  await loadHomeboundData();
+  // Update the cache IN PLACE (the payload is the authoritative new state) instead of
+  // re-fetching — keeps the save to a single round trip (the write).
+  const idx = _recipients.findIndex(x => x.id === id);
+  if (idx >= 0) _recipients[idx] = { ..._recipients[idx], ...payload };
   return { ok: true };
 }
 
@@ -449,8 +454,25 @@ async function hbCreateSave() {
   const { data, error } = await withWriteRetry(() => sb.from('homebound_recipients').insert(payload).select('id').single(), { kind: 'create' });
   if (error) { alert('Create failed: ' + error.message); return; }
   logActivity({ action: 'created homebound recipient', entityType: 'homebound_recipient', entityName: payload.name || 'Recipient', contextType: 'homebound' });
-  await loadHomeboundData();
+  // Add to the cache in place (no re-fetch) — single round trip (the insert).
+  _recipients.unshift({ ...payload, id: data.id });
   flashSavedThen(() => { closeModal(); refreshActivePanel(); location.hash = `#/homebound/${data.id}`; });
+}
+// Permanent delete (broad users only; the shell shows the Delete button in the edit
+// view when deleteRecord is defined). Visits / requests / assignments cascade via
+// their recipient_id FKs (ON DELETE CASCADE); %-grants for this file are cleaned up
+// explicitly (no FK). Cache updated in place — no full reload.
+async function homeboundDeleteRecipient(id) {
+  if (!isHomeboundBroad()) return { ok: false };
+  const r = _recipients.find(x => x.id === id);
+  if (!confirm(`Permanently delete ${r ? recipientName(r) : 'this file'} and all of their visits, requests, and assignments? This cannot be undone.`)) return { ok: false };
+  await sb.from('record_grants').delete().eq('record_type', 'homebound_recipient').eq('record_id', id);
+  const { error } = await deleteWithRetry(() => sb.from('homebound_recipients').delete().eq('id', id));
+  if (error) { alert('Delete failed: ' + error.message); return { ok: false }; }
+  logActivity({ action: 'deleted homebound recipient', entityType: 'homebound_recipient', entityName: r ? recipientName(r) : 'Recipient', contextType: 'homebound', contextId: id });
+  const idx = _recipients.findIndex(x => x.id === id);
+  if (idx >= 0) _recipients.splice(idx, 1);
+  return { ok: true };
 }
 
 // ── Facilities manager (panel settings cog; broad users only) ─────────────────
@@ -552,7 +574,9 @@ async function hbFacilityRemove(id) {
   const { error } = await deleteWithRetry(() => sb.from('homebound_facilities').delete().eq('id', id));
   if (error) { alert('Remove failed: ' + error.message); return; }
   logActivity({ action: 'removed homebound facility', entityType: 'homebound_facility', entityName: f?.name || 'Facility', contextType: 'homebound' });
-  await loadHomeboundData(); _renderFacilitiesManager(); refreshActivePanel();
+  // Reload facilities + recipients (recipients' facility_id was nulled by ON DELETE
+  // SET NULL) — targeted, parallel; no full reload / auth round trip.
+  await Promise.all([loadFacilities(), loadRecipients()]); _renderFacilitiesManager(); refreshActivePanel();
 }
 function hbFacilityBack() { _renderFacilitiesManager(); }
 
@@ -1008,7 +1032,7 @@ const homeboundConfig = {
     title: recipientName(r),
     secondary: locationSummary(r),
     chips: [
-      { label: CARE_LABEL[r.care_type] || '—', tone: r.care_type === 'hospital' ? 'urgent' : r.care_type === 'facility' ? 'active' : 'neutral' },
+      careChip(r),
       ...(hasFacility(r) ? [{ label: facilityName(r), tone: 'neutral' }] : []),
     ],
   }),
@@ -1017,7 +1041,7 @@ const homeboundConfig = {
     name: recipientName(r),
     avatarIcon: r.care_type === 'hospital' ? 'fa-hospital' : r.care_type === 'facility' ? 'fa-house-medical' : 'fa-house',
     chips: [
-      { label: CARE_LABEL[r.care_type] || '—', tone: 'neutral' },
+      careChip(r),
       ...(hasFacility(r) ? [{ label: facilityName(r), tone: 'neutral' }] : []),
     ],
   }),
@@ -1034,6 +1058,7 @@ const homeboundConfig = {
   editForm: (r) => recipientFormHtml(r),
   onEditMount: () => _hbHydrateForm(document.querySelector('#sac-editform [data-hbform]')),
   saveRecord: (id) => homeboundSaveEdit(id),
+  deleteRecord: (id) => homeboundDeleteRecipient(id),
   openCreate: () => openRecipientCreate(),
 };
 
@@ -1067,7 +1092,7 @@ export async function loadHomebound() {
 }
 
 Object.assign(window, {
-  _hbIdentityToggle, _hbSwapLocation, _hbFacilityChange, _hbMailingToggle,
+  _hbSwapLocation, _hbFacilityChange, _hbMailingToggle,
   hbCreateSave, hbCopyAddress,
   hbFacilityAdd, hbFacilityEdit, hbFacilitySave, hbFacilityRemove, hbFacilityBack,
   _hbRosterPickChange, hbRosterAdd, hbRosterRemoveLinked, hbRosterRemoveInline,
