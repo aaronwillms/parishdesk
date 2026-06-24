@@ -110,6 +110,17 @@ async function markAllRead() {
   if (panelOpen) renderPanel();
 }
 
+// Click a notification → deep-link to the record it references. Generic: switches to
+// the originating panel (module name = panel key) and sets the master-detail shell
+// hash (#/{module}/{record_id}). No-op for notifications without module + record_id.
+function openNotification(id) {
+  const n = (store.notifications || []).find(x => x.id === id);
+  if (!n || !n.module || !n.record_id) return;
+  closePanel();
+  try { window.switchPanel?.(n.module); } catch (e) { /* unknown module → just set hash */ }
+  location.hash = `#/${n.module}/${n.record_id}`;
+}
+
 async function clearNotification(id) {
   await sb.from('notifications').update({ cleared: true, read: true }).eq('id', id);
   store.notifications = (store.notifications || []).filter(n => n.id !== id);
@@ -207,7 +218,7 @@ function renderPanel() {
     </div>
     <div class="notif-list">
       ${notifs.map(n => `
-        <div class="notif-item${n.read ? '' : ' notif-unread'}" data-id="${n.id}">
+        <div class="notif-item${n.read ? '' : ' notif-unread'}" data-id="${n.id}"${(n.module && n.record_id) ? ` onclick="window._notifOpen('${n.id}')" style="cursor:pointer;"` : ''}>
           <div style="display:flex;align-items:flex-start;gap:8px;flex:1;">
             <div style="margin-top:1px;flex-shrink:0;">${_notifLeadIcon(n)}</div>
             <div style="flex:1;min-width:0;">
@@ -215,7 +226,7 @@ function renderPanel() {
               <div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${fmtNotifTime(n.created_at)}</div>
             </div>
           </div>
-          <button onclick="window._notifClear('${n.id}')" title="Dismiss" style="background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:14px;padding:0;flex-shrink:0;line-height:1;margin-top:2px;" onmouseover="this.style.color='#6B7280'" onmouseout="this.style.color='#D1D5DB'">✕</button>
+          <button onclick="event.stopPropagation();window._notifClear('${n.id}')" title="Dismiss" style="background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:14px;padding:0;flex-shrink:0;line-height:1;margin-top:2px;" onmouseover="this.style.color='#6B7280'" onmouseout="this.style.color='#D1D5DB'">✕</button>
         </div>`).join('')}
     </div>`;
 }
@@ -300,6 +311,7 @@ export function initNotifications(userId) {
   window._notifClear = clearNotification;
   window._notifMarkAllRead = markAllRead;
   window._notifClearAll = clearAllNotifications;
+  window._notifOpen = openNotification;
 
   loadNotifications();
   subscribeNotifications();
