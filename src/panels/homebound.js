@@ -201,8 +201,10 @@ function facLabelFromGroupKey(k) {
 
 function locationSummary(r) {
   if (r.care_type === 'facility' || r.care_type === 'hospital') return r.room_unit ? 'Room ' + r.room_unit : '';
-  // Home cards show the home STREET address (via the shared formatter), e.g. "123 Main St".
-  return formatAddressFlat({ street: r.home_street }) || [r.home_city, r.home_state].filter(Boolean).join(', ') || 'Home';
+  // Home cards show the FULL home address as two lines (street, then "City, ST ZIP") —
+  // the newline from formatAddressBlock renders via .sac-item-sub (white-space:pre-line).
+  return formatAddressBlock({ street: r.home_street, city: r.home_city, state: r.home_state, zip: r.home_zip })
+    || [r.home_city, r.home_state].filter(Boolean).join(', ') || 'Home';
 }
 
 // ── Read-view section helpers ────────────────────────────────────────────────
