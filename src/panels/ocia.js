@@ -180,6 +180,15 @@ function _priorToStore(m) {
 function isMinor(p) { const a = ociaAge(p.dob); return a !== null && a < 18; }
 function hasConsent(p) { return !!p.parental_consent; }
 function normDocs(p) { return (p.documents || []).map(d => ({ name: d.name, received: d.received ?? d.done ?? false, deletable: d.deletable ?? !d.auto, auto: !!d.auto, checked_on: d.checked_on || null })); }
+// Viewer document checklist (matches the other sacramental panels): the config reads
+// the full list here, and ociaToggleDoc flips one item (date-stamped) + persists.
+export function ociaDocsOf(p) { return normDocs(p); }
+async function ociaToggleDoc(id, i) {
+  const p = allOcia.find(x => x.id === id); if (!p) return;
+  const docs = normDocs(p);
+  applyDocCheck(docs[i], !docs[i].received);   // toggles received + stamps checked_on
+  if (await _ociaPatch(id, { documents: docs })) refreshActivePanel();
+}
 function notesOf(p) {
   const out = (Array.isArray(p.notes_log) ? p.notes_log : []).map(n => ({ note: n.note || '', by: n.by || null, created_at: n.created_at || null, edited_at: n.edited_at || null }));
   if (p.notes && String(p.notes).trim()) out.push({ note: String(p.notes).trim(), by: null, created_at: null, legacy: true });
@@ -886,7 +895,7 @@ Object.assign(window, {
   openOciaCreate, openOciaEdit, openOciaTemplates, ociaCloseModal,
   ociaSetType, ociaDobChange, ociaStatusChange, ociaRecOtherChange, ociaCohortPick, ociaBaptismChange,
   ociaPriorToggle, ociaAddPrior, ociaRemovePrior, ociaPriorEnded, ociaPickParty,
-  ociaDocReceived, ociaRemoveDoc, ociaAddDoc,
+  ociaDocReceived, ociaRemoveDoc, ociaAddDoc, ociaToggleDoc,
   ociaFamilySearch, ociaRemoveFamily, ociaAnnulSearch, ociaRemoveAnnul,
   ociaSave, ociaDeletePerson,
   // Viewer-editable notes + minor permission (write-retry wrapped).

@@ -9,7 +9,7 @@
 // (default 'inquirer'). The `archived` boolean is independent of status and pulls a
 // record into the bottom "Archived" group.
 
-import { formatDateDisplay, fmtDate } from '../utils.js';
+import { formatDateDisplay, fmtDate, docCheckStampHtml } from '../utils.js';
 import { formatPhone } from '../utils/phone.js';
 import { isSacramentCoordinator } from '../roles.js';
 import {
@@ -17,7 +17,7 @@ import {
   ociaName, ociaLastName, ociaStatusOf, candTypeOf, ociaAge, ociaNotesOf, ociaIsMinor, ociaNeedsAnnulment,
   pmHowEnded, pmDisplayName,
   cohortKeyOf, ociaCohortName, ociaCohortDateOf,
-  buildOciaEditForm, ociaSaveEdit, ociaDeleteRec,
+  buildOciaEditForm, ociaSaveEdit, ociaDeleteRec, ociaDocsOf,
 } from '../panels/ocia.js';
 import { chipHtml } from './panelShell.js';
 import { noteEditedMarker } from './noteEdit.js';
@@ -138,6 +138,26 @@ function minorPermission(p) {
     <div id="ocia-perm-note-${p.id}" style="display:${filled ? 'none' : 'block'};font-size:11px;color:#9A6A1E;margin-top:5px;"><i class="fa-solid fa-circle-info" style="margin-right:4px;"></i>${esc(PERM_LOCK_TIP)}</div>`;
 }
 
+// Viewer document checklist — the FULL per-type list (checked + unchecked), each
+// toggleable, MM/DD/YYYY date-stamped on check. Mirrors the other sacramental panels
+// (Confirmation's documents()). OCIA's checklist lives on the record's `documents`
+// (seeded from ocia_templates at creation); ociaToggleDoc persists each flip.
+function documents(p) {
+  const docs = ociaDocsOf(p), done = docs.filter(d => d.received).length;
+  const progress = docs.length ? Math.round((done / docs.length) * 100) : null;
+  let h = '';
+  if (docs.length) {
+    if (progress !== null) h += `<div class="prog-bar-wrap"><div class="prog-bar-fill" style="width:${progress}%;background:${progress === 100 ? '#2D6A4F' : 'var(--gold)'};"></div></div><div style="font-size:11px;color:#888;margin-bottom:6px;">${done}/${docs.length} received</div>`;
+    h += docs.map((d, i) => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+      <span style="font-size:15px;cursor:pointer;" onclick="ociaToggleDoc('${p.id}',${i})">${d.received ? '✅' : '⬜'}</span>
+      <span style="flex:1;cursor:pointer;color:${d.received ? '#2D6A4F' : 'var(--navy)'};" onclick="ociaToggleDoc('${p.id}',${i})">${esc(d.name)}</span>
+      ${docCheckStampHtml(d)}
+      ${d.deletable === false ? `<i class="fa-solid fa-lock" style="color:#C9C2B6;font-size:11px;margin-left:8px;" title="Required"></i>` : ''}
+    </div>`).join('');
+  } else { h += `<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No documents.</div>`; }
+  return h;
+}
+
 // ── Config object ───────────────────────────────────────────────────────────
 // Card flag chip — a minor lacking parent/guardian permission needs attention.
 function permissionChip(p) {
@@ -227,6 +247,7 @@ export const ociaConfig = {
 
   detailSections: [
     { title: 'Candidate details',            render: personDetails },
+    { title: 'Documents',                    render: documents },
     { title: 'Parent/Guardian Permission',   render: minorPermission, when: (p) => ociaIsMinor(p) },
     { title: 'Linked Records',               render: linkedRecords },
     { title: 'Notes',                        render: notes },
