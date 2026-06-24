@@ -6,8 +6,9 @@
 //
 // HR fields used (single source of truth — the HR occupancy model, NOT
 // directory-entry filtering):
-//   • primary institution → institutions.name === parish_settings.primary_institution
-//                           (the same identifier ui/directory.js uses)
+//   • primary institution → parish_settings.principal_institution_id (stable FK),
+//                           with a legacy name-match fallback when the FK is null
+//                           (the same resolution ui/directory.js uses)
 //   • position location   → positions.institution_id (non-archived: archived_at IS NULL)
 //   • current occupancy   → person_positions.unlinked_at IS NULL (active only)
 //   • employment type     → person_positions.employment_type ∈ {full_time, part_time}
@@ -24,11 +25,15 @@ const STAFF_EMP = new Set(['full_time', 'part_time']);
 // primary institution isn't configured/found or has no qualifying occupants.
 export async function deriveParishStaffPersonnelIds() {
   const primaryName = store.parishSettings?.primary_institution;
-  if (!primaryName) return [];
+  const principalId = store.parishSettings?.principal_institution_id;
+  if (!principalId && !primaryName) return [];
 
-  // Primary institution id (matched by its configured name).
+  // Primary institution: resolved by the stable FK (principal_institution_id), falling
+  // back to the legacy name-match when the FK is null (pre-backfill / safety net).
   const { data: insts } = await sb.from('institutions').select('id,name');
-  const primary = (insts || []).find(i => i.name === primaryName);
+  const primary = principalId
+    ? (insts || []).find(i => i.id === principalId)
+    : (insts || []).find(i => i.name === primaryName);
   if (!primary) return [];
 
   // Non-archived positions at the primary institution.

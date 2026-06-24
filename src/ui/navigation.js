@@ -142,13 +142,16 @@ export function renderMinistryNav() {
   if (!container) return;
 
   const institutions = store.institutions || [];
+  const principalId  = store.parishSettings?.principal_institution_id;
   const primaryName  = store.parishSettings?.primary_institution;
   const teamPersonnelIds = store.currentUserRoles?.teamPersonnelIds;
   const userIsAdmin  = isAdmin();
 
-  // Non-primary institutions sorted alphabetically
+  // Non-primary institutions sorted alphabetically. The principal is excluded by the
+  // stable FK (principal_institution_id), falling back to the legacy name-match when
+  // the FK is null (pre-backfill / safety net).
   const visible = institutions
-    .filter(i => i.name !== primaryName)
+    .filter(i => principalId ? i.id !== principalId : i.name !== primaryName)
     .filter(i => {
       if (userIsAdmin) return true;
       if (!teamPersonnelIds) return false;

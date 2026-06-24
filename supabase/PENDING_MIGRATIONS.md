@@ -2,6 +2,21 @@
 
 ## ▶ Pending — run this
 
+### `migrations/20260624_principal_institution_fk.sql`  ✅ applied & verified (2026-06-24)
+Multi-tenancy Phase 1a. Adds `parish_settings.principal_institution_id` (uuid, nullable,
+FK → `institutions(id)`, strict `NO ACTION`) and backfills it once via the existing
+name-match (`institutions.name = parish_settings.primary_institution`, `IS NULL`-guarded
+so re-running is idempotent). **Retains** `primary_institution` (the name string) as a
+live safety-net fallback. Single-tenant-safe: does NOT touch `current_parish_id()`, the
+`parish_settings` singleton, or add tenant resolution (that is Phase 1b). The app reads
+the FK with a name-match fallback, so it is correct whether or not this has run.
+Additive, idempotent, no data impact.
+- Applied via Supabase migration history; backfill set `principal_institution_id` =
+  `ae6fa3a0-a397-4175-a17a-67d04b02365a` (The Basilica of Saint Mary).
+- Verified post-apply: Parish Staff membership derived purely from the live FK = the
+  same 8 personnel ids as the pre-apply name-match baseline (`membership_identical: true`).
+
+
 ### `migrations/20260619_ocia_baptism_by_affidavit.sql`  proposed — awaiting approval
 Adds `sacramental_ocia.baptism_by_affidavit` (boolean default false), mirroring the
 annulment by-affidavit flag, for the OCIA Candidate baptism-document pattern. **Not

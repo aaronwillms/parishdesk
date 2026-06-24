@@ -1063,7 +1063,14 @@ async function _renderSettingsTab() {
     }
 
     statusEl.textContent = 'Saving…';
-    const payload = { parish_name: name, primary_institution: name, address, timezone };
+    // Resolve the principal institution's stable id at save time (the principal is the
+    // institution whose name matches the parish name — the same rule the legacy
+    // name-match used). New saves write the FK; the name string is kept too as a live
+    // safety-net fallback. If the institution can't be resolved (list not loaded /
+    // no match), preserve any existing FK rather than clobbering it to null.
+    const principalId = (store.institutions || []).find(i => i.name === name)?.id
+      || store.parishSettings?.principal_institution_id || null;
+    const payload = { parish_name: name, primary_institution: name, address, timezone, principal_institution_id: principalId };
     const { error: saveErr } = data
       ? await sb.from('parish_settings').update(payload).eq('id', data.id)
       : await sb.from('parish_settings').insert(payload);

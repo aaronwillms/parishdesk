@@ -10,11 +10,16 @@ function _parseParishAddress(addr) {
   return { street: String(addr).trim(), city: '', state: '', zip: '' };
 }
 
-// True when this institution is the parish's PRINCIPAL institution. Identified
-// structurally via parish_settings.primary_institution (a configured name), not a
-// hardcoded literal — matched against the institution's name.
+// True when this institution is the parish's PRINCIPAL institution. Resolved by a
+// stable FK (parish_settings.principal_institution_id → institutions.id). FALLBACK:
+// when the FK is null (pre-backfill / safety net), fall back to the legacy name-match
+// (institution name === parish_settings.primary_institution) so nothing breaks during
+// the migration. The name string dies only after every read is confirmed repointed.
 function _isPrincipalInstitution(inst) {
-  return !!inst?.name && inst.name === store.parishSettings?.primary_institution;
+  if (!inst?.id) return false;
+  const principalId = store.parishSettings?.principal_institution_id;
+  if (principalId) return inst.id === principalId;
+  return !!inst.name && inst.name === store.parishSettings?.primary_institution;
 }
 
 // Single source of truth for an institution's mailing ADDRESS. Resolution is
