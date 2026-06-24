@@ -40,6 +40,10 @@ const SAC_GRANTABLE = {
   // (name NULL, derived from personnel) is not name-searchable here yet, but a
   // grant on it is fully functional (audit / grantee header / revoke / view gate).
   discerner:    { gtype: 'discerner',       typeLabel: 'Discerner',       table: 'discerners',              cols: ['name'],                     label: r => r.name || 'Discerner' },
+  // Sick & Homebound recipient file (case/person file) — super-admin grants the
+  // whole file READ-ONLY to someone without panel/roster/assignment access. Searched
+  // by the denormalized `name` column, like discerner/OCIA.
+  homebound_recipient: { gtype: 'homebound_recipient', typeLabel: 'Sick & Homebound', table: 'homebound_recipients', cols: ['name'], label: r => r.name || 'Recipient' },
 };
 
 // Activity-log context_type → SAC_GRANTABLE config, so a bare record id stored in
@@ -52,6 +56,7 @@ const _CONTEXT_TO_SAC = {
   couple: 'marriage', marriage: 'marriage',
   annulments: 'annulment', annulment: 'annulment',
   discernment: 'discerner', discerner: 'discerner',
+  homebound: 'homebound_recipient', homebound_recipient: 'homebound_recipient',
 };
 export function sacConfigForContext(contextType) {
   const key = _CONTEXT_TO_SAC[contextType];
