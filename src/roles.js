@@ -26,6 +26,7 @@ export async function loadUserRoles() {
     store.currentUserRoles = {
       isSuperAdmin: true, isAdmin: true, roles: roleNames,
       sacraments: [], panelGrants: [], teamIds: [], teamPersonnelIds: [], advocateCaseIds: [],
+      onHomeboundRosterLinked: false, homeboundAssignedRecipientIds: [],   // broad via super-admin
       hrInstitutionIds,
     };
     return;
@@ -40,7 +41,10 @@ export async function loadUserRoles() {
         : Promise.resolve({ data: [] }),
     ]);
     const sacSacraments   = (sacRes.data   || []).map(r => r.sacrament);
-    const coordSacraments = (coordRes.data || []).map(r => r.program);
+    // program_coordinators carries non-sacrament programs too ('homebound',
+    // 'discernment'); split 'homebound' out of the sacrament set.
+    const coordPrograms   = (coordRes.data || []).map(r => r.program);
+    const coordSacraments = coordPrograms.filter(p => p !== 'homebound');
     store.currentUserRoles = {
       isSuperAdmin: false, isAdmin: true, roles: roleNames,
       sacraments:   [...new Set([...sacSacraments, ...coordSacraments])],
@@ -48,6 +52,8 @@ export async function loadUserRoles() {
       teamIds:      [],
       teamPersonnelIds: [],
       advocateCaseIds: [],
+      onHomeboundRosterLinked: coordPrograms.includes('homebound'),
+      homeboundAssignedRecipientIds: [],   // broad via admin; per-recipient unused
       hrInstitutionIds,
     };
     return;
@@ -78,13 +84,26 @@ export async function loadUserRoles() {
   }
 
   const sacSacraments   = (sacramentRes.data || []).map(r => r.sacrament);
-  const coordSacraments = (coordRes.data    || []).map(r => r.program);
+  // program_coordinators carries non-sacrament programs too; 'homebound' is the
+  // account-linked Ministers-to-the-Sick roster (broad-tier access), not a sacrament.
+  const coordPrograms   = (coordRes.data    || []).map(r => r.program);
+  const coordSacraments = coordPrograms.filter(p => p !== 'homebound');
 
   // Annulment cases where this user is the assigned advocate (grants scoped access).
   let advocateCaseIds = [];
   if (personnelId) {
     const { data: advCases } = await sb.from('annulment_cases').select('id').eq('advocate_id', personnelId);
     advocateCaseIds = (advCases || []).map(c => c.id);
+  }
+
+  // Sick & Homebound assignments (narrow tier; advocate-model — cached at load).
+  // Only account-linked assignees (minister_personnel_id) carry access; inline-name
+  // assignees confer nothing (no personnel → user link).
+  let homeboundAssignedRecipientIds = [];
+  if (personnelId) {
+    const { data: hbAssign } = await sb.from('homebound_assignments')
+      .select('recipient_id').eq('minister_personnel_id', personnelId);
+    homeboundAssignedRecipientIds = [...new Set((hbAssign || []).map(a => a.recipient_id).filter(Boolean))];
   }
 
   store.currentUserRoles = {
@@ -94,6 +113,8 @@ export async function loadUserRoles() {
     teamIds,
     teamPersonnelIds,
     advocateCaseIds,
+    onHomeboundRosterLinked: coordPrograms.includes('homebound'),
+    homeboundAssignedRecipientIds,
     hrInstitutionIds,
   };
 }
@@ -155,6 +176,36 @@ export function canAccessDiscernment() {
   return (r.panelGrants || []).includes('discernment') || hasRole('vocation_director');
 }
 
+// ── SICK & HOMEBOUND access (Pastoral Care) — CACHED-AT-LOAD (advocate model) ──
+// Broad tier (full roster + full file edit): super-admin, admin, a manual
+// panel_grants('homebound') holder, OR an account-linked Ministers-to-the-Sick
+// roster member (program_coordinators program='homebound' → onHomeboundRosterLinked
+// at role-load). Narrow tier: a minister ASSIGNED to specific recipient(s) via
+// homebound_assignments (homeboundAssignedRecipientIds, loaded like advocateCaseIds)
+// — sees the panel + only their recipients, visits-only. Like the advocate model,
+// membership/assignment is SNAPSHOTTED at role-load; losing it drops access on the
+// NEXT roles reload, not mid-session (deliberate, documented — not a bug).
+export function isHomeboundBroad() {
+  if (isSuperAdmin()) return true;
+  const r = store.currentUserRoles;
+  if (!r) return false;
+  return isAdmin() || (r.panelGrants || []).includes('homebound') || !!r.onHomeboundRosterLinked;
+}
+// Panel access: broad OR assigned to ≥1 recipient (mirrors the advocate rule).
+export function canAccessHomebound() {
+  if (isHomeboundBroad()) return true;
+  return (store.currentUserRoles?.homeboundAssignedRecipientIds || []).length > 0;
+}
+// Per-recipient access: broad OR this recipient is among the user's assignments.
+export function canAccessHomeboundRecipient(recipientId) {
+  if (isHomeboundBroad()) return true;
+  return (store.currentUserRoles?.homeboundAssignedRecipientIds || []).includes(recipientId);
+}
+// Capability on an accessible recipient: broad → full edit; assignment-only → visits-only.
+export function homeboundCapability() {
+  return isHomeboundBroad() ? 'full' : 'visits';
+}
+
 // Stricter than canAccessSacrament: super admin OR the actual sacramental
 // coordinator role for this sacrament (sacramental_roles / program_coordinators).
 // Excludes panel_grants and plain admins — used to gate template management.
@@ -195,8 +246,8 @@ export function canAccessPanel(panel) {
   // (granted in the Admin Panel — the "panel access" axis), or the legacy
   // vocation_director role. See canAccessDiscernment() below.
   if (panel === 'discernment') return canAccessDiscernment();
-  // Homebound: admin + super admin for now (dedicated role to come later)
-  if (panel === 'homebound') return isAdmin();
+  // Sick & Homebound (Pastoral Care): broad tier OR an assignment-only minister.
+  if (panel === 'homebound') return canAccessHomebound();
 
   // Sacramental panels
   const SACRAMENTAL = {
@@ -240,19 +291,25 @@ export function canScheduleForPanel(panel) {
 //
 // This is the single source of truth: the Admin UI reads the computed state and
 // does not hand-derive locks. `kind` is 'team' | 'panel' | 'sacrament'.
-export function computePermissionBasis({ kind, isAdmin = false, hasManual = false, hasRole = false, roleLabel = '' }) {
+export function computePermissionBasis({ kind, isAdmin = false, hasManual = false, hasRole = false, roleLabel = '', hasRoster = false, rosterLabel = '' }) {
   const bases = new Set();
   if (hasManual) bases.add('manual');
   // Admin grants ALL team + institution(panel) perms — but NOT sacraments.
   if (isAdmin && (kind === 'team' || kind === 'panel')) bases.add('admin');
   // Coordinator role grants its one sacrament.
   if (hasRole && kind === 'sacrament') bases.add('role');
+  // A named roster (e.g. Ministers to the Sick) grants — and LOCKS — its PANEL.
+  // This is the first non-sacrament, roster-driven panel lock; kept generic
+  // ("panel X locked by roster R") rather than hardcoded to one panel.
+  if (hasRoster && kind === 'panel') bases.add('roster');
 
-  // Locks are additive but only ONE label is shown; admin takes precedence over
-  // role (they apply to different kinds, so they never actually collide).
+  // Locks are additive but only ONE label is shown. Precedence: admin > role >
+  // roster. admin and roster can both apply to a panel — admin wins; role is
+  // sacrament-only so it never collides with the panel-only roster basis.
   let locked = false, lockedBy = null, lockLabel = null;
   if (bases.has('admin')) { locked = true; lockedBy = 'admin'; lockLabel = 'Granted by Admin role'; }
   else if (bases.has('role')) { locked = true; lockedBy = 'role'; lockLabel = `Granted by ${roleLabel} coordinator role`; }
+  else if (bases.has('roster')) { locked = true; lockedBy = 'roster'; lockLabel = rosterLabel ? `Granted by the ${rosterLabel} roster` : 'Granted by roster membership'; }
 
   return { granted: bases.size > 0, bases, locked, lockedBy, lockLabel };
 }

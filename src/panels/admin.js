@@ -19,6 +19,10 @@ const PANEL_LABELS = {
   // Persisted in panel_grants.panel='discernment'; read by canAccessDiscernment().
   // Holders are collaborators (read + write all parish discernment files).
   discernment: 'Discernment',
+  // Sick & Homebound panel access. Manually grantable here, AND locked ON (with a
+  // "🔒 Minister to the Sick" chip) for account-linked Ministers-to-the-Sick roster
+  // members (program_coordinators program='homebound'), like sacramental coordinators.
+  homebound: 'Sick & Homebound',
 };
 
 let _activeTab = 'users';
@@ -370,8 +374,10 @@ function _userDetail(u) {
     //   locked by coordinator → ON + disabled, cardinal "🔒 [Sacrament] coordinator" chip
     const adminChip = `<span title="Granted by Admin role" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:600;padding:1px 6px;border-radius:3px;background:#EEF1F5;color:var(--navy);border:.5px solid #C7D2DE;white-space:nowrap;">🔒 Admin</span>`;
     const coordChip = (label) => `<span title="Granted by ${label} coordinator role" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:600;padding:1px 6px;border-radius:3px;background:#FDEAED;color:var(--cardinal);border:.5px solid #F2C9D1;white-space:nowrap;">🔒 ${label} coordinator</span>`;
+    //   locked by roster → ON + disabled, cardinal "🔒 [Roster]" chip (e.g. Minister to the Sick)
+    const rosterChip = (label) => `<span title="Granted by the ${label} roster" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:600;padding:1px 6px;border-radius:3px;background:#FDEAED;color:var(--cardinal);border:.5px solid #F2C9D1;white-space:nowrap;">🔒 ${label}</span>`;
     const permRow = (inputClass, dataAttr, label, { granted, locked, lockedBy }, roleLabel) => {
-      const chip = locked ? (lockedBy === 'admin' ? adminChip : coordChip(roleLabel)) : '';
+      const chip = !locked ? '' : (lockedBy === 'admin' ? adminChip : lockedBy === 'roster' ? rosterChip(roleLabel) : coordChip(roleLabel));
       return `
       <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
         <input type="checkbox" class="${inputClass}" ${dataAttr} ${granted ? 'checked' : ''} ${locked ? 'disabled' : ''}
@@ -395,9 +401,15 @@ function _userDetail(u) {
     }).join('');
 
     // Panel grants (institution permissions): manual stays editable; Admin locks all.
+    // Homebound additionally locks for account-linked Ministers-to-the-Sick roster
+    // members (program_coordinators program='homebound'; carried in coordinatorSacraments).
     const grantChecks = Object.entries(PANEL_LABELS).map(([p, label]) => {
-      const state = computePermissionBasis({ kind: 'panel', isAdmin: isAdminRole, hasManual: u.grants.includes(p) });
-      return permRow('au-grant-cb', `data-panel="${p}"`, label, state);
+      const onHbRoster = p === 'homebound' && (u.coordinatorSacraments || []).includes('homebound');
+      const state = computePermissionBasis({
+        kind: 'panel', isAdmin: isAdminRole, hasManual: u.grants.includes(p),
+        hasRoster: onHbRoster, rosterLabel: 'Minister to the Sick',
+      });
+      return permRow('au-grant-cb', `data-panel="${p}"`, label, state, 'Minister to the Sick');
     }).join('');
 
     // Team memberships: manual membership stays editable; Admin locks all.
