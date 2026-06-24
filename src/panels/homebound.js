@@ -20,7 +20,7 @@ import { closeModal } from '../ui/modal.js';
 import { flashSavedThen } from '../ui/saveButton.js';
 import { showToast } from '../ui/toast.js';
 import { loadMyGrants, hasMyGrantForLink, userName, ensureIdentities } from '../ui/grants.js';
-import { noteEditedMarker } from '../sacramental/noteEdit.js';
+import { noteEditedMarker, promptNoteEdit } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 
 const esc = (s) => String(s == null ? '' : s)
@@ -55,6 +55,7 @@ let _rosterLinkedIds = [];   // personnel ids = program_coordinators(program='ho
 let _rosterInline = [];      // homebound_roster_inline rows (record-only members)
 let _assignments = [];       // homebound_assignments rows
 let _visits = [];            // homebound_visits rows
+let _notes = [];             // homebound_notes rows (accompaniment notes)
 let _requests = [];          // OPEN care_requests rows (resolved_at IS NULL)
 let _requestRecipients = []; // homebound_request_recipients rows (personnel_id list)
 let _authUserId = null;      // current auth user (author-scoped visit edits, _isCreator)
@@ -68,6 +69,14 @@ async function loadVisits() {
   const { data } = await sb.from('homebound_visits').select('*');
   _visits = data || [];
 }
+async function loadNotes() {
+  const { data } = await sb.from('homebound_notes').select('*');
+  _notes = data || [];
+}
+// newest-first by note_date, then created_at (mirrors the visit-log ordering).
+const notesFor = (recipientId) => _notes.filter(n => n.recipient_id === recipientId)
+  .sort((a, b) => String(b.note_date || '').localeCompare(String(a.note_date || ''))
+    || String(b.created_at || '').localeCompare(String(a.created_at || '')));
 async function loadRequests() {
   const { data } = await sb.from('care_requests').select('*').is('resolved_at', null).order('requested_at', { ascending: false });
   _requests = data || [];
@@ -114,7 +123,7 @@ async function loadHomeboundData() {
   }
   const [recRes] = await Promise.all([
     sb.from('homebound_recipients').select('*'),
-    loadFacilities(), loadRoster(), loadAssignments(), loadVisits(), loadRequests(), loadRequestRecipients(),
+    loadFacilities(), loadRoster(), loadAssignments(), loadVisits(), loadNotes(), loadRequests(), loadRequestRecipients(),
     loadMyGrants().catch(() => {}),   // % grant cache (powers the grantee view path)
     ensureIdentities().catch(() => {}),
   ]);
@@ -192,7 +201,8 @@ function facLabelFromGroupKey(k) {
 
 function locationSummary(r) {
   if (r.care_type === 'facility' || r.care_type === 'hospital') return r.room_unit ? 'Room ' + r.room_unit : '';
-  return [r.home_city, r.home_state].filter(Boolean).join(', ') || 'Home';
+  // Home cards show the home STREET address (via the shared formatter), e.g. "123 Main St".
+  return formatAddressFlat({ street: r.home_street }) || [r.home_city, r.home_state].filter(Boolean).join(', ') || 'Home';
 }
 
 // ── Read-view section helpers ────────────────────────────────────────────────
@@ -863,6 +873,76 @@ async function hbVisitDelete(visitId) {
   await loadVisits(); refreshActivePanel();
 }
 
+// ── Notes (accompaniment notes; mirrors the discernment notes pattern) ────────
+// Capability mirrors the visit log (same write tier): canAddNote = broad OR
+// assigned-to-this-recipient; canManageNote = broad manages ANY, an assignment-only
+// minister edits/deletes only their OWN (author_id === me). The seal-of-confession
+// guard fires on the free-text body (shared sealGuardConfirm — same as the visit note).
+const canAddNote = (r) => canAccessHomeboundRecipient(r.id);
+const canManageNote = (n, r) => isHomeboundBroad() || (!!_authUserId && n.author_id === _authUserId && canAccessHomeboundRecipient(r.id));
+
+function notesSection(r) {
+  const list = notesFor(r.id);
+  const rows = list.length
+    ? `<div class="sac-tl">${list.map(n => {
+        const who = n.author_id ? userName(n.author_id) : '';
+        const ctrls = canManageNote(n, r)
+          ? `<button class="sac-tl-x" title="Edit" onclick="window.hbNoteEdit('${n.id}')" style="font-size:12px;">✎</button><button class="sac-tl-x" title="Delete" onclick="window.hbNoteDelete('${n.id}')">×</button>`
+          : '';
+        return `<div class="sac-tl-entry">
+          <div class="sac-tl-row"><span class="sac-tl-text" style="white-space:pre-wrap;">${n.subject ? `<strong>${esc(n.subject)}</strong> — ` : ''}${esc(n.body || '')}</span>${ctrls}</div>
+          <div class="sac-tl-time">${esc(formatDateMDY(n.note_date || (n.created_at || '').slice(0, 10)))}${who ? ' · ' + esc(who) : ''}${noteEditedMarker(n.edited_at)}</div>
+        </div>`;
+      }).join('')}</div>`
+    : `<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No notes yet.</div>`;
+  if (!canAddNote(r)) return rows;
+  return rows + `<div id="hb-note-add-${r.id}" data-hbnote class="sac-add-block">
+    <div class="sac-add-head">Add Note</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      <input type="text" id="hb-note-subject" placeholder="Subject (optional)" style="${IS}flex:1;min-width:120px;" />
+      <input type="date" id="hb-note-date" value="${todayCST()}" style="${IS}width:auto;" />
+    </div>
+    <div style="display:flex;gap:6px;align-items:flex-start;margin-top:6px;">
+      <textarea id="hb-note-body" rows="2" placeholder="Write a note…" style="${IS}flex:1;resize:vertical;"></textarea>
+      <button class="btn-secondary" style="padding:.4rem .9rem;font-size:12px;white-space:nowrap;" onclick="window.hbNoteAdd('${r.id}')">+ Add</button>
+    </div>
+  </div>`;
+}
+async function hbNoteAdd(recipientId) {
+  const r = _recipients.find(x => x.id === recipientId);
+  if (!r || !canAddNote(r)) return;
+  const root = document.getElementById('hb-note-add-' + recipientId);
+  const subject = (root?.querySelector('#hb-note-subject')?.value || '').trim() || null;
+  const note_date = root?.querySelector('#hb-note-date')?.value || todayCST();
+  const body = (root?.querySelector('#hb-note-body')?.value || '').trim();
+  if (!body) return;
+  if (!(await sealGuardConfirm(body))) return;   // seal guard on the free-text note body
+  const { error } = await withWriteRetry(() => sb.from('homebound_notes').insert({ recipient_id: recipientId, note_date, subject, body, author_id: _authUserId }), { kind: 'create' });
+  if (error) { alert('Add failed: ' + error.message); return; }
+  logActivity({ action: 'added homebound note', entityType: 'homebound_note', entityName: recipientName(r), contextType: 'homebound', contextId: recipientId });
+  await loadNotes(); refreshActivePanel();
+}
+async function hbNoteEdit(noteId) {
+  const n = _notes.find(x => x.id === noteId); if (!n) return;
+  const r = _recipients.find(x => x.id === n.recipient_id);
+  if (!canManageNote(n, r)) return;
+  const text = promptNoteEdit(n.body);
+  if (text === null) return;   // cancelled / unchanged
+  if (!(await sealGuardConfirm(text))) return;   // seal guard on the edited text
+  const { error } = await withWriteRetry(() => sb.from('homebound_notes').update({ body: text, edited_at: nowIso() }).eq('id', noteId), { kind: 'update' });
+  if (error) { alert('Save failed: ' + error.message); return; }
+  await loadNotes(); refreshActivePanel();
+}
+async function hbNoteDelete(noteId) {
+  const n = _notes.find(x => x.id === noteId); if (!n) return;
+  const r = _recipients.find(x => x.id === n.recipient_id);
+  if (!canManageNote(n, r)) return;
+  if (!confirm('Delete this note?')) return;
+  const { error } = await deleteWithRetry(() => sb.from('homebound_notes').delete().eq('id', noteId));
+  if (error) { alert('Delete failed: ' + error.message); return; }
+  await loadNotes(); refreshActivePanel();
+}
+
 function granteeBanner() {
   return `<div style="font-size:12.5px;color:#6B7280;background:#FBF6EC;border:.5px solid #E8D9B8;border-radius:6px;padding:.5rem .65rem;"><i class="fa-solid fa-key" style="color:#B9A88F;margin-right:6px;"></i>You're viewing this file through a shared grant — read-only.</div>`;
 }
@@ -1051,6 +1131,7 @@ const homeboundConfig = {
     { title: 'Pastoral Requests', render: (r) => requestsSection(r) },
     { title: 'Ministers',         render: (r) => ministersSection(r) },
     { title: 'Visit Log',         render: (r) => visitLogSection(r) },
+    { title: 'Notes',             render: (r) => notesSection(r) },
     { title: 'Current Location', render: (r) => locationRead(r) },
     { title: 'Mailing Address',  render: (r) => mailingRead(r) },
   ],
@@ -1098,6 +1179,7 @@ Object.assign(window, {
   _hbRosterPickChange, hbRosterAdd, hbRosterRemoveLinked, hbRosterRemoveInline,
   hbAssign, hbUnassign,
   hbVisitAdd, hbVisitEdit, hbVisitSave, hbVisitDelete, hbQuickLog,
+  hbNoteAdd, hbNoteEdit, hbNoteDelete,
   hbRequest, hbResolveRequest, hbOpenRequest,
   hbAddRequestRecipient, hbRemoveRequestRecipient,
 });
