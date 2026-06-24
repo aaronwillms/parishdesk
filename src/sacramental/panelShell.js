@@ -134,6 +134,7 @@ function listPaneHtml() {
          <span>${s.selected.size} selected</span>
          ${(cfg.bulkStatusOptions || []).length ? `<select id="sac-bulk-status" style="font-size:12px;padding:2px 6px;border-radius:4px;">${(cfg.bulkStatusOptions || []).map(o => `<option value="${o.key}">${esc(o.label)}</option>`).join('')}</select>
          <button class="btn-secondary" style="padding:.25rem .7rem;font-size:12px;" data-act="bulk-apply">Change status</button>` : ''}
+         ${(cfg.bulkActions || []).map((a, i) => `<button class="btn-secondary" style="padding:.25rem .7rem;font-size:12px;" data-act="bulk-action" data-i="${i}">${esc(a.label)}${s.selected.size ? ` (${s.selected.size})` : ''}</button>`).join('')}
        </div>` : '';
 
   return `
@@ -146,7 +147,7 @@ function listPaneHtml() {
         style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;outline:none;" />
       <div style="display:flex;gap:5px;margin-top:.5rem;flex-wrap:wrap;align-items:center;">
         ${pills}
-        ${canManage ? `<button class="cf-btn" data-act="bulk-toggle" title="Select multiple" style="margin-left:auto;${s.bulk ? 'background:var(--navy);color:var(--gold);' : ''}"><i class="fa-solid fa-list-check"></i></button>` : ''}
+        ${(cfg.canBulk ? cfg.canBulk() : canManage) ? `<button class="cf-btn" data-act="bulk-toggle" title="Select multiple" style="margin-left:auto;${s.bulk ? 'background:var(--navy);color:var(--gold);' : ''}"><i class="fa-solid fa-list-check"></i></button>` : ''}
         ${cfg.openManageCohorts && cfg.canManageTemplate && cfg.canManageTemplate() ? `<button class="cf-btn" data-act="cohorts" title="Manage cohorts"><i class="fa-solid ${esc(cfg.cohortIcon || 'fa-children')}"></i></button>` : ''}
         ${cfg.canManageTemplate && cfg.canManageTemplate() ? `<button class="cf-btn" data-act="template" title="Settings"><i class="fa-solid fa-gear"></i></button>` : ''}
       </div>
@@ -346,6 +347,14 @@ async function onShellClick(e) {
       if (!s.selected.size || !cfg.bulkUpdateStatus) return;
       const status = s.container.querySelector('#sac-bulk-status')?.value;
       await cfg.bulkUpdateStatus([...s.selected], status);
+      s.records = (await cfg.fetchRecords()) || [];
+      s.selected.clear(); s.bulk = false; render();
+      break;
+    }
+    case 'bulk-action': {
+      const a = (cfg.bulkActions || [])[+t.dataset.i];
+      if (!a || !s.selected.size) return;
+      await a.handler([...s.selected]);
       s.records = (await cfg.fetchRecords()) || [];
       s.selected.clear(); s.bulk = false; render();
       break;

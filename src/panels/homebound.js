@@ -11,13 +11,16 @@
 
 import { sb, withWriteRetry, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
-import { logActivity, formatAddressBlock, formatAddressFlat } from '../utils.js';
+import { logActivity, formatAddressBlock, formatAddressFlat, formatDateMDY, todayCST } from '../utils.js';
 import { renderSacramentalPanel, refreshActivePanel } from '../sacramental/panelShell.js';
-import { isHomeboundBroad, canAccessHomeboundRecipient } from '../roles.js';
+import { isHomeboundBroad, canAccessHomebound, canAccessHomeboundRecipient } from '../roles.js';
 import { setFieldLocked } from '../sacramental/churchLocation.js';
 import { closeModal } from '../ui/modal.js';
 import { flashSavedThen } from '../ui/saveButton.js';
 import { showToast } from '../ui/toast.js';
+import { loadMyGrants, hasMyGrantForLink, userName, ensureIdentities } from '../ui/grants.js';
+import { noteEditedMarker } from '../sacramental/noteEdit.js';
+import { sealGuardConfirm } from '../ui/sealGuard.js';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -26,6 +29,13 @@ const CARE_LABEL   = { home: 'Home', facility: 'Facility', hospital: 'Hospital' 
 const STATUS_LABEL = { active: 'Active', resolved_discharged: 'Resolved / Discharged', deceased: 'Deceased' };
 
 const ROLE_LABEL = { sacramental: 'Sacramental', communion: 'Communion', visitor: 'Visitor' };
+// "brought" records sacramental logistics only. NO "Confession" (recording received
+// Penance on a dated multi-user record breaches the seal). NO "pastoral visit" (every
+// logged visit is pastoral by nature — redundant). An EMPTY brought[] is valid/normal
+// (records that a visit occurred). A forward-looking REQUEST (3d) is separate.
+const BROUGHT_LABEL = { Communion: 'Communion', Anointing: 'Anointing' };
+const visitTimeOf = (ts) => ts ? new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: store.parishSettings?.timezone || 'America/Chicago' }) : '';
+const nowIso = () => new Date().toISOString();
 
 // ── Data ────────────────────────────────────────────────────────────────────
 let _recipients = [];
@@ -33,11 +43,21 @@ let _facilities = [];
 let _rosterLinkedIds = [];   // personnel ids = program_coordinators(program='homebound').coordinator_ids
 let _rosterInline = [];      // homebound_roster_inline rows (record-only members)
 let _assignments = [];       // homebound_assignments rows
+let _visits = [];            // homebound_visits rows
+let _authUserId = null;      // current auth user (author-scoped visit edits, _isCreator)
 async function loadFacilities() {
   const { data } = await sb.from('homebound_facilities').select('*');
   _facilities = data || [];
   store.homeboundFacilities = _facilities;
 }
+async function loadVisits() {
+  const { data } = await sb.from('homebound_visits').select('*');
+  _visits = data || [];
+}
+const visitsFor = (recipientId) => _visits.filter(v => v.recipient_id === recipientId)
+  // newest-first: by visit_date, then created_at (so same-day Quick Logs surface on top).
+  .sort((a, b) => String(b.visit_date || '').localeCompare(String(a.visit_date || ''))
+    || String(b.created_at || '').localeCompare(String(a.created_at || '')));
 async function loadRoster() {
   const [coordRes, inlineRes] = await Promise.all([
     sb.from('program_coordinators').select('coordinator_ids').eq('program', 'homebound').maybeSingle(),
@@ -51,14 +71,35 @@ async function loadAssignments() {
   _assignments = data || [];
 }
 async function loadHomeboundData() {
+  const { data: { user } } = await sb.auth.getUser();
+  _authUserId = user?.id || null;
   const [recRes] = await Promise.all([
     sb.from('homebound_recipients').select('*'),
-    loadFacilities(), loadRoster(), loadAssignments(),
+    loadFacilities(), loadRoster(), loadAssignments(), loadVisits(),
+    loadMyGrants().catch(() => {}),   // % grant cache (powers the grantee view path)
+    ensureIdentities().catch(() => {}),
   ]);
   _recipients = recRes.data || [];
   store.homeboundRecipients = _recipients;
   return _recipients;
 }
+
+// View gate: a recipient file is viewable with panel/roster/assignment access OR an
+// explicit % record-grant (super-admin grants ONE file read-only to a non-access user).
+function canViewRecipient(r) {
+  return canAccessHomeboundRecipient(r.id) || hasMyGrantForLink('homebound_recipient', r.id);
+}
+// True when the ONLY reason the viewer sees this file is a % grant (read-only).
+function isGranteeOnly(r) {
+  return !canAccessHomeboundRecipient(r.id) && hasMyGrantForLink('homebound_recipient', r.id);
+}
+// Status-filter archive (mirrors Discernment archived_at): resolved/deceased OR an
+// explicit archived_at timestamp drops the file out of the active groups.
+const isArchivedRecipient = (r) => r.status === 'resolved_discharged' || r.status === 'deceased' || !!r.archived_at;
+const _myName = () => {
+  const pid = store.currentUserProfile?.personnel_id;
+  return (store.personnel || []).find(p => p.id === pid)?.name || userName(_authUserId) || '';
+};
 
 // Combined roster (both kinds), sorted by name. linked = account-linked (grants
 // access); inline = record-only (no account, not routable). value-encoded by ID
@@ -87,7 +128,6 @@ function recipientLastName(r) {
   const parts = String(full).trim().split(/\s+/).filter(Boolean);
   return r.last_name || (parts.length ? parts[parts.length - 1] : '');
 }
-const isActive = (r) => r.status === 'active' && !r.archived_at;
 
 // ── Facility helpers (facility_id → managed list, or inline "Other" name) ─────
 function facilityOf(r) { return r.facility_id ? _facilities.find(f => f.id === r.facility_id) : null; }
@@ -355,6 +395,11 @@ async function homeboundSaveEdit(id) {
   const root = document.querySelector('#sac-editform [data-hbform]');
   const payload = _hbReadForm(root);
   if (!payload) return { ok: false };
+  // Status drives the archive (set once): resolved/deceased → archived_at (preserve
+  // the original resolution timestamp); back to active → cleared.
+  const prior = _recipients.find(x => x.id === id);
+  const archived = payload.status === 'resolved_discharged' || payload.status === 'deceased';
+  payload.archived_at = archived ? (prior?.archived_at || nowIso()) : null;
   const { error } = await withWriteRetry(() => sb.from('homebound_recipients').update(payload).eq('id', id), { kind: 'update' });
   if (error) { alert('Save failed: ' + error.message); return { ok: false }; }
   logActivity({ action: 'updated homebound recipient', entityType: 'homebound_recipient', entityName: payload.name || 'Recipient', contextType: 'homebound', contextId: id });
@@ -380,6 +425,7 @@ async function hbCreateSave() {
   const payload = _hbReadForm(root);
   if (!payload) return;
   payload.created_at = new Date().toISOString();
+  payload.archived_at = (payload.status === 'resolved_discharged' || payload.status === 'deceased') ? nowIso() : null;
   const { data, error } = await withWriteRetry(() => sb.from('homebound_recipients').insert(payload).select('id').single(), { kind: 'create' });
   if (error) { alert('Create failed: ' + error.message); return; }
   logActivity({ action: 'created homebound recipient', entityType: 'homebound_recipient', entityName: payload.name || 'Recipient', contextType: 'homebound' });
@@ -620,6 +666,142 @@ async function hbUnassign(assignmentId) {
   await loadAssignments(); refreshActivePanel();
 }
 
+// ── Visit log (append child table; clones the Discernment notes pattern) ──────
+// Capability (Step 2 split): canLogVisit = broad OR assigned-to-this-recipient (the
+// one write an assignment-only minister has). canManageVisit = broad manages ANY;
+// an assignment-only minister edits/deletes only their OWN (author_id === me).
+const canLogVisit = (r) => canAccessHomeboundRecipient(r.id);
+const canManageVisit = (v, r) => isHomeboundBroad() || (!!_authUserId && v.author_id === _authUserId && canAccessHomeboundRecipient(r.id));
+
+function visitFormFields(v = {}) {
+  const brought = Array.isArray(v.brought) ? v.brought : [];
+  const checks = Object.entries(BROUGHT_LABEL).map(([k, l]) =>
+    `<label style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;color:var(--navy);margin-right:14px;cursor:pointer;"><input type="checkbox" data-brought="${k}" ${brought.includes(k) ? 'checked' : ''} style="width:14px;height:14px;accent-color:var(--cardinal);" />${esc(l)}</label>`).join('');
+  return `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      <div><label style="${LS}">Date</label><input type="date" id="hb-visit-date" value="${esc(v.visit_date || todayCST())}" style="${IS}width:auto;" /></div>
+      <div style="flex:1;min-width:150px;"><label style="${LS}">Who visited</label><input type="text" id="hb-visit-minister" value="${esc(v.minister != null ? v.minister : _myName())}" style="${IS}" /></div>
+    </div>
+    <label style="${LS}">Brought</label>
+    <div style="display:flex;flex-wrap:wrap;">${checks}</div>`;
+}
+function readVisitForm(root) {
+  return {
+    visit_date: root?.querySelector('#hb-visit-date')?.value || null,
+    minister: (root?.querySelector('#hb-visit-minister')?.value || '').trim() || null,
+    brought: [...(root?.querySelectorAll('input[data-brought]:checked') || [])].map(c => c.dataset.brought),
+  };
+}
+
+function visitLogSection(r) {
+  const list = visitsFor(r.id);
+  const quick = canLogVisit(r)
+    ? `<button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;margin-bottom:.6rem;" onclick="window.hbQuickLog('${r.id}')"><i class="fa-solid fa-bolt" style="margin-right:5px;"></i>Quick Log</button>`
+    : '';
+  const rows = list.length ? list.map(v => {
+    const broughtChips = (Array.isArray(v.brought) ? v.brought : []).map(b => _badge(BROUGHT_LABEL[b] || b, 'badge-complete')).join(' ');
+    const who = v.minister || (v.author_id ? userName(v.author_id) : '');
+    const time = visitTimeOf(v.created_at);
+    const ctrls = canManageVisit(v, r)
+      ? `<span style="display:flex;gap:6px;flex-shrink:0;"><button class="card-action" onclick="window.hbVisitEdit('${v.id}')">Edit</button><button class="card-action" style="color:#A32D2D;" onclick="window.hbVisitDelete('${v.id}')">Delete</button></span>`
+      : '';
+    return `<div style="padding:.45rem .55rem;background:#F8F7F4;border:.5px solid var(--stone);border-radius:6px;margin-bottom:.35rem;">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+        <div style="min-width:0;">
+          <div style="font-size:12.5px;color:var(--navy);font-weight:600;">${esc(formatDateMDY(v.visit_date) || '—')}${time ? ` at ${esc(time)}` : ''}${who ? ` · ${esc(who)}` : ''}<span style="font-weight:400;color:#9CA3AF;">${noteEditedMarker(v.edited_at)}</span></div>
+          ${broughtChips ? `<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;">${broughtChips}</div>` : ''}
+        </div>${ctrls}
+      </div>
+    </div>`;
+  }).join('') : `<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No visits logged.</div>`;
+  let add = '';
+  if (canLogVisit(r)) {
+    add = `<div id="hb-visit-add-${r.id}" data-hbvisit style="background:var(--parch);border:.5px solid var(--stone);border-radius:var(--radius-sm);padding:.7rem;margin-top:.5rem;">
+      <div style="${SECT}">Log a visit</div>
+      ${visitFormFields({})}
+      <button class="btn-secondary" style="margin-top:.5rem;padding:.35rem .9rem;font-size:12px;" onclick="window.hbVisitAdd('${r.id}')">+ Add visit</button>
+    </div>`;
+  }
+  return quick + rows + add;
+}
+
+async function hbVisitAdd(recipientId) {
+  const r = _recipients.find(x => x.id === recipientId);
+  if (!r || !canLogVisit(r)) return;
+  const f = readVisitForm(document.getElementById('hb-visit-add-' + recipientId));
+  // Seal-of-confession guard on the entry's free-text (the only free-text field is
+  // "who visited"). brought has no Confession option, so it never triggers.
+  if (!(await sealGuardConfirm(f.minister))) return;
+  const { error } = await withWriteRetry(() => sb.from('homebound_visits').insert({ recipient_id: recipientId, visit_date: f.visit_date, minister: f.minister, brought: f.brought, author_id: _authUserId }), { kind: 'create' });
+  if (error) { alert('Add failed: ' + error.message); return; }
+  logActivity({ action: 'logged homebound visit', entityType: 'homebound_visit', entityName: r.name || 'Recipient', contextType: 'homebound', contextId: recipientId });
+  await loadVisits(); refreshActivePanel();
+}
+function hbVisitEdit(visitId) {
+  const v = _visits.find(x => x.id === visitId); if (!v) return;
+  const r = _recipients.find(x => x.id === v.recipient_id);
+  if (!canManageVisit(v, r)) return;
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-title">Edit Visit</div>
+    <div data-hbvisit>${visitFormFields(v)}</div>
+    <div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancel</button><button class="btn-primary" onclick="window.hbVisitSave('${visitId}')">Save</button></div>`;
+  document.getElementById('modal-overlay').classList.add('open');
+}
+async function hbVisitSave(visitId) {
+  const v = _visits.find(x => x.id === visitId); const r = _recipients.find(x => x.id === v?.recipient_id);
+  if (!v || !canManageVisit(v, r)) return;
+  const f = readVisitForm(document.querySelector('#modal-content [data-hbvisit]'));
+  if (!(await sealGuardConfirm(f.minister))) return;   // seal guard on the free-text
+  const { error } = await withWriteRetry(() => sb.from('homebound_visits').update({ visit_date: f.visit_date, minister: f.minister, brought: f.brought, edited_at: nowIso() }).eq('id', visitId), { kind: 'update' });
+  if (error) { alert('Save failed: ' + error.message); return; }
+  await loadVisits();
+  flashSavedThen(() => { closeModal(); refreshActivePanel(); });
+}
+
+// ── Quick Log — one-tap "a visit happened" (single + batch). A pre-filled append
+// to homebound_visits: visit_date = today, minister = current user, brought EMPTY
+// (no free-text → seal guard N/A). Anyone with write access to the file (broad OR
+// assigned-to-this-recipient — the same canLogVisit gate as a normal visit).
+function quickLogRow(recipientId, createdAt, brought = []) {
+  return { recipient_id: recipientId, visit_date: todayCST(), minister: _myName(), brought, author_id: _authUserId, created_at: createdAt };
+}
+async function hbQuickLog(recipientId) {
+  const r = _recipients.find(x => x.id === recipientId);
+  if (!r || !canLogVisit(r)) return;
+  const { error } = await withWriteRetry(() => sb.from('homebound_visits').insert(quickLogRow(recipientId, nowIso())), { kind: 'create' });
+  if (error) { alert('Quick Log failed: ' + error.message); return; }
+  logActivity({ action: 'quick-logged homebound visit', entityType: 'homebound_visit', entityName: r.name || 'Recipient', contextType: 'homebound', contextId: recipientId });
+  await loadVisits(); refreshActivePanel();
+  showToast('Visit logged', { type: 'success', duration: 1500 });
+}
+// Batch: one shared timestamp (the round = a single event); per-card write check so a
+// non-writable card is SKIPPED, not erroring the whole batch.
+async function hbBatchQuickLog(recipientIds, brought = []) {
+  const ts = nowIso();
+  const writable = recipientIds.map(id => _recipients.find(r => r.id === id)).filter(r => r && canLogVisit(r));
+  const skipped = recipientIds.length - writable.length;
+  if (!writable.length) { showToast('No writable recipients selected', { type: 'warning' }); return; }
+  const rows = writable.map(r => quickLogRow(r.id, ts, brought));
+  const { error } = await withWriteRetry(() => sb.from('homebound_visits').insert(rows), { kind: 'create' });
+  if (error) { alert('Batch Quick Log failed: ' + error.message); return; }
+  const suffix = brought.includes('Communion') ? ' + Communion' : '';
+  logActivity({ action: `quick-logged ${rows.length} homebound visits (batch)${suffix}`, entityType: 'homebound_visit', contextType: 'homebound' });
+  await loadVisits();
+  showToast(`Logged ${rows.length} visit${rows.length === 1 ? '' : 's'}${suffix}${skipped ? ` (${skipped} skipped)` : ''}`, { type: 'success' });
+}
+async function hbVisitDelete(visitId) {
+  const v = _visits.find(x => x.id === visitId); const r = _recipients.find(x => x.id === v?.recipient_id);
+  if (!v || !canManageVisit(v, r)) return;
+  if (!confirm('Delete this visit entry?')) return;
+  const { error } = await deleteWithRetry(() => sb.from('homebound_visits').delete().eq('id', visitId));
+  if (error) { alert('Delete failed: ' + error.message); return; }
+  await loadVisits(); refreshActivePanel();
+}
+
+function granteeBanner() {
+  return `<div style="font-size:12.5px;color:#6B7280;background:#FBF6EC;border:.5px solid #E8D9B8;border-radius:6px;padding:.5rem .65rem;"><i class="fa-solid fa-key" style="color:#B9A88F;margin-right:6px;"></i>You're viewing this file through a shared grant — read-only.</div>`;
+}
+
 // ── Shell config — Tab 1 Recipients ──────────────────────────────────────────
 const homeboundConfig = {
   panelKey: 'homebound',
@@ -629,20 +811,31 @@ const homeboundConfig = {
   // Settings cog → manage the shared facilities list (broad users only).
   canManageTemplate: () => isHomeboundBroad(),
   openTemplate: () => openFacilitiesManager(),
+  // Batch select → Quick Log. Available to anyone who can write visits to the cards
+  // they see (broad sees all; visits-only sees only their assigned cards) — so the
+  // "Select" toggle isn't gated to broad like New/Edit are.
+  canBulk: () => canAccessHomebound(),
+  bulkActions: [
+    { label: 'Quick Log', handler: (ids) => hbBatchQuickLog(ids, []) },
+    { label: 'Quick Log + Communion', handler: (ids) => hbBatchQuickLog(ids, ['Communion']) },
+  ],
 
-  fetchRecords: () => _recipients.filter(r => isActive(r) && canAccessHomeboundRecipient(r.id)),
-  fetchRecord: (id) => _recipients.find(r => r.id === id),
+  // All viewable recipients (panel/roster/assignment access OR a % grant). Archived
+  // (resolved/deceased) stay in the list but route to the shell's Archived group.
+  fetchRecords: () => _recipients.filter(r => canViewRecipient(r)),
+  fetchRecord: (id) => { const r = _recipients.find(x => x.id === id); return r && canViewRecipient(r) ? r : undefined; },
   searchText: (r) => [recipientName(r), facilityName(r), r.home_city].filter(Boolean).join(' '),
   compare: (a, b) => recipientLastName(a).toLowerCase().localeCompare(recipientLastName(b).toLowerCase())
     || recipientName(a).toLowerCase().localeCompare(recipientName(b).toLowerCase()),
 
-  // Hospital/Temporary (top, one cluster — the chip distinguishes which hospital) →
-  // one group per facility (alphabetical, middle, keyed by facility_id) → Private
-  // Homes (bottom).
-  groupBy: (r) => r.care_type === 'hospital' ? '__hospital'
-    : r.care_type === 'home' ? '__home'
-      : `fac:${facKey(r)}`,
-  groupLabel: (k) => k === '__hospital' ? 'Hospital / Temporary' : k === '__home' ? 'Private Homes' : facLabelFromGroupKey(k),
+  // Archived (resolved/deceased) → '__archived' (shell sinks + collapses it at the
+  // bottom). Else Hospital/Temporary (top) → one group per facility (middle, keyed
+  // by facility_id) → Private Homes (bottom).
+  groupBy: (r) => isArchivedRecipient(r) ? '__archived'
+    : r.care_type === 'hospital' ? '__hospital'
+      : r.care_type === 'home' ? '__home'
+        : `fac:${facKey(r)}`,
+  groupLabel: (k) => k === '__hospital' ? 'Hospital / Temporary' : k === '__home' ? 'Private Homes' : k === '__archived' ? 'Archived' : facLabelFromGroupKey(k),
   groupCompare: (a, b) => {
     const rank = (k) => k === '__hospital' ? 0 : k === '__home' ? 2 : 1;
     return rank(a) - rank(b) || facLabelFromGroupKey(a).toLowerCase().localeCompare(facLabelFromGroupKey(b).toLowerCase());
@@ -666,8 +859,10 @@ const homeboundConfig = {
     ],
   }),
   detailSections: [
+    { title: 'Shared access',    render: () => granteeBanner(), when: (r) => isGranteeOnly(r) },
     { title: 'Contact',          render: (r) => contactRead(r) },
     { title: 'Ministers',        render: (r) => ministersSection(r) },
+    { title: 'Visit Log',        render: (r) => visitLogSection(r) },
     { title: 'Current Location', render: (r) => locationRead(r) },
     { title: 'Mailing Address',  render: (r) => mailingRead(r) },
   ],
@@ -711,4 +906,5 @@ Object.assign(window, {
   hbFacilityAdd, hbFacilityEdit, hbFacilitySave, hbFacilityRemove, hbFacilityBack,
   _hbRosterPickChange, hbRosterAdd, hbRosterRemoveLinked, hbRosterRemoveInline,
   hbAssign, hbUnassign,
+  hbVisitAdd, hbVisitEdit, hbVisitSave, hbVisitDelete, hbQuickLog,
 });
