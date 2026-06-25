@@ -20,8 +20,28 @@ import { store } from './store.js';
 import { installPhoneMask } from './utils/phone.js';
 import './ui/saveButton.js';   // installs window.flashSaved / flashSavedThen + click tracker
 
-async function loadParishSettings() {
-  const { data, error } = await sb.from('parish_settings').select('*').limit(1).single();
+async function loadParishSettings(user) {
+  // Phase 1b Step 2 — RESOLVED-parish load: resolve the user's parish via the Step 1
+  // column (user_profiles.parish_id) and load THAT parish_settings row. Single-tenant-
+  // safe: while parish_settings has one row, the resolved id IS that row, so this returns
+  // the same object as the legacy singleton load. Falls back to the singleton load
+  // whenever resolution yields nothing (no user, no profile row, null parish_id, or the
+  // resolved row is missing) so behavior is byte-identical and nothing breaks.
+  let data = null, error = null;
+
+  let parishId = null;
+  if (user?.id) {
+    const { data: prof } = await sb.from('user_profiles')
+      .select('parish_id').eq('user_id', user.id).maybeSingle();
+    parishId = prof?.parish_id || null;
+  }
+  if (parishId) {
+    ({ data, error } = await sb.from('parish_settings').select('*').eq('id', parishId).maybeSingle());
+  }
+  if (!data) {
+    // Fallback: legacy singleton load.
+    ({ data, error } = await sb.from('parish_settings').select('*').limit(1).single());
+  }
   if (error || !data) {
     console.warn('[parishSettings] no parish_settings row found');
     return;
@@ -126,9 +146,10 @@ async function startApp(user) {
   initLiturgical();
   installPhoneMask();   // live phone mask on every input[type="tel"], app-wide
 
-  // Phase 1 — non-user-dependent data (parallel)
+  // Phase 1 — base data (parallel). loadParishSettings resolves the user's parish from
+  // user_profiles.parish_id (Step 1b); the others are parish-agnostic.
   try {
-    await Promise.all([loadParishSettings(), loadDiocesanOverrides(), loadPersonnel(), loadTeamsStore()]);
+    await Promise.all([loadParishSettings(user), loadDiocesanOverrides(), loadPersonnel(), loadTeamsStore()]);
   } catch (e) {
     console.error('[startApp] phase-1 init failed:', e);
   }
