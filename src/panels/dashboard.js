@@ -2,7 +2,8 @@ import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity, PANEL_TITLES } from '../utils.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
-import { isSuperAdmin, isAdmin, canWriteGlobalCalendar, canSeeWorkEvent } from '../roles.js';
+import { isSuperAdmin, isAdmin, canWriteGlobalCalendar, canSeeWorkEvent,
+  canAccessSacrament, canAccessHomebound, canAccessDiscernment, canAccessHr } from '../roles.js';
 import { parseICS } from '../utils/icsParser.js';
 import { createAvatar } from '../ui/avatar.js';
 import { notifyUsers, getAllUserIds, getUserIdsForTeam } from '../notifications.js';
@@ -697,32 +698,12 @@ function _faIcon(iconClass) {
   return `<i class="fa-solid ${iconClass}" style="font-size:14px;color:#8B1A2F;flex-shrink:0;width:16px;text-align:center;"></i>`;
 }
 
-// Programs whose coordinator_ids include personnelId
-async function _coordinatorPrograms(personnelId) {
-  if (!personnelId) return new Set();
-  const { data } = await sb
-    .from('program_coordinators')
-    .select('program,coordinator_ids');
-  const programs = new Set();
-  (data || []).forEach(row => {
-    if ((row.coordinator_ids || []).includes(personnelId)) programs.add(row.program);
-  });
-  return programs;
-}
-
 async function loadActivityFeed() {
   const limit = 5;
   const superAdmin = isSuperAdmin();
   const admin = isAdmin();
 
-  const scope = await getUserScope();
-  const { personnelId } = scope;
-
   const accessibleProjectIds = new Set((store.allProjects || []).map(p => p.id));
-
-  const coordPrograms = superAdmin
-    ? new Set(['marriage', 'annulments', 'ocia', 'baptism', 'firstcomm', 'confirmation'])
-    : await _coordinatorPrograms(personnelId);
 
   const { data: actRaw, error: actErr } = await sb
     .from('activity_log')
@@ -756,38 +737,41 @@ async function loadActivityFeed() {
   const userTeamIds   = new Set(store.currentUserRoles?.teamIds || []);
   const accessibleTaskIds = new Set((store.allTasks || []).map(t => t.id));
 
+  // The activity feed is a MIRROR of panel access: every entry is gated through the SAME
+  // access functions the panels use, instead of a separate hand-rolled rule. Sacramental
+  // cases are parish-aware for free (canAccessSacrament defaults to the resolved parish);
+  // cura cases (annulments/homebound/discernment) are group-shared. context_type='general'
+  // carries HR records (hr_record/person_position/position/review_template) → HR-gated.
+  const HR_GENERAL = new Set(['hr_record', 'person_position', 'position', 'review_template']);
   function _canSeeEntry(r) {
     if (superAdmin) return true;
     const ct = r.context_type || 'general';
     const cid = r.context_id;
     switch (ct) {
-      case 'project':
-        return !cid || accessibleProjectIds.has(cid);
-      case 'task':
-        return !cid || accessibleTaskIds.has(cid);
-      case 'team':
-        return !cid || admin || userTeamIds.has(cid);
-      case 'announcement':
-      case 'general':
-        return true;
-      case 'personnel':
-        return admin;
-      case 'ocia':
-        return admin || coordPrograms.has('ocia');
+      case 'project':            return !cid || accessibleProjectIds.has(cid);
+      case 'task':               return !cid || accessibleTaskIds.has(cid);
+      case 'team':               return !cid || admin || userTeamIds.has(cid);
+      case 'announcement':       return true;
+      // Sacramental — parish-aware via canAccessSacrament's resolved-parish default.
+      case 'ocia':               return canAccessSacrament('ocia');
       case 'marriage':
-      case 'couple':
-        return admin || coordPrograms.has('marriage');
-      case 'baptism':
-        return admin || coordPrograms.has('baptism');
-      case 'confirmation':
-        return admin || coordPrograms.has('confirmation');
+      case 'couple':             return canAccessSacrament('marriage');
+      case 'baptism':            return canAccessSacrament('baptism');
+      case 'confirmation':       return canAccessSacrament('confirmation');
       case 'firstcomm':
       case 'firstcommunion':
-        return admin || coordPrograms.has('firstcomm');
-      case 'annulments':
-        return admin || coordPrograms.has('annulments');
-      default:
-        return admin;
+      case 'family':             return canAccessSacrament('firstcomm');   // family = firstcomm-sourced
+      // Cura (group-shared) — mirror the real cura panel gates.
+      case 'annulments':         return canAccessSacrament('annulments', null);
+      case 'homebound':          return canAccessHomebound();
+      case 'discernment':        return canAccessDiscernment();
+      // HR.
+      case 'hr':                 return canAccessHr();
+      case 'general':            return HR_GENERAL.has(r.entity_type) ? canAccessHr() : true;
+      // Admin-only (decided) + fail-closed default.
+      case 'personnel':          return admin;
+      case 'link':               return admin;
+      default:                   return admin;
     }
   }
 
