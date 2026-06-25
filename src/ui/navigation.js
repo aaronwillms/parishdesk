@@ -216,12 +216,16 @@ export function applyNavVisibility() {
   if (newProjectBtn) newProjectBtn.style.display = isAdmin() ? '' : 'none';
 }
 
+// Sets the parish label in the sidebar (.app-sub) and login screen (.auth-sub). Callers
+// pass the short label — COALESCE(display_name, parish_name) — so single-name parishes
+// still show their full name. Step 3b: the " · Natchez" city suffix was removed (it
+// hardcoded one parish's city; multi-tenant, the label must not assume a location).
 export function applyParishName(name) {
   if (!name) return;
   const sub = document.querySelector('.app-sub');
   if (sub) sub.textContent = name;
   const authSub = document.querySelector('.auth-sub');
-  if (authSub) authSub.textContent = name + ' · Natchez';
+  if (authSub) authSub.textContent = name;
 }
 
 export function initNavigation(loaderMap) {

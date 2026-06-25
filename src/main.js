@@ -38,16 +38,19 @@ async function loadParishSettings(user) {
   if (parishId) {
     ({ data, error } = await sb.from('parish_settings').select('*').eq('id', parishId).maybeSingle());
   }
-  if (!data) {
-    // Fallback: legacy singleton load.
-    ({ data, error } = await sb.from('parish_settings').select('*').limit(1).single());
-  }
+  // Fail-closed (Step 3b): NO singleton `.limit(1)` fallback. With two parishes a singleton
+  // load would silently load the WRONG parish for an unresolved user (the app mirror of the
+  // hardened current_parish_id()). So we load ONLY the user's resolved parish; if it's
+  // unresolved (no profile parish_id, or the row is missing), we leave parishSettings unset —
+  // a locked/unresolved state — rather than defaulting to an arbitrary parish. Single-parish:
+  // every user resolves, so this branch is never hit (inert now, correct later).
   if (error || !data) {
-    console.warn('[parishSettings] no parish_settings row found');
+    console.warn('[parishSettings] parish unresolved for this user — leaving parishSettings unset (fail-closed)');
+    store.parishSettings = null;
     return;
   }
   store.parishSettings = data;
-  applyParishName(data.parish_name);
+  applyParishName(data.display_name || data.parish_name);
 }
 
 async function loadDiocesanOverrides() {

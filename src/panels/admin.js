@@ -339,7 +339,13 @@ function _mountLinkPicker(container, userId) {
     statusEl.textContent = 'Saving…';
     console.log('[admin link] upserting personnel_id:', _selectedPerson.id, 'for user:', userId);
     const { error } = await sb.from('user_profiles').upsert(
-      { user_id: userId, personnel_id: _selectedPerson.id },
+      // Step 3b: stamp the admin's resolved parish so a newly-linked user gets a real
+      // parish_id (never NULL → never hits the hardened current_parish_id() fail-closed
+      // path). Single-parish: idempotent — every user is already Basilica. ⚠️ 3c: once a
+      // second parish exists this must become a parish PICKER; an unconditional stamp on
+      // the upsert-UPDATE path would otherwise move an existing cross-parish user to the
+      // admin's parish on re-link. (undefined → key omitted → DB DEFAULT current_parish_id().)
+      { user_id: userId, personnel_id: _selectedPerson.id, parish_id: store.parishSettings?.id || undefined },
       { onConflict: 'user_id' }
     );
     if (error) {
@@ -1083,7 +1089,7 @@ async function _renderSettingsTab() {
       : await sb.from('parish_settings').insert(payload);
     if (saveErr) { statusEl.textContent = 'Error: ' + saveErr.message; return; }
     store.parishSettings = { ...store.parishSettings, ...payload };
-    applyParishName(name);
+    applyParishName(store.parishSettings?.display_name || name);   // Step 3b: short label where set
     statusEl.textContent = 'Saved.';
     window.flashSaved();
     setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
