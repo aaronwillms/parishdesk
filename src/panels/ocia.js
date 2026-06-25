@@ -42,7 +42,7 @@ export function ociaCohortDateOf(id) { return _cohorts.find(c => c.id === id)?.c
 // dropdown (Clergy + coordinator(s) + Other), mirroring the other sacrament panels.
 async function loadOciaCoordinator() {
   try {
-    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'ocia').maybeSingle();
+    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'ocia').eq('parish_id', store.parishSettings?.id).maybeSingle();
     _ociaCoordinatorNames = (data?.coordinator_ids || []).map(pid => (store.personnel || []).find(p => p.id === pid)?.name).filter(Boolean);
   } catch (_) { _ociaCoordinatorNames = []; }
 }
@@ -213,11 +213,11 @@ async function loadTemplates() {
 // Data-only refresh (used by the shell + autosave/modal). Returns the record list.
 export async function loadOciaData() {
   await Promise.all([loadTemplates(), loadOciaCoordinator(), loadCohorts()]);
-  // Parish-scope (Step 2a): the user's resolved parish, OR group-shared NULL rows. Single-
-  // parish → all rows are Basilica, so this returns today's rows.
+  // Parish-scope (Step 2b): STRICT match to the resolved parish (creates now stamp parish_id;
+  // 2a backfilled all rows). Single-parish → today's rows; multi-parish → hard isolation.
   const _pid = store.parishSettings?.id;
   let _q = sb.from('sacramental_ocia').select('*').order('created_at', { ascending: false });
-  if (_pid) _q = _q.or(`parish_id.is.null,parish_id.eq.${_pid}`);
+  if (_pid) _q = _q.eq('parish_id', _pid);
   const { data, error } = await _q;
   if (error) { console.error('[ocia]', error); return []; }
   allOcia = data || [];
@@ -814,6 +814,7 @@ async function ociaSave() {
   const { payload, familyGroupId, linkTargetToUpdate } = r;
   payload.status_code = document.getElementById('of-status')?.value || 'inquirer';
   payload.archived = false;
+  payload.parish_id = store.parishSettings?.id;   // Step 2b: stamp the resolved parish
   const { error } = await insertWithRetry('sacramental_ocia', payload);
   if (error) { reportWriteError('ocia insert', error); return; }
   if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);

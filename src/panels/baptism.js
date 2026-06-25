@@ -22,7 +22,7 @@ let _tplRow = null, _M = null, _bapCoordinatorNames = [];
 // dropdown (Clergy + coordinator(s) + Other), mirroring the other sacrament panels.
 async function loadBapCoordinator() {
   try {
-    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'baptism').maybeSingle();
+    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'baptism').eq('parish_id', store.parishSettings?.id).maybeSingle();
     _bapCoordinatorNames = (data?.coordinator_ids || []).map(pid => (store.personnel || []).find(p => p.id === pid)?.name).filter(Boolean);
   } catch (_) { _bapCoordinatorNames = []; }
 }
@@ -66,11 +66,11 @@ async function loadTemplate() {
 // Fetch-only (no render) — used by the shell's config.fetchRecords.
 export async function loadBaptismData() {
   await Promise.all([loadTemplate(), loadBapCoordinator()]);
-  // Parish-scope (Step 2a): the user's resolved parish, OR group-shared NULL rows. Single-
-  // parish → all rows are Basilica, so this returns today's rows.
+  // Parish-scope (Step 2b): STRICT match to the resolved parish (creates now stamp parish_id;
+  // 2a backfilled all rows). Single-parish → today's rows; multi-parish → hard isolation.
   const _pid = store.parishSettings?.id;
   let _q = sb.from('sacramental_baptism').select('*').order('created_at', { ascending: false });
-  if (_pid) _q = _q.or(`parish_id.is.null,parish_id.eq.${_pid}`);
+  if (_pid) _q = _q.eq('parish_id', _pid);
   const { data, error } = await _q;
   if (error) { console.error('[baptism]', error); return; }
   allBap = data || [];
@@ -364,6 +364,7 @@ async function bapSave() {
     payload.status_code = 'scheduled';
     payload.archived = false;
     payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
+    payload.parish_id = store.parishSettings?.id;   // Step 2b: stamp the resolved parish
     const { error } = await insertWithRetry('sacramental_baptism', payload);
     if (error) { reportWriteError('baptism insert', error); return; }
     logActivity({ action: 'added Baptism child', entityType: 'baptism', entityName: name, contextType: 'baptism' });

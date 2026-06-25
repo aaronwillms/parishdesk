@@ -98,7 +98,7 @@ const visitsFor = (recipientId) => _visits.filter(v => v.recipient_id === recipi
     || String(b.created_at || '').localeCompare(String(a.created_at || '')));
 async function loadRoster() {
   const [coordRes, inlineRes] = await Promise.all([
-    sb.from('program_coordinators').select('coordinator_ids').eq('program', 'homebound').maybeSingle(),
+    sb.from('program_coordinators').select('coordinator_ids').eq('program', 'homebound').is('parish_id', null).maybeSingle(),   // cura → NULL-parish row
     sb.from('homebound_roster_inline').select('*'),
   ]);
   _rosterLinkedIds = coordRes.data?.coordinator_ids || [];

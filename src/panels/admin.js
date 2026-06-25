@@ -1,5 +1,6 @@
 import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
+import { PREP_PROGRAMS } from '../ui/programCoordinators.js';   // prep-vs-cura key set (single source)
 import { createAvatar } from '../ui/avatar.js';
 import { applyParishName } from '../ui/navigation.js';
 import { createContactPicker } from '../ui/contactPicker.js';
@@ -542,7 +543,10 @@ async function _saveUser(userId) {
   u.sacraments.forEach(s => { const cb = sacCbs.find(c => c.dataset.sacrament === s); if (cb && cb.disabled) desiredSac.add(s); });
   await deleteWithRetry(() => sb.from('sacramental_roles').delete().eq('user_id', userId));
   if (desiredSac.size) {
-    await sb.from('sacramental_roles').insert([...desiredSac].map(s => ({ user_id: userId, sacrament: s })));
+    await sb.from('sacramental_roles').insert([...desiredSac].map(s => ({
+      user_id: userId, sacrament: s,
+      parish_id: PREP_PROGRAMS.has(s) ? (store.parishSettings?.id || null) : null,   // prep → parish, cura → NULL
+    })));
   }
 
   // Panel grants (manual). Admin-locked rows with an existing manual grant are preserved.
@@ -551,7 +555,10 @@ async function _saveUser(userId) {
   u.grants.forEach(p => { const cb = grantCbs.find(c => c.dataset.panel === p); if (cb && cb.disabled) desiredGrants.add(p); });
   await deleteWithRetry(() => sb.from('panel_grants').delete().eq('user_id', userId));
   if (desiredGrants.size) {
-    await sb.from('panel_grants').insert([...desiredGrants].map(p => ({ user_id: userId, panel: p })));
+    await sb.from('panel_grants').insert([...desiredGrants].map(p => ({
+      user_id: userId, panel: p,
+      parish_id: PREP_PROGRAMS.has(p) ? (store.parishSettings?.id || null) : null,   // prep panel → parish, cura/other → NULL
+    })));
   }
 
   // Team memberships (manual) — only if user has a linked personnel_id. Admin-locked

@@ -50,7 +50,7 @@ async function loadTemplate() { const { data } = await sb.from('firstcomm_templa
 async function loadCohorts() { const { data } = await sb.from('sacramental_cohorts').select('*').eq('panel', 'firstcomm').order('cohort_date', { ascending: false }); _cohorts = data || []; }
 async function loadFcCoordinator() {
   try {
-    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'firstcomm').maybeSingle();
+    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'firstcomm').eq('parish_id', store.parishSettings?.id).maybeSingle();
     _fcCoordinatorNames = (data?.coordinator_ids || []).map(pid => (store.personnel || []).find(p => p.id === pid)?.name).filter(Boolean);
   } catch (_) { _fcCoordinatorNames = []; }
 }
@@ -58,11 +58,11 @@ async function loadFcCoordinator() {
 // Data-only refresh (used by the shell + autosave). Returns the record list.
 export async function loadFcData() {
   await Promise.all([loadTemplate(), loadCohorts(), loadFcCoordinator()]);
-  // Parish-scope (Step 2a): the user's resolved parish, OR group-shared NULL rows. Single-
-  // parish → all rows are Basilica, so this returns today's rows.
+  // Parish-scope (Step 2b): STRICT match to the resolved parish (creates now stamp parish_id;
+  // 2a backfilled all rows). Single-parish → today's rows; multi-parish → hard isolation.
   const _pid = store.parishSettings?.id;
   let _q = sb.from('sacramental_firstcomm').select('*').order('created_at', { ascending: false });
-  if (_pid) _q = _q.or(`parish_id.is.null,parish_id.eq.${_pid}`);
+  if (_pid) _q = _q.eq('parish_id', _pid);
   const { data, error } = await _q;
   if (error) { console.error('[firstcomm]', error); return []; }
   allFc = data || [];
@@ -376,6 +376,7 @@ async function fcSave() {
   payload.status_code = 'enrolled';
   payload.archived = false;
   payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
+  payload.parish_id = store.parishSettings?.id;   // Step 2b: stamp the resolved parish
   const { data: ins, error } = await insertWithRetry('sacramental_firstcomm', payload);
   if (error) { reportWriteError('firstcomm insert', error); return; }
   // Apply the pending "Link Family Member" pick via the shared rule (mint/join).

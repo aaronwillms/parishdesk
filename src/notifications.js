@@ -47,12 +47,17 @@ export async function notifyUsers(userIds, triggeringUserId, message, type = 'in
 }
 
 // Fetch all user IDs who have a specific sacramental role or are super_admin/admin.
-export async function getUserIdsForSacrament(sacrament) {
+// Parish-aware (2b): route a sacrament notification to that sacrament's coordinators
+// whose role is group-shared (parish_id NULL) OR scoped to the relevant parish, plus all
+// admins. parishId defaults to the current user's resolved parish (single-parish → the
+// one parish; multi-parish callers should pass the record's parish_id).
+export async function getUserIdsForSacrament(sacrament, parishId = (store.parishSettings?.id || null)) {
   const [{ data: sacRoles }, { data: adminRoles }] = await Promise.all([
-    sb.from('sacramental_roles').select('user_id').eq('sacrament', sacrament),
+    sb.from('sacramental_roles').select('user_id, parish_id').eq('sacrament', sacrament),
     sb.from('user_roles').select('user_id').in('role', ['admin', 'super_admin']),
   ]);
-  return [...new Set([...(sacRoles || []), ...(adminRoles || [])].map(r => r.user_id))];
+  const matched = (sacRoles || []).filter(r => r.parish_id == null || r.parish_id === parishId);
+  return [...new Set([...matched, ...(adminRoles || [])].map(r => r.user_id))];
 }
 
 // Fetch all user IDs who are members of a specific team (via personnel link).

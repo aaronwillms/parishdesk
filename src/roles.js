@@ -25,7 +25,7 @@ export async function loadUserRoles() {
   if (isSuperAdm) {
     store.currentUserRoles = {
       isSuperAdmin: true, isAdmin: true, roles: roleNames,
-      sacraments: [], panelGrants: [], teamIds: [], teamPersonnelIds: [], advocateCaseIds: [],
+      sacraments: new Map(), panelGrants: new Map(), teamIds: [], teamPersonnelIds: [], advocateCaseIds: [],
       onHomeboundRosterLinked: false, homeboundAssignedRecipientIds: [],   // broad via super-admin
       hrInstitutionIds,
     };
@@ -35,24 +35,26 @@ export async function loadUserRoles() {
   // Admins: sacramental access is individually assigned + coordinator assignments; teams/panels are rule-based
   if (isAdm) {
     const [sacRes, coordRes] = await Promise.all([
-      sb.from('sacramental_roles').select('sacrament').eq('user_id', user.id),
+      sb.from('sacramental_roles').select('sacrament, parish_id').eq('user_id', user.id),
       personnelId
-        ? sb.from('program_coordinators').select('program').contains('coordinator_ids', [personnelId])
+        ? sb.from('program_coordinators').select('program, parish_id').contains('coordinator_ids', [personnelId])
         : Promise.resolve({ data: [] }),
     ]);
-    const sacSacraments   = (sacRes.data   || []).map(r => r.sacrament);
-    // program_coordinators carries non-sacrament programs too ('homebound',
-    // 'discernment'); split 'homebound' out of the sacrament set.
-    const coordPrograms   = (coordRes.data || []).map(r => r.program);
-    const coordSacraments = coordPrograms.filter(p => p !== 'homebound');
+    // r.sacraments = Map<sacramentKey, Set<parishId|null>>, merging sacramental_roles +
+    // (non-homebound) program_coordinators by key, collecting each row's parish into the
+    // Set. homebound is the cura roster flag, split out as before.
+    const sacraments = new Map();
+    (sacRes.data || []).forEach(r => _addParishEntry(sacraments, r.sacrament, r.parish_id));
+    const coordRows = coordRes.data || [];
+    coordRows.filter(r => r.program !== 'homebound').forEach(r => _addParishEntry(sacraments, r.program, r.parish_id));
     store.currentUserRoles = {
       isSuperAdmin: false, isAdmin: true, roles: roleNames,
-      sacraments:   [...new Set([...sacSacraments, ...coordSacraments])],
-      panelGrants:  [],
+      sacraments,
+      panelGrants:  new Map(),
       teamIds:      [],
       teamPersonnelIds: [],
       advocateCaseIds: [],
-      onHomeboundRosterLinked: coordPrograms.includes('homebound'),
+      onHomeboundRosterLinked: coordRows.some(r => r.program === 'homebound'),
       homeboundAssignedRecipientIds: [],   // broad via admin; per-recipient unused
       hrInstitutionIds,
     };
@@ -61,13 +63,13 @@ export async function loadUserRoles() {
 
   // Basic users: fetch all grants and team memberships for scoped access
   const [sacramentRes, grantsRes, teamsRes, coordRes] = await Promise.all([
-    sb.from('sacramental_roles').select('sacrament').eq('user_id', user.id),
-    sb.from('panel_grants').select('panel').eq('user_id', user.id),
+    sb.from('sacramental_roles').select('sacrament, parish_id').eq('user_id', user.id),
+    sb.from('panel_grants').select('panel, parish_id').eq('user_id', user.id),
     personnelId
       ? sb.from('team_members').select('team_id').eq('personnel_id', personnelId)
       : Promise.resolve({ data: [] }),
     personnelId
-      ? sb.from('program_coordinators').select('program').contains('coordinator_ids', [personnelId])
+      ? sb.from('program_coordinators').select('program, parish_id').contains('coordinator_ids', [personnelId])
       : Promise.resolve({ data: [] }),
   ]);
 
@@ -83,11 +85,15 @@ export async function loadUserRoles() {
     teamPersonnelIds = [...new Set((tpData || []).map(r => r.personnel_id).filter(Boolean))];
   }
 
-  const sacSacraments   = (sacramentRes.data || []).map(r => r.sacrament);
-  // program_coordinators carries non-sacrament programs too; 'homebound' is the
-  // account-linked Ministers-to-the-Sick roster (broad-tier access), not a sacrament.
-  const coordPrograms   = (coordRes.data    || []).map(r => r.program);
-  const coordSacraments = coordPrograms.filter(p => p !== 'homebound');
+  // r.sacraments = Map<sacramentKey, Set<parishId|null>> (sacramental_roles + non-
+  // homebound coordinators); r.panelGrants = Map<panel, Set<parishId|null>>. 'homebound'
+  // is the cura roster flag, not a sacrament.
+  const sacraments = new Map();
+  (sacramentRes.data || []).forEach(r => _addParishEntry(sacraments, r.sacrament, r.parish_id));
+  const coordRows = coordRes.data || [];
+  coordRows.filter(r => r.program !== 'homebound').forEach(r => _addParishEntry(sacraments, r.program, r.parish_id));
+  const panelGrants = new Map();
+  (grantsRes.data || []).forEach(r => _addParishEntry(panelGrants, r.panel, r.parish_id));
 
   // Annulment cases where this user is the assigned advocate (grants scoped access).
   let advocateCaseIds = [];
@@ -108,12 +114,12 @@ export async function loadUserRoles() {
 
   store.currentUserRoles = {
     isSuperAdmin: false, isAdmin: false, roles: roleNames,
-    sacraments:   [...new Set([...sacSacraments, ...coordSacraments])],
-    panelGrants:  (grantsRes.data || []).map(r => r.panel),
+    sacraments,
+    panelGrants,
     teamIds,
     teamPersonnelIds,
     advocateCaseIds,
-    onHomeboundRosterLinked: coordPrograms.includes('homebound'),
+    onHomeboundRosterLinked: coordRows.some(r => r.program === 'homebound'),
     homeboundAssignedRecipientIds,
     hrInstitutionIds,
   };
@@ -128,6 +134,23 @@ async function hrInstitutionIdsForUser(personnelId) {
     .eq('person_id', personnelId)
     .is('unlinked_at', null);
   return [...new Set((data || []).map(r => r.positions?.institution_id).filter(Boolean))];
+}
+
+// ── Parish-match (multi-tenancy 2b) ──────────────────────────────────────────
+// Role data loads as Map<key, Set<parishId|null>>. The ONE rule: an entry matches a
+// requested parish iff its Set holds NULL (group-shared cura) OR the requested parish id.
+// _myParish() = the user's resolved parish (store.parishSettings, from Phase 1b) — the
+// default for callers that just mean "the current user's parish". Because cura entries
+// are always NULL, they match ANY requested parish, so this default is correct for both
+// parish-scoped (prep) and group-shared (cura) callers — no per-callsite parish arg needed.
+function _myParish() { return store.parishSettings?.id || null; }
+function _addParishEntry(map, key, parishId) {
+  if (!map.has(key)) map.set(key, new Set());
+  map.get(key).add(parishId ?? null);
+}
+function _setMatchesParish(parishSet, parishId) {
+  if (!parishSet) return false;
+  return parishSet.has(null) || (parishId != null && parishSet.has(parishId));
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -152,10 +175,15 @@ export function hasRole(role) {
   return (store.currentUserRoles?.roles || []).includes(role);
 }
 
-export function canAccessSacrament(sacrament) {
+// Parish-aware (2b): a sacramental_roles/coordinator OR a panel-grant entry for this
+// sacrament matches under the NULL-or-equals rule. parishId defaults to the user's
+// resolved parish (correct for both prep and cura — see _myParish above).
+export function canAccessSacrament(sacrament, parishId = _myParish()) {
   if (isSuperAdmin()) return true;
   const r = store.currentUserRoles;
-  return r?.sacraments.includes(sacrament) || r?.panelGrants.includes(sacrament) || false;
+  if (!r) return false;
+  return _setMatchesParish(r.sacraments?.get(sacrament), parishId)
+      || _setMatchesParish(r.panelGrants?.get(sacrament), parishId);
 }
 
 // ── Discernment PANEL ACCESS (axis 1) ───────────────────────────────────────
@@ -173,7 +201,7 @@ export function canAccessDiscernment() {
   if (isSuperAdmin()) return true;
   const r = store.currentUserRoles;
   if (!r) return false;
-  return (r.panelGrants || []).includes('discernment') || hasRole('vocation_director');
+  return !!r.panelGrants?.has('discernment') || hasRole('vocation_director');   // cura: parish-unaware (key presence only)
 }
 
 // ── SICK & HOMEBOUND access (Pastoral Care) — CACHED-AT-LOAD (advocate model) ──
@@ -189,7 +217,7 @@ export function isHomeboundBroad() {
   if (isSuperAdmin()) return true;
   const r = store.currentUserRoles;
   if (!r) return false;
-  return isAdmin() || (r.panelGrants || []).includes('homebound') || !!r.onHomeboundRosterLinked;
+  return isAdmin() || !!r.panelGrants?.has('homebound') || !!r.onHomeboundRosterLinked;   // cura: parish-unaware
 }
 // Panel access: broad OR assigned to ≥1 recipient (mirrors the advocate rule).
 export function canAccessHomebound() {
@@ -209,9 +237,9 @@ export function homeboundCapability() {
 // Stricter than canAccessSacrament: super admin OR the actual sacramental
 // coordinator role for this sacrament (sacramental_roles / program_coordinators).
 // Excludes panel_grants and plain admins — used to gate template management.
-export function isSacramentCoordinator(sacrament) {
+export function isSacramentCoordinator(sacrament, parishId = _myParish()) {
   if (isSuperAdmin()) return true;
-  return (store.currentUserRoles?.sacraments || []).includes(sacrament);
+  return _setMatchesParish(store.currentUserRoles?.sacraments?.get(sacrament), parishId);
 }
 
 export function canAccessPanel(panel) {
@@ -260,8 +288,8 @@ export function canAccessPanel(panel) {
   };
   if (SACRAMENTAL[panel]) return canAccessSacrament(SACRAMENTAL[panel]);
 
-  // Panel grants catch-all
-  return r.panelGrants.includes(panel);
+  // Panel grants catch-all (non-sacramental panels) — parish-unaware (key presence only).
+  return !!r.panelGrants?.has(panel);
 }
 
 // ── Work-calendar event visibility (Phase 3) ────────────────────────────────
@@ -458,14 +486,18 @@ export async function canUserSeeNotification(sb, userId, contextType, contextId)
   }
 
   if (contextType === 'sacrament') {
-    // contextId = sacrament name e.g. 'ocia', 'baptism', 'marriage', 'annulments'
+    // contextId = sacrament name e.g. 'ocia', 'baptism', 'marriage', 'annulments'.
+    // Parish-aware (2b): a role/coordinator entry counts iff its parish_id IS NULL
+    // (group-shared cura) OR equals this user's resolved parish (user_profiles.parish_id).
     if (isAdm) return true;
-    const { data: sacRole } = await sb.from('sacramental_roles').select('sacrament').eq('user_id', userId).eq('sacrament', contextId).maybeSingle();
-    if (sacRole) return true;
-    const { data: uProf } = await sb.from('user_profiles').select('personnel_id').eq('user_id', userId).maybeSingle();
+    const { data: uProf } = await sb.from('user_profiles').select('personnel_id, parish_id').eq('user_id', userId).maybeSingle();
+    const userParish = uProf?.parish_id || null;
+    const matchesParish = (pid) => pid == null || pid === userParish;
+    const { data: sacRoles } = await sb.from('sacramental_roles').select('parish_id').eq('user_id', userId).eq('sacrament', contextId);
+    if ((sacRoles || []).some(r => matchesParish(r.parish_id))) return true;
     if (uProf?.personnel_id) {
-      const { data: coord } = await sb.from('program_coordinators').select('program').eq('program', contextId).contains('coordinator_ids', [uProf.personnel_id]).maybeSingle();
-      if (coord) return true;
+      const { data: coords } = await sb.from('program_coordinators').select('parish_id').eq('program', contextId).contains('coordinator_ids', [uProf.personnel_id]);
+      if ((coords || []).some(r => matchesParish(r.parish_id))) return true;
     }
     return false;
   }

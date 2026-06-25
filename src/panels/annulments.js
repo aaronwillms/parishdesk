@@ -203,7 +203,7 @@ async function loadTemplates() {
 // shared Clergy+Coordinator+Other helper), but stores the FK id rather than a name.
 async function loadAnnulmentCoordinator() {
   try {
-    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'annulments').maybeSingle();
+    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'annulments').is('parish_id', null).maybeSingle();   // cura → NULL-parish row
     _anlCoordinatorIds = data?.coordinator_ids || [];
   } catch (_) { _anlCoordinatorIds = []; }
 }

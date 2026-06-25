@@ -9,7 +9,10 @@ let scheduleData = {};
 
 export async function loadCoordData(prog) {
   const [coordRes, schedRes] = await Promise.all([
-    sb.from('program_coordinators').select('*').eq('program', prog).maybeSingle(),
+    (PREP_PROGRAMS.has(prog)
+      ? sb.from('program_coordinators').select('*').eq('program', prog).eq('parish_id', store.parishSettings?.id)
+      : sb.from('program_coordinators').select('*').eq('program', prog).is('parish_id', null)
+    ).maybeSingle(),   // prep → resolved parish row, cura → NULL-parish row
     sb.from('program_schedule').select('*').eq('program', prog).gte('event_date', todayCST()).order('event_date').order('event_time')
   ]);
   coordData[prog] = coordRes.data || null;

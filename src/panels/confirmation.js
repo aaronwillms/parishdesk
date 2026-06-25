@@ -64,7 +64,7 @@ async function loadCohorts() {
 }
 async function loadConfCoordinator() {
   try {
-    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'confirmation').maybeSingle();
+    const { data } = await sb.from('program_coordinators').select('coordinator_ids').eq('program', 'confirmation').eq('parish_id', store.parishSettings?.id).maybeSingle();
     _confCoordinatorNames = (data?.coordinator_ids || []).map(pid => (store.personnel || []).find(p => p.id === pid)?.name).filter(Boolean);
   } catch (_) { _confCoordinatorNames = []; }
 }
@@ -72,11 +72,11 @@ async function loadConfCoordinator() {
 // Data-only refresh (used by the shell + autosave). Returns the record list.
 export async function loadConfData() {
   await Promise.all([loadTemplates(), loadCohorts(), loadConfCoordinator()]);
-  // Parish-scope (Step 2a): the user's resolved parish, OR group-shared NULL rows. Single-
-  // parish → all rows are Basilica, so this returns today's rows.
+  // Parish-scope (Step 2b): STRICT match to the resolved parish (creates now stamp parish_id;
+  // 2a backfilled all rows). Single-parish → today's rows; multi-parish → hard isolation.
   const _pid = store.parishSettings?.id;
   let _q = sb.from('sacramental_confirmation').select('*').order('created_at', { ascending: false });
-  if (_pid) _q = _q.or(`parish_id.is.null,parish_id.eq.${_pid}`);
+  if (_pid) _q = _q.eq('parish_id', _pid);
   const { data, error } = await _q;
   if (error) { console.error('[confirmation]', error); return []; }
   allConf = data || [];
@@ -465,6 +465,7 @@ async function confSave() {
   payload.service_hours_required = (type === 'youth' && tmpl.service_hours_enabled) ? (tmpl.service_hours_required || 20) : 0;
   payload.service_hours_completed = 0;
   payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
+  payload.parish_id = store.parishSettings?.id;   // Step 2b: stamp the resolved parish
   const { data: ins, error } = await insertWithRetry('sacramental_confirmation', payload);
   if (error) { reportWriteError('confirmation insert', error); return; }
   const pend = getPendingAdd('confirmation');
