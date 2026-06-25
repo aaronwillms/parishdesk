@@ -22,6 +22,7 @@ import { showToast } from '../ui/toast.js';
 import { loadMyGrants, hasMyGrantForLink, userName, ensureIdentities } from '../ui/grants.js';
 import { noteEditedMarker, promptNoteEdit } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
+import { upsertProgramCoordinators } from '../ui/programCoordinators.js';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -656,7 +657,8 @@ async function hbRosterAdd() {
     logActivity({ action: 'added record-only minister to the sick', entityType: 'homebound_roster', entityName: name, contextType: 'homebound' });
   } else {
     const ids = [...new Set([..._rosterLinkedIds, val])];
-    const { error } = await sb.from('program_coordinators').upsert({ program: 'homebound', coordinator_ids: ids, updated_at: new Date().toISOString() }, { onConflict: 'program' });
+    // homebound is cura (group-shared) → NULL-parish row.
+    const { error } = await upsertProgramCoordinators('homebound', ids, null);
     if (error) { alert('Add failed: ' + error.message); return; }
     const nm = (store.personnel || []).find(p => p.id === val)?.name || 'Minister';
     logActivity({ action: 'added minister to the sick', entityType: 'homebound_roster', entityName: nm, contextType: 'homebound' });
@@ -668,7 +670,8 @@ async function hbRosterRemoveLinked(pid) {
   const nm = (store.personnel || []).find(p => p.id === pid)?.name || 'this minister';
   if (!confirm(`Remove ${nm} from the roster? They lose roster-based access on their next sign-in / roles reload (cached — not instant).`)) return;
   const ids = _rosterLinkedIds.filter(x => x !== pid);
-  const { error } = await sb.from('program_coordinators').upsert({ program: 'homebound', coordinator_ids: ids, updated_at: new Date().toISOString() }, { onConflict: 'program' });
+  // homebound is cura (group-shared) → NULL-parish row.
+  const { error } = await upsertProgramCoordinators('homebound', ids, null);
   if (error) { alert('Remove failed: ' + error.message); return; }
   logActivity({ action: 'removed minister to the sick', entityType: 'homebound_roster', entityName: nm, contextType: 'homebound' });
   await loadRoster(); renderRosterTab();

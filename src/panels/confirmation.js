@@ -72,7 +72,12 @@ async function loadConfCoordinator() {
 // Data-only refresh (used by the shell + autosave). Returns the record list.
 export async function loadConfData() {
   await Promise.all([loadTemplates(), loadCohorts(), loadConfCoordinator()]);
-  const { data, error } = await sb.from('sacramental_confirmation').select('*').order('created_at', { ascending: false });
+  // Parish-scope (Step 2a): the user's resolved parish, OR group-shared NULL rows. Single-
+  // parish → all rows are Basilica, so this returns today's rows.
+  const _pid = store.parishSettings?.id;
+  let _q = sb.from('sacramental_confirmation').select('*').order('created_at', { ascending: false });
+  if (_pid) _q = _q.or(`parish_id.is.null,parish_id.eq.${_pid}`);
+  const { data, error } = await _q;
   if (error) { console.error('[confirmation]', error); return []; }
   allConf = data || [];
   store.allConfirmation = allConf;

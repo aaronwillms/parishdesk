@@ -129,7 +129,12 @@ async function loadMarriageCoordinator() {
 // Data-only refresh (used by the shell + autosave). Returns the record list.
 export async function loadCouplesData() {
   await Promise.all([loadTemplates(), loadMarriageCoordinator()]);
-  const { data, error } = await sb.from('couples').select('*');
+  // Parish-scope (Step 2a): the user's resolved parish, OR group-shared NULL rows. Single-
+  // parish → all rows are Basilica, so this returns today's rows.
+  const _pid = store.parishSettings?.id;
+  let _q = sb.from('couples').select('*');
+  if (_pid) _q = _q.or(`parish_id.is.null,parish_id.eq.${_pid}`);
+  const { data, error } = await _q;
   if (error) { console.error('[marriage]', error); return []; }
   allCouples = data || [];
   store.allCouples = allCouples;

@@ -2,6 +2,7 @@ import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { todayCST, fmtDateYear, PANEL_TITLES, personTitle } from '../utils.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
+import { upsertProgramCoordinators, PREP_PROGRAMS } from './programCoordinators.js';
 
 let coordData = {};
 let scheduleData = {};
@@ -111,12 +112,10 @@ function openCoordModal(prog) {
 async function saveCoord(prog) {
   const checkboxes = document.querySelectorAll('#cd-person-list input[type="checkbox"]:checked');
   const coordinator_ids = Array.from(checkboxes).map(cb => cb.value);
-  const payload = {
-    program: prog,
-    coordinator_ids,
-    updated_at: new Date().toISOString()
-  };
-  const { error } = await sb.from('program_coordinators').upsert(payload, { onConflict: 'program' });
+  // Prep programs are parish-scoped (single-parish → the user's resolved parish); cura
+  // programs (annulments, discernment, homebound) stay group-shared at NULL parish.
+  const parishId = PREP_PROGRAMS.has(prog) ? (store.parishSettings?.id || null) : null;
+  const { error } = await upsertProgramCoordinators(prog, coordinator_ids, parishId);
   if (error) { alert('Save failed: ' + error.message); return; }
   if (!coordData[prog]) coordData[prog] = {};
   coordData[prog].coordinator_ids = coordinator_ids;

@@ -213,7 +213,12 @@ async function loadTemplates() {
 // Data-only refresh (used by the shell + autosave/modal). Returns the record list.
 export async function loadOciaData() {
   await Promise.all([loadTemplates(), loadOciaCoordinator(), loadCohorts()]);
-  const { data, error } = await sb.from('sacramental_ocia').select('*').order('created_at', { ascending: false });
+  // Parish-scope (Step 2a): the user's resolved parish, OR group-shared NULL rows. Single-
+  // parish → all rows are Basilica, so this returns today's rows.
+  const _pid = store.parishSettings?.id;
+  let _q = sb.from('sacramental_ocia').select('*').order('created_at', { ascending: false });
+  if (_pid) _q = _q.or(`parish_id.is.null,parish_id.eq.${_pid}`);
+  const { data, error } = await _q;
   if (error) { console.error('[ocia]', error); return []; }
   allOcia = data || [];
   store.allOcia = allOcia;
