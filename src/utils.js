@@ -1,9 +1,28 @@
 import { sb } from './supabase.js';
 import { store } from './store.js';
 
+// ── Activity-log parish classifier (multi-tenancy 2b-feed-b) ──────────────────
+// SINGLE SOURCE OF TRUTH for whether an activity_log entry is PARISH-SCOPED (stamp the
+// writer's resolved parish) or GROUP-SHARED/universal (NULL = matches any parish). Used by
+// logActivity() below AND by the dashboard feed gate; the migration backfill mirrors it.
+export const ACTIVITY_HR_ENTITY_TYPES = new Set(['hr_record', 'person_position', 'position', 'review_template']);
+const ACTIVITY_PARISH_SCOPED_CONTEXTS = new Set([
+  'ocia', 'marriage', 'couple', 'baptism', 'confirmation', 'firstcomm', 'firstcommunion', 'family', 'hr',
+]);
+// True → parish-scoped (stamp the writer's parish); false → group-shared/universal (NULL).
+// 'general' is parish-scoped ONLY for HR entity types; cura/personnel/announcement/id-set
+// contexts are group-shared.
+export function isActivityParishScoped(contextType, entityType) {
+  if (ACTIVITY_PARISH_SCOPED_CONTEXTS.has(contextType)) return true;
+  if (contextType === 'general') return ACTIVITY_HR_ENTITY_TYPES.has(entityType);
+  return false;
+}
+
 export async function logActivity({ action, entityType, entityName, contextType = 'general', contextId = null }) {
   try {
     const { data: { user } } = await sb.auth.getUser();
+    // Stamp the writer's resolved parish for parish-scoped entries; NULL (group-shared) otherwise.
+    const parish_id = isActivityParishScoped(contextType, entityType) ? (store.parishSettings?.id || null) : null;
     await sb.from('activity_log').insert({
       triggered_by: user?.id || null,
       action,
@@ -11,6 +30,7 @@ export async function logActivity({ action, entityType, entityName, contextType 
       entity_name:  entityName,
       context_type: contextType,
       context_id:   contextId || null,
+      parish_id,
     });
   } catch (e) {
     console.warn('[logActivity] failed:', e);

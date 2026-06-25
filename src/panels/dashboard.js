@@ -1,9 +1,9 @@
 import { sb, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, todayCST, logActivity, PANEL_TITLES } from '../utils.js';
+import { fmtDate, todayCST, logActivity, PANEL_TITLES, ACTIVITY_HR_ENTITY_TYPES } from '../utils.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
 import { isSuperAdmin, isAdmin, canWriteGlobalCalendar, canSeeWorkEvent,
-  canAccessSacrament, canAccessHomebound, canAccessDiscernment, canAccessHr } from '../roles.js';
+  canAccessSacrament, canAccessHomebound, canAccessDiscernment, canAccessHr, canAccessPanel } from '../roles.js';
 import { parseICS } from '../utils/icsParser.js';
 import { createAvatar } from '../ui/avatar.js';
 import { notifyUsers, getAllUserIds, getUserIdsForTeam } from '../notifications.js';
@@ -707,7 +707,7 @@ async function loadActivityFeed() {
 
   const { data: actRaw, error: actErr } = await sb
     .from('activity_log')
-    .select('id,action,entity_name,created_at,triggered_by,context_type,context_id')
+    .select('id,action,entity_name,created_at,triggered_by,context_type,context_id,parish_id')
     .order('created_at', { ascending: false })
     .limit(20);
   if (actErr) console.error('[activity_log] fetch error:', actErr);
@@ -737,12 +737,12 @@ async function loadActivityFeed() {
   const userTeamIds   = new Set(store.currentUserRoles?.teamIds || []);
   const accessibleTaskIds = new Set((store.allTasks || []).map(t => t.id));
 
-  // The activity feed is a MIRROR of panel access: every entry is gated through the SAME
-  // access functions the panels use, instead of a separate hand-rolled rule. Sacramental
-  // cases are parish-aware for free (canAccessSacrament defaults to the resolved parish);
-  // cura cases (annulments/homebound/discernment) are group-shared. context_type='general'
-  // carries HR records (hr_record/person_position/position/review_template) → HR-gated.
-  const HR_GENERAL = new Set(['hr_record', 'person_position', 'position', 'review_template']);
+  // The activity feed MIRRORS panel access — each entry is gated through the SAME access
+  // functions the panels use. 2b-feed-(b): the parish dimension travels ON THE ROW
+  // (r.parish_id; NULL = group-shared, matches any parish). Sacramental entries pass that
+  // parish into the parish-aware accessor; HR entries (canAccessHr isn't parish-parameterized)
+  // add an explicit NULL-or-match; cura/universal/id-set entries are NULL → match freely.
+  const _parishOk = (p) => p == null || p === store.parishSettings?.id;
   function _canSeeEntry(r) {
     if (superAdmin) return true;
     const ct = r.context_type || 'general';
@@ -752,22 +752,24 @@ async function loadActivityFeed() {
       case 'task':               return !cid || accessibleTaskIds.has(cid);
       case 'team':               return !cid || admin || userTeamIds.has(cid);
       case 'announcement':       return true;
-      // Sacramental — parish-aware via canAccessSacrament's resolved-parish default.
-      case 'ocia':               return canAccessSacrament('ocia');
+      // Sacramental — pass the ENTRY'S parish into the parish-aware accessor (NULL-or-match baked in).
+      case 'ocia':               return canAccessSacrament('ocia', r.parish_id);
       case 'marriage':
-      case 'couple':             return canAccessSacrament('marriage');
-      case 'baptism':            return canAccessSacrament('baptism');
-      case 'confirmation':       return canAccessSacrament('confirmation');
+      case 'couple':             return canAccessSacrament('marriage', r.parish_id);
+      case 'baptism':            return canAccessSacrament('baptism', r.parish_id);
+      case 'confirmation':       return canAccessSacrament('confirmation', r.parish_id);
       case 'firstcomm':
       case 'firstcommunion':
-      case 'family':             return canAccessSacrament('firstcomm');   // family = firstcomm-sourced
-      // Cura (group-shared) — mirror the real cura panel gates.
-      case 'annulments':         return canAccessSacrament('annulments', null);
+      case 'family':             return canAccessSacrament('firstcomm', r.parish_id);   // family = firstcomm-sourced
+      // Cura (group-shared, NULL parish) — predicate only, parish-unaware.
+      case 'annulments':         return canAccessPanel('annulments');   // advocate-inclusive (canAccessSacrament OR advocate)
       case 'homebound':          return canAccessHomebound();
       case 'discernment':        return canAccessDiscernment();
-      // HR.
-      case 'hr':                 return canAccessHr();
-      case 'general':            return HR_GENERAL.has(r.entity_type) ? canAccessHr() : true;
+      // HR — canAccessHr isn't parish-parameterized, so NULL-or-match the entry's parish explicitly.
+      case 'hr':                 return canAccessHr() && _parishOk(r.parish_id);
+      case 'general':            return ACTIVITY_HR_ENTITY_TYPES.has(r.entity_type)
+                                   ? (canAccessHr() && _parishOk(r.parish_id))
+                                   : true;
       // Admin-only (decided) + fail-closed default.
       case 'personnel':          return admin;
       case 'link':               return admin;
