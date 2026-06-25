@@ -6,6 +6,7 @@ import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js
 import { normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { promptNoteEdit } from '../sacramental/noteEdit.js';
+import { sealGuardConfirm } from '../ui/sealGuard.js';
 // Cross-panel display resolvers (DB-backed, by id) so an annulment's linked
 // Marriage/OCIA labels render even if those panels were never opened. Function
 // imports only (called at runtime) — the panel↔panel cycle is safe.
@@ -461,6 +462,7 @@ async function anlAddNote(caseId) {
   const inp = document.getElementById(`anl-note-input-${caseId}`);
   const text = (inp?.value || '').trim();
   if (!text) return;
+  if (!(await sealGuardConfirm(text))) return;   // shared seal-of-confession guard on the note
   const list = parseCaseNotes(c);
   list.push({ text, created_at: nowIso(), created_by: _curUserId() });
   if (await _anlPatch(caseId, { notes: JSON.stringify(list) })) window.flashSavedThen(() => refreshActivePanel());
@@ -479,6 +481,7 @@ async function anlEditNote(caseId, idx) {
   if (idx < 0 || idx >= list.length) return;
   const text = promptNoteEdit(list[idx].text);
   if (text === null) return;
+  if (!(await sealGuardConfirm(text))) return;   // shared seal guard on the edited note
   list[idx] = { ...list[idx], text, edited_at: nowIso() };
   if (await _anlPatch(caseId, { notes: JSON.stringify(list) })) window.flashSavedThen(() => refreshActivePanel());
 }

@@ -8,6 +8,7 @@ import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
+import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { buildPreparerField, readPreparerValue, clergyNames } from '../sacramental/preparerField.js';
 import { buildOfficiantField, readOfficiantValue, officiantIsOther } from '../sacramental/officiantField.js';
 import { getInstitutionAddress } from '../ui/directory.js';
@@ -309,6 +310,7 @@ async function addCoupleNoteLog(coupleId) {
   const inp = document.getElementById('cn-' + coupleId); const note = (inp?.value || '').trim();
   if (!note) return;
   const c = allCouples.find(x => x.id === coupleId); if (!c) return;
+  if (!(await sealGuardConfirm(note))) return;   // shared seal-of-confession guard on the note
   const log = Array.isArray(c.notes_log) ? JSON.parse(JSON.stringify(c.notes_log)) : [];
   log.push({ note, by: _curUserName(), created_at: nowIso() });
   if (await _patch(coupleId, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
@@ -318,6 +320,7 @@ async function coupleEditNoteLog(coupleId, idx) {
   const c = allCouples.find(x => x.id === coupleId); if (!c) return;
   const log = editNoteLog(c.notes_log, idx, nowIso);
   if (!log) return;
+  if (!(await sealGuardConfirm(log[idx].note))) return;   // shared seal guard on the edited note
   if (await _patch(coupleId, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
 }
 

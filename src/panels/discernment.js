@@ -27,6 +27,7 @@ import { ensureIdentities, userName, fetchGrantRow, loadMyGrants, hasMyGrantForL
 import { institutionAddressAutofill, institutionOptionsHtml, institutionSelectedName, institutionAddressSync } from '../sacramental/churchLocation.js';
 import { buildOfficiantField, readOfficiantValue } from '../sacramental/officiantField.js';
 import { noteEditedMarker, promptNoteEdit } from '../sacramental/noteEdit.js';
+import { sealGuardConfirm } from '../ui/sealGuard.js';
 import {
   ALL_STAGES, STAGE_LADDER, TERMINAL_STAGES, STARTING_STAGE, stageChipStyle,
   VOCATION_TYPES, vocationLabel, currentStage as deriveStage, nextFollowup as deriveNextFollowup,
@@ -508,6 +509,7 @@ async function addNote(discernerId) {
   const subject = (document.getElementById('disc-note-subject')?.value || '').trim() || null;
   const noteDate = document.getElementById('disc-note-date')?.value || todayCST();
   if (!body) return;
+  if (!(await sealGuardConfirm(body))) return;   // shared seal-of-confession guard on the note body
   const { data, error } = await insertWithRetry('discernment_notes', {
     discerner_id: discernerId, parish_id: d.parish_id, author_id: _authUserId,
     note_date: noteDate, subject, body,
@@ -522,6 +524,7 @@ async function editNote(noteId) {
   const n = (_notesByD[d.id] || []).find(x => x.id === noteId); if (!n) return;
   const text = promptNoteEdit(n.body);
   if (text === null) return;   // cancelled / unchanged
+  if (!(await sealGuardConfirm(text))) return;   // shared seal guard on the edited note
   const patch = { body: text, edited_at: nowIso() };
   const { error } = await withWriteRetry(() => sb.from('discernment_notes').update(patch).eq('id', noteId), { kind: 'update' });
   if (error) { reportWriteError('discernment note edit', error); return; }

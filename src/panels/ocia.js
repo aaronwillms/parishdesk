@@ -9,6 +9,7 @@ import { buildPreparerField, readPreparerValue } from '../sacramental/preparerFi
 import { inheritCohortFormation, setFieldLocked,
   institutionAddressAutofill, institutionOptionsHtml, institutionSelectedName, institutionAddressSync } from '../sacramental/churchLocation.js';
 import { promptNoteEdit } from '../sacramental/noteEdit.js';
+import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { registerCohortManager } from '../sacramental/cohortManager.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 
@@ -265,6 +266,7 @@ async function ociaAddNote(id) {
   const p = allOcia.find(x => x.id === id); if (!p) return;
   const inp = document.getElementById(`ocia-note-input-${id}`); const note = (inp?.value || '').trim();
   if (!note) return;
+  if (!(await sealGuardConfirm(note))) return;   // shared seal-of-confession guard on the note
   const log = Array.isArray(p.notes_log) ? JSON.parse(JSON.stringify(p.notes_log)) : [];
   log.push({ note, by: _curUserName(), created_at: nowIso() });
   if (await _ociaPatch(id, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
@@ -283,6 +285,7 @@ async function ociaEditNote(id, idx) {
   if (idx < 0 || idx >= log.length) return;   // legacy `notes` text isn't editable here
   const text = promptNoteEdit(log[idx].note);
   if (text === null) return;
+  if (!(await sealGuardConfirm(text))) return;   // shared seal guard on the edited note
   log[idx] = { ...log[idx], note: text, edited_at: nowIso() };
   if (await _ociaPatch(id, { notes_log: log })) window.flashSavedThen(() => refreshActivePanel());
 }
