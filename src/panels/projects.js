@@ -546,7 +546,7 @@ async function deleteProject(id) {
   if (!confirm(`Delete "${p?.title}"? This cannot be undone.`)) return;
   const { error } = await deleteWithRetry(() => sb.from('projects').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return; }
-  logActivity({ action: 'deleted project', entityType: 'project', entityName: p?.title || 'Unknown' });
+  logActivity({ action: 'deleted project', entityType: 'project', entityName: p?.title || 'Unknown', contextType: 'project', contextId: id });
   // Remove from local store + DOM immediately (no refresh needed)
   store.allProjects = (store.allProjects || []).filter(x => x.id !== id);
   closeModal();

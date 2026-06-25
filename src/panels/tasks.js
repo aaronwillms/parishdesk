@@ -721,7 +721,7 @@ async function deleteTask(id) {
   if (!confirm(`Delete "${t?.title}"?`)) return;
   const { error } = await deleteWithRetry(() => sb.from('tasks').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return; }
-  logActivity({ action: 'deleted task', entityType: 'task', entityName: t?.title || 'Unknown' });
+  logActivity({ action: 'deleted task', entityType: 'task', entityName: t?.title || 'Unknown', contextType: 'task', contextId: id });
   store.allTasks = (store.allTasks || []).filter(x => x.id !== id);
   closeModal();
   renderTasks();

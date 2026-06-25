@@ -769,7 +769,7 @@ async function loadActivityFeed() {
       case 'hr':                 return canAccessHr() && _parishOk(r.parish_id);
       case 'general':            return ACTIVITY_HR_ENTITY_TYPES.has(r.entity_type)
                                    ? (canAccessHr() && _parishOk(r.parish_id))
-                                   : true;
+                                   : admin;   // fail-CLOSED: non-HR 'general' (e.g. a mis-typed entry) → admin-only, not everyone
       // Admin-only (decided) + fail-closed default.
       case 'personnel':          return admin;
       case 'link':               return admin;

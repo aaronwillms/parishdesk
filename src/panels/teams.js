@@ -215,7 +215,7 @@ async function deleteTeam(id) {
   if (!confirm(`Delete "${t?.name}"? This will also remove all members. This cannot be undone.`)) return;
   const { error } = await deleteWithRetry(() => sb.from('teams').delete().eq('id', id));
   if (error) { alert('Delete failed: ' + error.message); return; }
-  logActivity({ action: 'deleted team', entityType: 'team', entityName: t?.name || 'Unknown' });
+  logActivity({ action: 'deleted team', entityType: 'team', entityName: t?.name || 'Unknown', contextType: 'team', contextId: id });
   closeModal();
   await loadTeams();
 }

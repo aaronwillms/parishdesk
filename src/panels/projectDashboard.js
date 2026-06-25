@@ -270,7 +270,7 @@ function _bindTaskEvents() {
       if (!confirm(`Delete "${t?.title || 'this task'}"?`)) return;
       const { error } = await deleteWithRetry(() => sb.from('tasks').delete().eq('id', taskId));
       if (error) { alert('Delete failed: ' + error.message); return; }
-      logActivity({ action: 'deleted task', entityType: 'task', entityName: t?.title || 'Unknown' });
+      logActivity({ action: 'deleted task', entityType: 'task', entityName: t?.title || 'Unknown', contextType: 'task', contextId: taskId });
       _tasks = _tasks.filter(x => x.id !== taskId);
       const el = document.getElementById('pd-content');
       if (el) _renderTasks(el);
@@ -646,6 +646,6 @@ async function _deleteProject() {
   if (!confirm(`Delete "${_project.title}"? This cannot be undone.`)) return;
   const { error } = await deleteWithRetry(() => sb.from('projects').delete().eq('id', _projectId));
   if (error) { alert('Delete failed: ' + error.message); return; }
-  logActivity({ action: 'deleted project', entityType: 'project', entityName: _project.title });
+  logActivity({ action: 'deleted project', entityType: 'project', entityName: _project.title, contextType: 'project', contextId: _projectId });
   window.switchPanel('projects');
 }
