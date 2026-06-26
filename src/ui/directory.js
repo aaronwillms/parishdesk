@@ -47,17 +47,25 @@ export function isPrincipalInstitution(institutionId) {
   return _isPrincipalInstitution((store.institutions || []).find(i => i.id === institutionId) || {});
 }
 
-// Heading label for an institution that is the PRINCIPAL institution of one or more
-// parishes. Returns the parish name(s) joined with " & " — so:
-//   • a SHARED tree (>1 parish points at it) reads "Basilica & Parish B" (Bug 3), and
-//   • a renamed parish propagates to the HR/directory heading, because the heading
-//     reads the live parish name instead of the static institutions.name (Bug 2).
-// Returns null when no parish has this institution as its principal (a plain
-// directory institution) — callers fall back to inst.name. Own-tree parishes get
-// their single name; non-principal institutions are unaffected.
-export function principalParishLabel(institutionId) {
+// Heading/label for an institution that is the PRINCIPAL institution of one or more
+// parishes. Returns the parish name(s) joined with " & " — so a SHARED tree (>1 parish
+// points at it) reads "Basilica & Parish B", and a renamed parish propagates because
+// the label reads the live parish name, not the static institutions.name. Returns null
+// for a plain directory institution (callers fall back to inst.name).
+//
+// NAMING RULE — which parish name shows where:
+//   • FULL name (parish_settings.parish_name): Directory header, sidebar, login, and
+//     ALL in-app dropdowns (parish/location pickers). Pass { full: true }.
+//   • SHORT name (parish_settings.display_name): TABS ONLY — the HR institution tabs,
+//     and (when built) the sacramental-panel parish-switcher tabs + multi-parish
+//     toggle pills. Omit the option (default short).
+// FUTURE BUILD: the sacramental parish-switcher tabs + toggle pills must use the SHORT
+// form (default call, no { full }), per this rule.
+export function principalParishLabel(institutionId, { full = false } = {}) {
   if (!institutionId) return null;
   const owners = (store.groupParishes || []).filter(p => p.principal_institution_id === institutionId);
   if (!owners.length) return null;
-  return owners.map(p => p.display_name || p.parish_name).filter(Boolean).join(' & ') || null;
+  return owners
+    .map(p => full ? (p.parish_name || p.display_name) : (p.display_name || p.parish_name))
+    .filter(Boolean).join(' & ') || null;
 }

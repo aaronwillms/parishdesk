@@ -16,6 +16,7 @@ import { isAdmin, isSuperAdmin, canAccessHr, hrHasAuthority, hrCanManageStructur
 import { closeModal } from '../ui/modal.js';
 import { logActivity, todayCST, compareByLastName, formatDateMDY } from '../utils.js';
 import { ensureIdentities, userName, fetchGrantRow } from '../ui/grants.js';
+import { principalParishLabel } from '../ui/directory.js';
 // Phase 2 — reuse the sacramental master-detail shell + the generic cross-file linker
 // for the per-(person, institution) personnel record panel (no fork).
 import { renderSacramentalPanel, refreshActivePanel, chipHtml } from '../sacramental/panelShell.js';
@@ -235,6 +236,15 @@ export async function loadHr() {
   _people = peopleRes.data || [];
   _ctx    = buildContext(posRes.data || [], occRes.data || []);
 
+  // Keep group parishes fresh so a shared principal institution's tab reads all the
+  // parishes that share it ("Basilica & Parish B") and renamed parishes show current.
+  if (store.parishSettings?.group_id) {
+    const { data: gp } = await sb.from('parish_settings')
+      .select('id, parish_name, display_name, principal_institution_id')
+      .eq('group_id', store.parishSettings.group_id);
+    store.groupParishes = gp || [];
+  }
+
   // Identity, author-name map, and review templates (for the record surface).
   const [authRes, profRes, tmplRes, tmplPosRes] = await Promise.all([
     sb.auth.getUser(),
@@ -348,7 +358,7 @@ function render() {
         font-size:13px;font-family:'Inter',sans-serif;font-weight:${active ? '600' : '400'};
         color:${active ? 'var(--navy)' : '#6B7280'};border-bottom:2px solid ${active ? 'var(--cardinal)' : 'transparent'};margin-bottom:-1px;">
       <i class="fa-solid ${inst.icon || 'fa-building'}" style="font-size:12px;color:#8B1A2F;margin-right:5px;"></i>
-      <span>${esc(inst.name)}</span>${mgmt}
+      <span>${esc(principalParishLabel(inst.id) || inst.name)}</span>${mgmt}
     </div>`;
   }).join('');
 

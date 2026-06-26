@@ -487,7 +487,7 @@ function _userDetail(u) {
           padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;
           font-family:'Inter',sans-serif;outline:none;cursor:pointer;background:#fff;min-width:220px;
         ">
-          ${_groupParishes.map(p => `<option value="${p.id}" ${p.id === curParishId ? 'selected' : ''}>${(p.display_name || p.parish_name || 'Parish').replace(/</g, '&lt;')}</option>`).join('')}
+          ${_groupParishes.map(p => `<option value="${p.id}" ${p.id === curParishId ? 'selected' : ''}>${(p.parish_name || p.display_name || 'Parish').replace(/</g, '&lt;')}</option>`).join('')}
         </select>
         <div style="font-size:11.5px;color:#9CA3AF;margin-top:4px;line-height:1.5;">Where this user is placed (link) and which parish's prep panels are granted. Cura/group-wide grants ignore this.</div>
       </div>` : '';
@@ -1072,7 +1072,7 @@ async function _renderSettingsTab() {
         width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;
         font-size:13px;font-family:'Inter',sans-serif;outline:none;cursor:pointer;background:#fff;margin-bottom:1rem;
       ">
-        ${_groupParishes.map(p => `<option value="${p.id}" ${p.id === selectedId ? 'selected' : ''}>${(p.display_name || p.parish_name || 'Parish').replace(/</g, '&lt;')}</option>`).join('')}
+        ${_groupParishes.map(p => `<option value="${p.id}" ${p.id === selectedId ? 'selected' : ''}>${(p.parish_name || p.display_name || 'Parish').replace(/</g, '&lt;')}</option>`).join('')}
       </select>` : '';
 
   // Delete Parish (Bug 4): only for a SIBLING parish (never your own current parish,
@@ -1100,10 +1100,16 @@ async function _renderSettingsTab() {
 
       ${parishSelector}
 
-      <label style="${labelStyle}">Parish Name</label>
-      <input id="ps-name" value="${(data?.parish_name || '').replace(/"/g, '&quot;')}" style="${inputStyle}" />
+      <label style="${labelStyle}">Parish Name (full)</label>
+      <input id="ps-name" value="${(data?.parish_name || '').replace(/"/g, '&quot;')}" placeholder="The Basilica of Saint Mary" style="${inputStyle}" />
       <div style="font-size:11.5px;color:#9CA3AF;margin-top:-.5rem;margin-bottom:1rem;line-height:1.5;">
-        Appears on the login screen, sidebar, and Directory.
+        Appears in the Directory header, sidebar, login, and in-app dropdowns.
+      </div>
+
+      <label style="${labelStyle}">Display Name (short)</label>
+      <input id="ps-display-name" value="${(data?.display_name || '').replace(/"/g, '&quot;')}" placeholder="Basilica" style="${inputStyle}" />
+      <div style="font-size:11.5px;color:#9CA3AF;margin-top:-.5rem;margin-bottom:1rem;line-height:1.5;">
+        Appears on tabs (HR, and sacramental-panel switchers). Leave blank to use the full name.
       </div>
 
       <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.65rem;">Parish Address</div>
@@ -1185,11 +1191,11 @@ async function _renderSettingsTab() {
       || (store.institutions || []).find(i => i.name === name)?.id
       || (data ? null : store.parishSettings?.principal_institution_id)
       || null;
-    // Keep display_name in sync with parish_name when it was auto-derived (i.e. it
-    // tracked the name), so a rename propagates to nav/dropdowns. A DELIBERATE short
-    // label (display_name ≠ parish_name, e.g. "Basilica") is left untouched.
-    const displayName = (!data?.display_name || data.display_name === data.parish_name)
-      ? name : data.display_name;
+    // Display Name (short) is now an explicit field. Persist what the admin typed;
+    // blank → null so COALESCE(display_name, parish_name) falls back to the full name
+    // everywhere. Editing the full name no longer force-overwrites a deliberate short
+    // label (the admin controls it directly in its own field).
+    const displayName = document.getElementById('ps-display-name')?.value.trim() || null;
     const payload = { parish_name: name, primary_institution: name, display_name: displayName, address, timezone, principal_institution_id: principalId };
     const { error: saveErr } = data
       ? await sb.from('parish_settings').update(payload).eq('id', data.id)
@@ -1199,7 +1205,7 @@ async function _renderSettingsTab() {
     // admin's OWN parish; editing another group parish must not clobber it.
     if (!data || data.id === store.parishSettings?.id) {
       store.parishSettings = { ...store.parishSettings, ...payload };
-      applyParishName(store.parishSettings?.display_name || name);
+      applyParishName(name);   // naming rule: sidebar+login show the FULL name (parish_name)
     }
     statusEl.textContent = 'Saved.';
     window.flashSaved();
@@ -1256,7 +1262,7 @@ async function _deleteParish(parish) {
     return;
   }
 
-  const label = parish.display_name || parish.parish_name || 'this parish';
+  const label = parish.parish_name || parish.display_name || 'this parish';
   if (!confirm(`Delete "${label}"? Its (empty) staff tree will be removed. This cannot be undone.`)) {
     if (statusEl) statusEl.textContent = '';
     return;
@@ -1289,7 +1295,7 @@ function _renderAddParishForm() {
   const stateOptions = US_STATES.map(s => `<option>${s}</option>`).join('');
   // Existing parishes to (optionally) share a staff tree with.
   const shareOptions = _groupParishes
-    .map(p => `<option value="${p.id}">${(p.display_name || p.parish_name || 'Parish').replace(/</g, '&lt;')}</option>`)
+    .map(p => `<option value="${p.id}">${(p.parish_name || p.display_name || 'Parish').replace(/</g, '&lt;')}</option>`)
     .join('');
 
   el.innerHTML = `

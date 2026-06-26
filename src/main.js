@@ -51,7 +51,7 @@ async function loadParishSettings(user) {
     return;
   }
   store.parishSettings = data;
-  applyParishName(data.display_name || data.parish_name);
+  applyParishName(data.parish_name || data.display_name);   // naming rule: sidebar+login show the FULL name
 
   // Load the sibling parishes in this group (for shared-tree heading labels and the
   // Add-Parish picker). Single-parish → just this one row. Non-fatal if it fails.

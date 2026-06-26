@@ -54,7 +54,7 @@ function _render(container) {
           <i class="fa-solid ${icon}" style="font-size:22px;color:#8B1A2F;"></i>
         </div>
         <div>
-          <h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-size:22px;font-weight:700;color:#1C2B3A;margin:0 0 2px;">${principalParishLabel(inst.id) || inst.name}</h1>
+          <h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-size:22px;font-weight:700;color:#1C2B3A;margin:0 0 2px;">${principalParishLabel(inst.id, { full: true }) || inst.name}</h1>
           ${inst.description ? `<div style="font-size:13px;color:#6B7280;">${inst.description}</div>` : ''}
         </div>
       </div>

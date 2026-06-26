@@ -228,7 +228,7 @@ function renderPersonnel() {
       : '';
     html += `<div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:2px solid var(--navy);">
       <i class="fa-solid ${instIcon}" style="font-size:17px;color:#8B1A2F;flex-shrink:0;"></i>
-      <span style="font-size:17px;font-weight:700;color:var(--navy);letter-spacing:-.01em;flex:1;">${principalParishLabel(inst.id) || inst.name}</span>
+      <span style="font-size:17px;font-weight:700;color:var(--navy);letter-spacing:-.01em;flex:1;">${principalParishLabel(inst.id, { full: true }) || inst.name}</span>
       ${reorder}
       ${cogwheel}
     </div>`;
