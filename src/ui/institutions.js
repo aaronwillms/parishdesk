@@ -34,9 +34,14 @@ export async function createInstitutionWithRoot({
   if (error) return { error };
 
   // Every institution gets exactly one permanent root position automatically.
-  const { error: posErr } = await sb.from('positions').insert({
-    institution_id: data.id, title: rootTitle, parent_position_id: null, is_administrator: true,
-  });
+  // positions.parish_id is NOT NULL with DEFAULT current_parish_id() (the CURRENT/
+  // admin's parish). For directory institutions that default is correct, so we omit
+  // it. But for Add-Parish the root must belong to the NEW parish — so when parishId
+  // is given we stamp it explicitly; otherwise the new parish's tree root would be
+  // mis-tagged to the admin's parish.
+  const posRow = { institution_id: data.id, title: rootTitle, parent_position_id: null, is_administrator: true };
+  if (parishId) posRow.parish_id = parishId;
+  const { error: posErr } = await sb.from('positions').insert(posRow);
   if (posErr) return { id: data.id, error: posErr };
 
   return { id: data.id };
