@@ -840,6 +840,11 @@ async function _openConversation(convId) {
 
   const el = document.getElementById('messaging-root');
   if (el) _render(el);
+
+  // Refresh the global scoped subscription so a just-created/opened conversation
+  // (unshifted into _conversations before this call) is covered by the
+  // conversation_id=in.(…) filter without a full panel re-enter.
+  _subscribeGlobal();
 }
 
 async function _markConversationRead(convId) {
@@ -905,8 +910,20 @@ function _subscribeToThread(convId) {
 
 function _subscribeGlobal() {
   if (_globalChannel) { sb.removeChannel(_globalChannel); _globalChannel = null; }
+
+  // Server-side scope: only receive INSERTs for conversations THIS user is in.
+  // RLS is off on messages (client-gated), so an unfiltered subscription would
+  // stream every parish's message bodies to every client over the socket. The
+  // ids come from _conversations, loaded immediately before this call. Empty →
+  // nothing to watch yet; re-subscribes on the next loadMessaging/_openConversation.
+  const myConvIds = _conversations.map(c => c.id);
+  if (!myConvIds.length) return;
+
   _globalChannel = sb.channel('global-dms-' + _currentUserId)
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+    .on('postgres_changes', {
+      event: 'INSERT', schema: 'public', table: 'messages',
+      filter: `conversation_id=in.(${myConvIds.join(',')})`,
+    }, payload => {
       const msg = payload.new;
       if (msg.sender_id === _currentUserId) return;
       const conv = _conversations.find(c => c.id === msg.conversation_id);
