@@ -18,6 +18,7 @@ import { loadMessaging, initChatBubble } from './panels/messaging.js';
 import { sb, deleteWithRetry } from './supabase.js';
 import { store } from './store.js';
 import { installPhoneMask } from './utils/phone.js';
+import { initSWUpdate } from './ui/swUpdate.js';
 import './ui/saveButton.js';   // installs window.flashSaved / flashSavedThen + click tracker
 
 async function loadParishSettings(user) {
@@ -205,19 +206,13 @@ async function startApp(user) {
 // NOTE: the old additive syncParishStaff() was removed — "Parish Staff" is now
 // DERIVED from HR at read time (ui/parishStaff.js), never stored in team_members.
 
-// When a new service worker takes control after a deploy (skipWaiting +
-// clientsClaim), reload ONCE to pick up the fresh bundle. Gated on a controller
-// already existing, so the very first SW install never triggers a surprise
-// reload — only genuine updates do. Closes the stale-bundle window.
-if ('serviceWorker' in navigator) {
-  const hadController = !!navigator.serviceWorker.controller;
-  let refreshing = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (refreshing || !hadController) return;
-    refreshing = true;
-    window.location.reload();
-  });
-}
+// Service-worker updates are handled by initSWUpdate() (src/ui/swUpdate.js):
+// under registerType: 'prompt' a new deploy's SW waits, we show a dismissible
+// "Update available — Reload" banner, and the fresh bundle is adopted on the
+// user's click — not silently mid-session. That is the SINGLE reload path
+// (first install neither prompts nor reloads); the old unconditional
+// controllerchange → reload handler was removed to avoid a second one.
+initSWUpdate();
 
 (async () => {
   setSignOutCallback(() => {

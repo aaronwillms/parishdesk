@@ -4,7 +4,13 @@ import { VitePWA } from 'vite-plugin-pwa';
 export default defineConfig({
   plugins: [
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt' (not 'autoUpdate'): a new deploy's service worker WAITS instead
+      // of activating immediately and reloading open tabs mid-session. We register
+      // it ourselves (injectRegister: null) via virtual:pwa-register in
+      // src/ui/swUpdate.js and surface a dismissible "Update available — Reload"
+      // banner; the fresh bundle is adopted on the user's click, not silently.
+      registerType: 'prompt',
+      injectRegister: null,
       manifest: {
         name: 'ParishDesk — Basilica of Saint Mary',
         short_name: 'ParishDesk',
@@ -23,12 +29,14 @@ export default defineConfig({
       workbox: {
         navigateFallbackDenylist: [/^\/auth\//],
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        // Take control immediately so a new deploy's chunks are served right
-        // away, and drop stale precaches. Paired with the controllerchange
-        // reload guard in main.js, this prevents a tab from running a stale
-        // bundle after a deploy (the cause of the "save button does nothing"
-        // symptom — an inline onclick whose handler the stale JS never defined).
-        skipWaiting: true,
+        // NO skipWaiting under 'prompt': the new SW must WAIT until the user
+        // accepts the update banner (swUpdate.js), so a deploy never claims an
+        // open tab mid-session. clientsClaim stays so the SW controls the page
+        // promptly once it DOES activate (on first install, and after the user
+        // accepts). Together with the prompt flow this still guarantees a deployed
+        // bundle is adopted — just on the user's click — closing the original
+        // "save button does nothing after deploy" stale-bundle bug without the
+        // surprise reload.
         clientsClaim: true,
         cleanupOutdatedCaches: true,
         runtimeCaching: [
