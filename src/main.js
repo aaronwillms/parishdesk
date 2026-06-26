@@ -52,6 +52,15 @@ async function loadParishSettings(user) {
   }
   store.parishSettings = data;
   applyParishName(data.display_name || data.parish_name);
+
+  // Load the sibling parishes in this group (for shared-tree heading labels and the
+  // Add-Parish picker). Single-parish → just this one row. Non-fatal if it fails.
+  if (data.group_id) {
+    const { data: siblings } = await sb.from('parish_settings')
+      .select('id, parish_name, display_name, principal_institution_id')
+      .eq('group_id', data.group_id);
+    store.groupParishes = siblings || [];
+  }
 }
 
 async function loadDiocesanOverrides() {

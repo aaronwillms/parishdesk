@@ -49,6 +49,7 @@ async function _fetchGroupParishes() {
     .eq('group_id', gid)
     .order('parish_name');
   _groupParishes = data || [];
+  store.groupParishes = _groupParishes;   // keep shared-tree heading labels current
   return _groupParishes;
 }
 
@@ -617,6 +618,17 @@ async function _saveUser(userId) {
     })));
   }
 
+  // Parish PLACEMENT (Bug 1): the Save button must persist a Parish Placement change
+  // for an already-linked user — the link upsert only runs when (re)linking a contact,
+  // so without this the dropdown reverts on reload. Only when a picker exists (2+
+  // parishes) and the user has a profile row; only write when it actually changed.
+  if (_groupParishes.length > 1 && u?.profile) {
+    const chosen = _chosenParishId(detail);
+    if (chosen && chosen !== u.profile.parish_id) {
+      await sb.from('user_profiles').update({ parish_id: chosen }).eq('user_id', userId);
+    }
+  }
+
   // Team memberships (manual) — only if user has a linked personnel_id. Admin-locked
   // (disabled) rows are left untouched so admin grant/removal never adds or drops a
   // physical membership; editable rows reconcile to their checkbox.
@@ -1063,6 +1075,10 @@ async function _renderSettingsTab() {
         ${_groupParishes.map(p => `<option value="${p.id}" ${p.id === selectedId ? 'selected' : ''}>${(p.display_name || p.parish_name || 'Parish').replace(/</g, '&lt;')}</option>`).join('')}
       </select>` : '';
 
+  // Delete Parish (Bug 4): only for a SIBLING parish (never your own current parish,
+  // never the last one). Deletion refuses if the parish has dependent records.
+  const canDelete = !!data && data.id !== store.parishSettings?.id && _groupParishes.length > 1;
+
   const addr = _parseAddress(data?.address || '');
   const inputStyle = `width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;
     border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;margin-bottom:.75rem;`;
@@ -1125,6 +1141,10 @@ async function _renderSettingsTab() {
           padding:.4rem 1.1rem;background:#1C2B3A;color:#fff;border:none;
           border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
         ">Save</button>
+        ${canDelete ? `<button id="ps-delete" style="
+          padding:.4rem 1.1rem;background:none;border:.5px solid #8B1A2F;color:#8B1A2F;
+          border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
+        ">Delete Parish</button>` : ''}
         <div id="ps-status" style="font-size:12px;color:#6B7280;min-height:16px;"></div>
       </div>
     </div>
@@ -1156,14 +1176,21 @@ async function _renderSettingsTab() {
     }
 
     statusEl.textContent = 'Saving…';
-    // Resolve the principal institution's stable id at save time (the principal is the
-    // institution whose name matches the parish name — the same rule the legacy
-    // name-match used). New saves write the FK; the name string is kept too as a live
-    // safety-net fallback. If the institution can't be resolved (list not loaded /
-    // no match), preserve any existing FK rather than clobbering it to null.
-    const principalId = (store.institutions || []).find(i => i.name === name)?.id
-      || store.parishSettings?.principal_institution_id || null;
-    const payload = { parish_name: name, primary_institution: name, address, timezone, principal_institution_id: principalId };
+    // Preserve the EDITED parish's OWN principal institution FK across a rename. Bug 2
+    // fix: the old fallback used store.parishSettings.principal_institution_id (the
+    // ADMIN's parish), so renaming a sibling parish repointed its principal to
+    // Basilica's. Prefer the edited row's existing FK; only name-match for a fresh
+    // insert that has none yet.
+    const principalId = data?.principal_institution_id
+      || (store.institutions || []).find(i => i.name === name)?.id
+      || (data ? null : store.parishSettings?.principal_institution_id)
+      || null;
+    // Keep display_name in sync with parish_name when it was auto-derived (i.e. it
+    // tracked the name), so a rename propagates to nav/dropdowns. A DELIBERATE short
+    // label (display_name ≠ parish_name, e.g. "Basilica") is left untouched.
+    const displayName = (!data?.display_name || data.display_name === data.parish_name)
+      ? name : data.display_name;
+    const payload = { parish_name: name, primary_institution: name, display_name: displayName, address, timezone, principal_institution_id: principalId };
     const { error: saveErr } = data
       ? await sb.from('parish_settings').update(payload).eq('id', data.id)
       : await sb.from('parish_settings').insert(payload);
@@ -1172,11 +1199,15 @@ async function _renderSettingsTab() {
     // admin's OWN parish; editing another group parish must not clobber it.
     if (!data || data.id === store.parishSettings?.id) {
       store.parishSettings = { ...store.parishSettings, ...payload };
-      applyParishName(store.parishSettings?.display_name || name);   // Step 3b: short label where set
+      applyParishName(store.parishSettings?.display_name || name);
     }
     statusEl.textContent = 'Saved.';
     window.flashSaved();
-    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+    // Refresh the group cache (selector + placement dropdowns + shared-tree headings)
+    // and re-render so the renamed parish shows everywhere immediately.
+    await _fetchGroupParishes();
+    _settingsParishId = data?.id || _settingsParishId;
+    _renderSettingsTab();
   });
 
   // Parish selector → re-render the tab for the chosen parish.
@@ -1187,6 +1218,59 @@ async function _renderSettingsTab() {
 
   // Add Parish → swap to the add-parish form.
   document.getElementById('ps-add-parish')?.addEventListener('click', () => _renderAddParishForm());
+
+  // Delete Parish → refuse-if-nonempty, else cascade-delete (Bug 4).
+  document.getElementById('ps-delete')?.addEventListener('click', () => _deleteParish(data));
+}
+
+// Tables that reference parish_settings with ON DELETE NO ACTION — any row here
+// blocks a delete. We pre-check them and REFUSE with a clear message rather than
+// cascade-deleting a parish that holds real data. (CASCADE tables — institutions,
+// positions, homebound_*, discernment*, memos, etc. — are cleaned automatically.)
+const PARISH_BLOCKING_TABLES = [
+  'user_profiles', 'panel_grants', 'sacramental_roles', 'program_coordinators',
+  'activity_log', 'couples',
+  'sacramental_baptism', 'sacramental_confirmation', 'sacramental_firstcomm', 'sacramental_ocia',
+];
+
+async function _deleteParish(parish) {
+  if (!parish?.id) return;
+  if (parish.id === store.parishSettings?.id) { alert('You cannot delete the parish you are currently in.'); return; }
+
+  const statusEl = document.getElementById('ps-status');
+  if (statusEl) { statusEl.style.color = '#6B7280'; statusEl.textContent = 'Checking for dependent records…'; }
+
+  // Count blocking rows per table (head-only count, parallel).
+  const counts = await Promise.all(PARISH_BLOCKING_TABLES.map(async (t) => {
+    const { count } = await sb.from(t).select('parish_id', { count: 'exact', head: true }).eq('parish_id', parish.id);
+    return { table: t, count: count || 0 };
+  }));
+  const blocking = counts.filter(c => c.count > 0);
+
+  if (blocking.length) {
+    const summary = blocking.map(c => `${c.count} ${c.table.replace(/_/g, ' ')}`).join(', ');
+    if (statusEl) {
+      statusEl.style.color = '#8B1A2F';
+      statusEl.textContent = `Cannot delete: this parish has dependent records (${summary}). Reassign or remove them first, then delete.`;
+    }
+    return;
+  }
+
+  const label = parish.display_name || parish.parish_name || 'this parish';
+  if (!confirm(`Delete "${label}"? Its (empty) staff tree will be removed. This cannot be undone.`)) {
+    if (statusEl) statusEl.textContent = '';
+    return;
+  }
+
+  if (statusEl) { statusEl.style.color = '#6B7280'; statusEl.textContent = 'Deleting…'; }
+  // Safe now: no NO ACTION rows. CASCADE removes its institutions + positions.
+  const { error } = await sb.from('parish_settings').delete().eq('id', parish.id);
+  if (error) { if (statusEl) { statusEl.style.color = '#8B1A2F'; statusEl.textContent = 'Delete failed: ' + error.message; } return; }
+
+  window.flashSaved?.();
+  _settingsParishId = null;            // fall back to the admin's own parish
+  await _fetchGroupParishes();
+  _renderSettingsTab();
 }
 
 // ── Add Parish (3c) ──────────────────────────────────────────────────────────

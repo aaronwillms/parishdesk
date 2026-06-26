@@ -3,7 +3,7 @@ import { store } from '../store.js';
 import { isAdmin, isSuperAdmin, coordinatorChipLabels } from '../roles.js';
 import { logActivity, personTitle, reportWriteError } from '../utils.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
-import { getInstitutionAddress, isPrincipalInstitution } from '../ui/directory.js';
+import { getInstitutionAddress, isPrincipalInstitution, principalParishLabel } from '../ui/directory.js';
 import { createInstitutionWithRoot } from '../ui/institutions.js';
 
 // Shared 50-state list (same set the sacramental panels + Discernment address use)
@@ -76,6 +76,15 @@ export async function loadPersonnel() {
   store.institutions  = instData || [];
   store.personnel     = persData || [];
   store.personTitles  = buildPersonTitles(titleData || []);
+
+  // Keep group parishes fresh so principal-institution headings (incl. shared-tree
+  // "Basilica & Parish B" and renamed parishes) render current names.
+  if (store.parishSettings?.group_id) {
+    const { data: gp } = await sb.from('parish_settings')
+      .select('id, parish_name, display_name, principal_institution_id')
+      .eq('group_id', store.parishSettings.group_id);
+    store.groupParishes = gp || [];
+  }
 
   // Build the coordinator map from the actual assignment: every personnel id in a
   // program's coordinator_ids gets that program's chip (label-key translated).
@@ -219,7 +228,7 @@ function renderPersonnel() {
       : '';
     html += `<div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:2px solid var(--navy);">
       <i class="fa-solid ${instIcon}" style="font-size:17px;color:#8B1A2F;flex-shrink:0;"></i>
-      <span style="font-size:17px;font-weight:700;color:var(--navy);letter-spacing:-.01em;flex:1;">${inst.name}</span>
+      <span style="font-size:17px;font-weight:700;color:var(--navy);letter-spacing:-.01em;flex:1;">${principalParishLabel(inst.id) || inst.name}</span>
       ${reorder}
       ${cogwheel}
     </div>`;

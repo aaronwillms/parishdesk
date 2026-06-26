@@ -1,6 +1,7 @@
 import { store } from '../store.js';
 import { personTitle } from '../utils.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
+import { principalParishLabel } from '../ui/directory.js';
 
 let _institutionId = null;
 let _activeTab = 'overview';
@@ -53,7 +54,7 @@ function _render(container) {
           <i class="fa-solid ${icon}" style="font-size:22px;color:#8B1A2F;"></i>
         </div>
         <div>
-          <h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-size:22px;font-weight:700;color:#1C2B3A;margin:0 0 2px;">${inst.name}</h1>
+          <h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-size:22px;font-weight:700;color:#1C2B3A;margin:0 0 2px;">${principalParishLabel(inst.id) || inst.name}</h1>
           ${inst.description ? `<div style="font-size:13px;color:#6B7280;">${inst.description}</div>` : ''}
         </div>
       </div>
