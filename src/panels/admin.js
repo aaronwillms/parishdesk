@@ -8,6 +8,7 @@ import { fetchAllGrants, revokeGrant, setGrantNote, labelForGrant, userName, ens
 import { personTitle } from '../utils.js';
 import { computePermissionBasis } from '../roles.js';
 import { deriveParishStaffPersonnelIds } from '../ui/parishStaff.js';
+import { createInstitutionWithRoot } from '../ui/institutions.js';
 
 const SACRAMENTS = ['baptism', 'first_communion', 'confirmation', 'ocia', 'marriage', 'annulments'];
 const SACRAMENT_LABELS = { baptism: 'Baptism', first_communion: 'First Communion', confirmation: 'Confirmation', ocia: 'OCIA', marriage: 'Marriage', annulments: 'Annulments' };
@@ -31,6 +32,34 @@ let _users = [];
 let _expandedUserId = null;
 let _currentAuthUserId = null;
 
+// 3c multi-parish: the parishes in the admin's group (id, parish_name, display_name).
+// Empty/one until Add-Parish creates a second — the picker/selector stay inert for
+// single-parish (no extra UI; reads fall back to store.parishSettings?.id as before).
+let _groupParishes = [];
+let _settingsParishId = null;   // which parish the Parish Settings tab is editing
+
+// List the parishes in the admin's group. No such query existed before 3c — every
+// parish read was a .limit(1) singleton. Returns [] when the admin's parish has no
+// resolvable group (keeps single-parish behavior: the picker simply won't render).
+async function _fetchGroupParishes() {
+  const gid = store.parishSettings?.group_id;
+  if (!gid) { _groupParishes = []; return _groupParishes; }
+  const { data } = await sb.from('parish_settings')
+    .select('id, parish_name, display_name, principal_institution_id')
+    .eq('group_id', gid)
+    .order('parish_name');
+  _groupParishes = data || [];
+  return _groupParishes;
+}
+
+// The parish an admin chose for a given user-detail surface, or the current parish
+// when there's no picker (single-parish). This is what threads through link + grant
+// writes, replacing the blind store.parishSettings?.id stamp.
+function _chosenParishId(detailEl) {
+  const sel = detailEl?.querySelector('.au-parish-select');
+  return sel?.value || store.parishSettings?.id || null;
+}
+
 const CAL_PRESETS = ['#1C2B3A', '#8B1A2F', '#C9A84C', '#1565C0', '#2E7D32', '#6A1B9A', '#00695C', '#E65100'];
 
 // ── Public entry point ─────────────────────────────────────────────────────
@@ -49,8 +78,9 @@ export async function loadAdmin() {
 // ── Data ───────────────────────────────────────────────────────────────────
 
 async function _loadUsers() {
+  await _fetchGroupParishes();   // for the per-user Parish Placement picker (inert if single-parish)
   const [profilesRes, rolesRes, sacramentRes, grantsRes, teamMembersRes, authRes, coordRes] = await Promise.all([
-    sb.from('user_profiles').select('user_id, personnel_id, avatar_url, personnel(id,name)'),
+    sb.from('user_profiles').select('user_id, personnel_id, parish_id, avatar_url, personnel(id,name)'),
     sb.from('user_roles').select('user_id, role'),
     sb.from('sacramental_roles').select('user_id, sacrament'),
     sb.from('panel_grants').select('user_id, panel'),
@@ -338,14 +368,14 @@ function _mountLinkPicker(container, userId) {
     confirmBtn.disabled = true;
     statusEl.textContent = 'Saving…';
     console.log('[admin link] upserting personnel_id:', _selectedPerson.id, 'for user:', userId);
+    // Step 3c: stamp the parish CHOSEN in the Parish Placement picker (defaults to
+    // the user's current parish), replacing 3b's blind store.parishSettings?.id. This
+    // fixes the upsert-clobber caveat: re-linking no longer moves a cross-parish user
+    // to the admin's parish — only an explicit picker change does. (null → key omitted
+    // → DB DEFAULT current_parish_id(), preserving the single-parish fail-safe.)
+    const detailEl = container.closest('.admin-user-detail');
     const { error } = await sb.from('user_profiles').upsert(
-      // Step 3b: stamp the admin's resolved parish so a newly-linked user gets a real
-      // parish_id (never NULL → never hits the hardened current_parish_id() fail-closed
-      // path). Single-parish: idempotent — every user is already Basilica. ⚠️ 3c: once a
-      // second parish exists this must become a parish PICKER; an unconditional stamp on
-      // the upsert-UPDATE path would otherwise move an existing cross-parish user to the
-      // admin's parish on re-link. (undefined → key omitted → DB DEFAULT current_parish_id().)
-      { user_id: userId, personnel_id: _selectedPerson.id, parish_id: store.parishSettings?.id || undefined },
+      { user_id: userId, personnel_id: _selectedPerson.id, parish_id: _chosenParishId(detailEl) || undefined },
       { onConflict: 'user_id' }
     );
     if (error) {
@@ -443,6 +473,24 @@ function _userDetail(u) {
       </div>`;
   })();
 
+  // 3c Parish Placement: choose WHICH parish to place/grant this user at. Only
+  // shown once the group has 2+ parishes; otherwise reads fall back to the current
+  // parish (single-parish behaves exactly as before). Default = the user's current
+  // parish_id (NOT a blind admin-parish stamp) — re-linking won't move a cross-parish
+  // user unless the admin explicitly changes this. Threads through link + grant writes.
+  const curParishId = u.profile?.parish_id || store.parishSettings?.id || '';
+  const parishPlacementBlock = _groupParishes.length > 1 ? `
+      <div style="margin-bottom:1rem;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">Parish Placement</div>
+        <select class="au-parish-select" data-user-id="${u.userId}" style="
+          padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;
+          font-family:'Inter',sans-serif;outline:none;cursor:pointer;background:#fff;min-width:220px;
+        ">
+          ${_groupParishes.map(p => `<option value="${p.id}" ${p.id === curParishId ? 'selected' : ''}>${(p.display_name || p.parish_name || 'Parish').replace(/</g, '&lt;')}</option>`).join('')}
+        </select>
+        <div style="font-size:11.5px;color:#9CA3AF;margin-top:4px;line-height:1.5;">Where this user is placed (link) and which parish's prep panels are granted. Cura/group-wide grants ignore this.</div>
+      </div>` : '';
+
   return `
     <div class="admin-user-detail" data-user-id="${u.userId}" style="border-top:.5px solid #F0EDE8;padding:1rem 1.1rem;background:#FAFAF8;">
       <div style="margin-bottom:1rem;">
@@ -468,6 +516,8 @@ function _userDetail(u) {
             <div id="au-link-picker-${u.userId}"></div>`}
         </div>
       </div>
+
+      ${parishPlacementBlock}
 
       <div style="margin-bottom:1rem;">
         <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">System Role</div>
@@ -551,7 +601,7 @@ async function _saveUser(userId) {
   if (desiredSac.size) {
     await sb.from('sacramental_roles').insert([...desiredSac].map(s => ({
       user_id: userId, sacrament: s,
-      parish_id: PREP_PROGRAMS.has(s) ? (store.parishSettings?.id || null) : null,   // prep → parish, cura → NULL
+      parish_id: PREP_PROGRAMS.has(s) ? (_chosenParishId(detail) || null) : null,   // prep → chosen parish, cura → NULL
     })));
   }
 
@@ -563,7 +613,7 @@ async function _saveUser(userId) {
   if (desiredGrants.size) {
     await sb.from('panel_grants').insert([...desiredGrants].map(p => ({
       user_id: userId, panel: p,
-      parish_id: PREP_PROGRAMS.has(p) ? (store.parishSettings?.id || null) : null,   // prep panel → parish, cura/other → NULL
+      parish_id: PREP_PROGRAMS.has(p) ? (_chosenParishId(detail) || null) : null,   // prep panel → chosen parish, cura/other → NULL
     })));
   }
 
@@ -988,8 +1038,30 @@ async function _renderSettingsTab() {
   if (!el) return;
   el.innerHTML = '<div style="font-size:13px;color:#9CA3AF;">Loading…</div>';
 
-  const { data, error } = await sb.from('parish_settings').select('*').limit(1).maybeSingle();
+  // 3c: the tab now edits ONE selected parish out of the admin's group (was a
+  // hardcoded .limit(1) singleton). Default to the current parish; the selector
+  // only renders when 2+ parishes exist (single-parish looks/behaves as before).
+  await _fetchGroupParishes();
+  const selectedId = _settingsParishId
+    || (_groupParishes.find(p => p.id === store.parishSettings?.id)?.id)
+    || _groupParishes[0]?.id
+    || store.parishSettings?.id
+    || null;
+  _settingsParishId = selectedId;
+
+  const { data, error } = selectedId
+    ? await sb.from('parish_settings').select('*').eq('id', selectedId).maybeSingle()
+    : await sb.from('parish_settings').select('*').limit(1).maybeSingle();
   if (error) { el.innerHTML = `<div style="color:#E74C3C;font-size:13px;">Error: ${error.message}</div>`; return; }
+
+  const parishSelector = _groupParishes.length > 1 ? `
+      <label style="display:block;font-size:11.5px;color:#6B7280;margin-bottom:3px;">Editing parish</label>
+      <select id="ps-parish-select" style="
+        width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;
+        font-size:13px;font-family:'Inter',sans-serif;outline:none;cursor:pointer;background:#fff;margin-bottom:1rem;
+      ">
+        ${_groupParishes.map(p => `<option value="${p.id}" ${p.id === selectedId ? 'selected' : ''}>${(p.display_name || p.parish_name || 'Parish').replace(/</g, '&lt;')}</option>`).join('')}
+      </select>` : '';
 
   const addr = _parseAddress(data?.address || '');
   const inputStyle = `width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;
@@ -1002,7 +1074,15 @@ async function _renderSettingsTab() {
 
   el.innerHTML = `
     <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.2rem 1.4rem;max-width:480px;">
-      <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:1rem;">Parish Settings</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:1rem;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;">Parish Settings</div>
+        <button id="ps-add-parish" style="
+          padding:.3rem .75rem;background:none;border:.5px solid #C9A84C;color:#8B1A2F;border-radius:5px;
+          font-size:12px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;white-space:nowrap;
+        ">+ Add Parish</button>
+      </div>
+
+      ${parishSelector}
 
       <label style="${labelStyle}">Parish Name</label>
       <input id="ps-name" value="${(data?.parish_name || '').replace(/"/g, '&quot;')}" style="${inputStyle}" />
@@ -1088,12 +1168,155 @@ async function _renderSettingsTab() {
       ? await sb.from('parish_settings').update(payload).eq('id', data.id)
       : await sb.from('parish_settings').insert(payload);
     if (saveErr) { statusEl.textContent = 'Error: ' + saveErr.message; return; }
-    store.parishSettings = { ...store.parishSettings, ...payload };
-    applyParishName(store.parishSettings?.display_name || name);   // Step 3b: short label where set
+    // Only refresh the in-memory current parish + sidebar label when editing the
+    // admin's OWN parish; editing another group parish must not clobber it.
+    if (!data || data.id === store.parishSettings?.id) {
+      store.parishSettings = { ...store.parishSettings, ...payload };
+      applyParishName(store.parishSettings?.display_name || name);   // Step 3b: short label where set
+    }
     statusEl.textContent = 'Saved.';
     window.flashSaved();
     setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
   });
+
+  // Parish selector → re-render the tab for the chosen parish.
+  document.getElementById('ps-parish-select')?.addEventListener('change', (e) => {
+    _settingsParishId = e.target.value;
+    _renderSettingsTab();
+  });
+
+  // Add Parish → swap to the add-parish form.
+  document.getElementById('ps-add-parish')?.addEventListener('click', () => _renderAddParishForm());
+}
+
+// ── Add Parish (3c) ──────────────────────────────────────────────────────────
+// Create a new parish in the admin's group. Reuses the institution+root helper
+// (ui/institutions.js) for the staff tree. NOTE: the YOUTH share-toggle ("Shares
+// youth with?") is DEFERRED to the Youth Ministry module build — only the STAFF
+// toggle is built here. Youth/faith-formation has no single pointer column to flip
+// (it's parish_id-scoped across many tables), so it needs that module's schema.
+function _renderAddParishForm() {
+  const el = document.getElementById('admin-tab-content');
+  if (!el) return;
+
+  const inputStyle = `width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;
+    border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;margin-bottom:.75rem;`;
+  const labelStyle = `display:block;font-size:11.5px;color:#6B7280;margin-bottom:3px;`;
+  const stateOptions = US_STATES.map(s => `<option>${s}</option>`).join('');
+  // Existing parishes to (optionally) share a staff tree with.
+  const shareOptions = _groupParishes
+    .map(p => `<option value="${p.id}">${(p.display_name || p.parish_name || 'Parish').replace(/</g, '&lt;')}</option>`)
+    .join('');
+
+  el.innerHTML = `
+    <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.2rem 1.4rem;max-width:480px;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:1rem;">Add Parish</div>
+
+      <label style="${labelStyle}">Parish Name</label>
+      <input id="ap-name" placeholder="e.g. Assumption of the BVM" style="${inputStyle}" />
+
+      <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin:.5rem 0 .65rem;">Parish Address</div>
+      <label style="${labelStyle}">Street Address</label>
+      <input id="ap-street" placeholder="123 Main Street" style="${inputStyle}" />
+      <div style="display:grid;grid-template-columns:1fr auto auto;gap:.6rem;margin-bottom:.75rem;">
+        <div><label style="${labelStyle}">City</label>
+          <input id="ap-city" placeholder="Natchez" style="width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;" /></div>
+        <div><label style="${labelStyle}">State</label>
+          <select id="ap-state" style="padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;cursor:pointer;background:#fff;"><option value=""></option>${stateOptions}</select></div>
+        <div><label style="${labelStyle}">Zip</label>
+          <input id="ap-zip" maxlength="5" placeholder="00000" style="width:70px;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;" /></div>
+      </div>
+
+      <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin:.5rem 0 .65rem;">Staff Tree</div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#1C2B3A;margin-bottom:.6rem;cursor:pointer;">
+        <input type="checkbox" id="ap-share-staff" style="width:14px;height:14px;accent-color:#1C2B3A;margin:0;cursor:pointer;" ${shareOptions ? '' : 'disabled'} />
+        Shares staff with another parish?
+      </label>
+      <select id="ap-share-parish" disabled style="
+        width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;
+        font-size:13px;font-family:'Inter',sans-serif;outline:none;cursor:pointer;background:#fff;margin-bottom:.4rem;opacity:.5;
+      ">${shareOptions || '<option value="">No other parish</option>'}</select>
+      <div style="font-size:11.5px;color:#9CA3AF;margin-bottom:1rem;line-height:1.5;">
+        No → the new parish gets its own staff tree with a <strong>Pastor</strong> root.
+        Yes → it reuses the chosen parish's tree (no new tree created).
+        <!-- 3c: "Shares youth with?" toggle is DEFERRED to the Youth Ministry module. -->
+      </div>
+
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button id="ap-cancel" style="padding:.4rem 1.1rem;background:none;border:.5px solid #D1C9BE;color:#1C2B3A;border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;">Cancel</button>
+        <button id="ap-create" style="padding:.4rem 1.1rem;background:#1C2B3A;color:#fff;border:none;border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;">Create Parish</button>
+        <div id="ap-status" style="font-size:12px;color:#6B7280;min-height:16px;"></div>
+      </div>
+    </div>
+  `;
+
+  const shareCb  = document.getElementById('ap-share-staff');
+  const shareSel = document.getElementById('ap-share-parish');
+  shareCb?.addEventListener('change', () => {
+    shareSel.disabled = !shareCb.checked;
+    shareSel.style.opacity = shareCb.checked ? '1' : '.5';
+  });
+  document.getElementById('ap-cancel')?.addEventListener('click', () => _renderSettingsTab());
+  document.getElementById('ap-create')?.addEventListener('click', _saveNewParish);
+}
+
+async function _saveNewParish() {
+  const statusEl = document.getElementById('ap-status');
+  const setErr = (m) => { if (statusEl) { statusEl.style.color = '#E74C3C'; statusEl.textContent = m; } };
+
+  const name   = document.getElementById('ap-name').value.trim();
+  if (!name) { setErr('Parish name is required.'); return; }
+
+  const groupId = store.parishSettings?.group_id || null;
+  if (!groupId) { setErr('Your parish has no group — cannot add a parish. (group_id missing.)'); return; }
+
+  const street = document.getElementById('ap-street').value.trim();
+  const city   = document.getElementById('ap-city').value.trim();
+  const state  = document.getElementById('ap-state').value.trim();
+  const zip    = document.getElementById('ap-zip').value.trim();
+  const address = [street, city, state ? (zip ? `${state} ${zip}` : state) : zip].filter(Boolean).length
+    ? `${street}, ${city}, ${state} ${zip}`.replace(/,?\s*$/, '').trim() : '';
+  const timezone = state ? _detectTimezone(state) : (store.parishSettings?.timezone ?? null);
+
+  const shareStaff = document.getElementById('ap-share-staff')?.checked;
+  const sharePid   = document.getElementById('ap-share-parish')?.value || null;
+
+  if (statusEl) { statusEl.style.color = '#6B7280'; statusEl.textContent = 'Creating…'; }
+
+  // 1. Insert the parish row. group_id is FORCED to the admin's group (never the DB
+  //    default) so the new parish is listed by the group-scoped picker/selector.
+  const { data: newParish, error: insErr } = await sb.from('parish_settings').insert({
+    parish_name: name, primary_institution: name, display_name: name,
+    group_id: groupId, address, timezone,
+  }).select('id').single();
+  if (insErr) { setErr('Insert failed: ' + insErr.message); return; }
+
+  // 2. Resolve the principal institution (the staff tree).
+  let principalId = null;
+  if (shareStaff && sharePid) {
+    // Share = Yes: reuse the chosen parish's principal institution — create no tree.
+    const shared = _groupParishes.find(p => p.id === sharePid);
+    principalId = shared?.principal_institution_id || null;
+    if (!principalId) { setErr('Chosen parish has no staff tree to share.'); return; }
+  } else {
+    // Share = No: create a fresh institution + 'Pastor' root, scoped to this parish.
+    const { id, error: instErr } = await createInstitutionWithRoot({
+      name, parishId: newParish.id, rootTitle: 'Pastor', street: street || null, city: city || null, state: state || null, zip: zip || null,
+    });
+    if (instErr) { setErr('Tree creation failed: ' + instErr.message); return; }
+    principalId = id;
+  }
+
+  // 3. Point the new parish at its principal institution.
+  const { error: updErr } = await sb.from('parish_settings')
+    .update({ principal_institution_id: principalId }).eq('id', newParish.id);
+  if (updErr) { setErr('Link failed: ' + updErr.message); return; }
+
+  if (statusEl) { statusEl.style.color = '#2D6A4F'; statusEl.textContent = 'Created.'; }
+  window.flashSaved?.();
+  _settingsParishId = newParish.id;            // show the new parish on return
+  await _fetchGroupParishes();
+  _renderSettingsTab();
 }
 
 // ── Invite tab ─────────────────────────────────────────────────────────────

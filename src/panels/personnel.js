@@ -4,6 +4,7 @@ import { isAdmin, isSuperAdmin, coordinatorChipLabels } from '../roles.js';
 import { logActivity, personTitle, reportWriteError } from '../utils.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { getInstitutionAddress, isPrincipalInstitution } from '../ui/directory.js';
+import { createInstitutionWithRoot } from '../ui/institutions.js';
 
 // Shared 50-state list (same set the sacramental panels + Discernment address use)
 // for the institution-address State dropdown — stores the two-letter code.
@@ -365,23 +366,18 @@ function openInstitutionModal() {
 async function saveInstitution() {
   const name = document.getElementById('if-name').value.trim();
   if (!name) { alert('Name is required.'); return; }
-  // New institutions append to the end of the global parish-wide order
-  // (the order is arranged via the HR panel's arrows).
-  const nextOrder = (store.institutions || []).reduce((m, i) => Math.max(m, i.sort_order ?? 0), -1) + 1;
-  const { data, error } = await sb.from('institutions').insert({
+  // Directory institutions: default root title ('Root Administrator') and no
+  // parish_id — identical to the inline two-insert this used to do. The shared
+  // helper (ui/institutions.js) is also used by Admin → Add Parish (root 'Pastor').
+  const { error } = await createInstitutionWithRoot({
     name,
-    icon: document.getElementById('if-icon')?.value || 'fa-building',
-    sort_order: nextOrder,
+    icon:   document.getElementById('if-icon')?.value || 'fa-building',
     street: document.getElementById('if-street')?.value.trim() || null,
     city:   document.getElementById('if-city')?.value.trim() || null,
     state:  document.getElementById('if-state')?.value.trim() || null,
     zip:    document.getElementById('if-zip')?.value.trim() || null,
-  }).select('id').single();
+  });
   if (error) { alert('Save failed: ' + error.message); return; }
-  // Every institution gets exactly one permanent root position automatically.
-  if (data?.id) {
-    await sb.from('positions').insert({ institution_id: data.id, title: 'Root Administrator', parent_position_id: null, is_administrator: true });
-  }
   window.flashSavedThen(() => { closeModal(); loadPersonnel(); });
 }
 
