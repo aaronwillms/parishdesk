@@ -36,7 +36,6 @@ let _currentAuthUserId = null;
 // Empty/one until Add-Parish creates a second — the picker/selector stay inert for
 // single-parish (no extra UI; reads fall back to store.parishSettings?.id as before).
 let _groupParishes = [];
-let _settingsParishId = null;   // which parish the Parish Settings tab is editing
 
 // List the parishes in the admin's group. No such query existed before 3c — every
 // parish read was a .limit(1) singleton. Returns [] when the admin's parish has no
@@ -1050,64 +1049,88 @@ async function _renderSettingsTab() {
   if (!el) return;
   el.innerHTML = '<div style="font-size:13px;color:#9CA3AF;">Loading…</div>';
 
-  // 3c: the tab now edits ONE selected parish out of the admin's group (was a
-  // hardcoded .limit(1) singleton). Default to the current parish; the selector
-  // only renders when 2+ parishes exist (single-parish looks/behaves as before).
-  await _fetchGroupParishes();
-  const selectedId = _settingsParishId
-    || (_groupParishes.find(p => p.id === store.parishSettings?.id)?.id)
-    || _groupParishes[0]?.id
-    || store.parishSettings?.id
-    || null;
-  _settingsParishId = selectedId;
-
-  const { data, error } = selectedId
-    ? await sb.from('parish_settings').select('*').eq('id', selectedId).maybeSingle()
-    : await sb.from('parish_settings').select('*').limit(1).maybeSingle();
+  // One box PER PARISH (full rows) — replaces the old "Editing parish" dropdown +
+  // single form. Each box saves/deletes its own parish_settings row independently.
+  const gid = store.parishSettings?.group_id;
+  const { data: parishes, error } = gid
+    ? await sb.from('parish_settings').select('*').eq('group_id', gid).order('parish_name')
+    : await sb.from('parish_settings').select('*').limit(1);
   if (error) { el.innerHTML = `<div style="color:#E74C3C;font-size:13px;">Error: ${error.message}</div>`; return; }
+  const rows = parishes || [];
+  // Keep the lightweight group cache fresh (shared-tree labels + placement pickers).
+  store.groupParishes = rows.map(r => ({ id: r.id, parish_name: r.parish_name, display_name: r.display_name, principal_institution_id: r.principal_institution_id }));
 
-  const parishSelector = _groupParishes.length > 1 ? `
-      <label style="display:block;font-size:11.5px;color:#6B7280;margin-bottom:3px;">Editing parish</label>
-      <select id="ps-parish-select" style="
-        width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;
-        font-size:13px;font-family:'Inter',sans-serif;outline:none;cursor:pointer;background:#fff;margin-bottom:1rem;
-      ">
-        ${_groupParishes.map(p => `<option value="${p.id}" ${p.id === selectedId ? 'selected' : ''}>${(p.parish_name || p.display_name || 'Parish').replace(/</g, '&lt;')}</option>`).join('')}
-      </select>` : '';
-
-  // Delete Parish (Bug 4): only for a SIBLING parish (never your own current parish,
-  // never the last one). Deletion refuses if the parish has dependent records.
-  const canDelete = !!data && data.id !== store.parishSettings?.id && _groupParishes.length > 1;
-
-  const addr = _parseAddress(data?.address || '');
   const inputStyle = `width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;
     border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;margin-bottom:.75rem;`;
   const labelStyle = `display:block;font-size:11.5px;color:#6B7280;margin-bottom:3px;`;
-  const stateOptions = US_STATES.map(s => `<option ${s === addr.state ? 'selected' : ''}>${s}</option>`).join('');
-  const tzDisplay = data?.timezone
-    ? `Timezone: <strong>${data.timezone}</strong> <span style="color:#9CA3AF;">(auto-detected)</span>`
-    : `<span style="color:#9CA3AF;">Timezone will be auto-detected from city &amp; state on save.</span>`;
+
+  // Parish GROUP name — drives ONLY the nav header + login. Top box; blank → nav/login
+  // fall back to the parish full name.
+  const groupName = store.parishGroup?.display_name || '';
 
   el.innerHTML = `
-    <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.2rem 1.4rem;max-width:480px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:1rem;">
-        <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;">Parish Settings</div>
-        <button id="ps-add-parish" style="
-          padding:.3rem .75rem;background:none;border:.5px solid #C9A84C;color:#8B1A2F;border-radius:5px;
-          font-size:12px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;white-space:nowrap;
-        ">+ Add Parish</button>
+    <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.2rem 1.4rem;max-width:480px;margin-bottom:1rem;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:1rem;">Parish Group</div>
+      <label style="${labelStyle}">Parish Group Name</label>
+      <input id="pg-name" value="${groupName.replace(/"/g, '&quot;')}" placeholder="e.g. Natchez Parishes" style="${inputStyle}" />
+      <div style="font-size:11.5px;color:#9CA3AF;margin-top:-.5rem;margin-bottom:1rem;line-height:1.5;">
+        Appears on the login screen and navigation header. Use this if your group has multiple parishes; leave blank to show the parish name.
       </div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button id="pg-save" style="
+          padding:.4rem 1.1rem;background:#1C2B3A;color:#fff;border:none;
+          border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
+        ">Save</button>
+        <div id="pg-status" style="font-size:12px;color:#6B7280;min-height:16px;"></div>
+      </div>
+    </div>
 
-      ${parishSelector}
+    ${rows.map(p => _parishBoxHtml(p, labelStyle, inputStyle)).join('')}
+
+    <div style="max-width:480px;">
+      <button id="ps-add-parish" style="
+        padding:.45rem 1rem;background:none;border:.5px solid #C9A84C;color:#8B1A2F;border-radius:6px;
+        font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;white-space:nowrap;
+      ">+ Add Parish</button>
+    </div>
+  `;
+
+  // Group name save → parish_groups.display_name (nav header + login only).
+  document.getElementById('pg-save')?.addEventListener('click', _saveGroupName);
+
+  // Wire each parish box's own Save + sibling Delete (one box = one parish row).
+  rows.forEach(p => _wireParishBox(p));
+
+  // Add Parish (below the boxes) → the create flow (name, address, staff-share).
+  document.getElementById('ps-add-parish')?.addEventListener('click', () => _renderAddParishForm());
+}
+
+// One Parish Settings box (full name, short name, address, timezone, own Save +
+// sibling Delete). Field ids are suffixed with the parish id so each box is
+// independent. The name-field captions are the naming-pass wording (preserved).
+function _parishBoxHtml(p, labelStyle, inputStyle) {
+  const pid  = p.id;
+  const addr = _parseAddress(p?.address || '');
+  const stateOptions = US_STATES.map(s => `<option ${s === addr.state ? 'selected' : ''}>${s}</option>`).join('');
+  const tzDisplay = p?.timezone
+    ? `Timezone: <strong>${p.timezone}</strong> <span style="color:#9CA3AF;">(auto-detected)</span>`
+    : `<span style="color:#9CA3AF;">Timezone will be auto-detected from city &amp; state on save.</span>`;
+  // Delete only for a SIBLING parish (never the admin's own current parish, never the last).
+  const canDelete = p.id !== store.parishSettings?.id && (store.groupParishes?.length || 1) > 1;
+  const title = (p.parish_name || p.display_name || 'Parish').replace(/</g, '&lt;');
+
+  return `
+    <div data-parish-box="${pid}" style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.2rem 1.4rem;max-width:480px;margin-bottom:1rem;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:1rem;">${title}</div>
 
       <label style="${labelStyle}">Parish Name (full)</label>
-      <input id="ps-name" value="${(data?.parish_name || '').replace(/"/g, '&quot;')}" placeholder="The Basilica of Saint Mary" style="${inputStyle}" />
+      <input id="ps-name-${pid}" value="${(p?.parish_name || '').replace(/"/g, '&quot;')}" placeholder="The Basilica of Saint Mary" style="${inputStyle}" />
       <div style="font-size:11.5px;color:#9CA3AF;margin-top:-.5rem;margin-bottom:1rem;line-height:1.5;">
         Appears in the Directory header, sidebar, login, and in-app dropdowns.
       </div>
 
       <label style="${labelStyle}">Display Name (short)</label>
-      <input id="ps-display-name" value="${(data?.display_name || '').replace(/"/g, '&quot;')}" placeholder="Basilica" style="${inputStyle}" />
+      <input id="ps-display-name-${pid}" value="${(p?.display_name || '').replace(/"/g, '&quot;')}" placeholder="Basilica" style="${inputStyle}" />
       <div style="font-size:11.5px;color:#9CA3AF;margin-top:-.5rem;margin-bottom:1rem;line-height:1.5;">
         Appears on tabs (HR, and sacramental-panel switchers). Leave blank to use the full name.
       </div>
@@ -1115,17 +1138,17 @@ async function _renderSettingsTab() {
       <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.65rem;">Parish Address</div>
 
       <label style="${labelStyle}">Street Address</label>
-      <input id="ps-street" value="${addr.street.replace(/"/g, '&quot;')}" placeholder="123 Main Street" style="${inputStyle}" />
+      <input id="ps-street-${pid}" value="${addr.street.replace(/"/g, '&quot;')}" placeholder="123 Main Street" style="${inputStyle}" />
 
       <div style="display:grid;grid-template-columns:1fr auto auto;gap:.6rem;margin-bottom:.75rem;">
         <div>
           <label style="${labelStyle}">City</label>
-          <input id="ps-city" value="${addr.city.replace(/"/g, '&quot;')}" placeholder="Natchez"
+          <input id="ps-city-${pid}" value="${addr.city.replace(/"/g, '&quot;')}" placeholder="Natchez"
             style="width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;" />
         </div>
         <div>
           <label style="${labelStyle}">State</label>
-          <select id="ps-state"
+          <select id="ps-state-${pid}"
             style="padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;cursor:pointer;background:#fff;">
             <option value=""></option>
             ${stateOptions}
@@ -1133,100 +1156,101 @@ async function _renderSettingsTab() {
         </div>
         <div>
           <label style="${labelStyle}">Zip</label>
-          <input id="ps-zip" value="${addr.zip}" placeholder="00000" maxlength="5"
+          <input id="ps-zip-${pid}" value="${addr.zip}" placeholder="00000" maxlength="5"
             style="width:70px;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;" />
         </div>
       </div>
 
-      <div id="ps-tz-display" style="font-size:12px;color:#4B5563;margin-bottom:1rem;line-height:1.6;">
+      <div id="ps-tz-display-${pid}" style="font-size:12px;color:#4B5563;margin-bottom:1rem;line-height:1.6;">
         ${tzDisplay}
       </div>
 
       <div style="display:flex;align-items:center;gap:12px;">
-        <button id="ps-save" style="
+        <button id="ps-save-${pid}" style="
           padding:.4rem 1.1rem;background:#1C2B3A;color:#fff;border:none;
           border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
         ">Save</button>
-        ${canDelete ? `<button id="ps-delete" style="
+        ${canDelete ? `<button id="ps-delete-${pid}" style="
           padding:.4rem 1.1rem;background:none;border:.5px solid #8B1A2F;color:#8B1A2F;
           border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
         ">Delete Parish</button>` : ''}
-        <div id="ps-status" style="font-size:12px;color:#6B7280;min-height:16px;"></div>
+        <div id="ps-status-${pid}" style="font-size:12px;color:#6B7280;min-height:16px;"></div>
       </div>
-    </div>
-  `;
+    </div>`;
+}
 
-  document.getElementById('ps-save').addEventListener('click', async () => {
-    const statusEl  = document.getElementById('ps-status');
-    statusEl.style.color = '#6B7280';
-    statusEl.textContent = 'Saving…';
+function _wireParishBox(p) {
+  const pid = p.id;
+  document.getElementById(`ps-save-${pid}`)?.addEventListener('click', () => _saveParishBox(p));
+  document.getElementById(`ps-delete-${pid}`)?.addEventListener('click', () => _deleteParish(p, `ps-status-${pid}`));
+}
 
-    const name   = document.getElementById('ps-name').value.trim();
-    const street = document.getElementById('ps-street').value.trim();
-    const city   = document.getElementById('ps-city').value.trim();
-    const state  = document.getElementById('ps-state').value.trim();
-    const zip    = document.getElementById('ps-zip').value.trim();
-    if (!name) { statusEl.textContent = 'Parish name is required.'; return; }
+// Save ONE parish box → writes ONLY that parish_settings row (UPDATE by id).
+async function _saveParishBox(p) {
+  const pid = p.id;
+  const statusEl = document.getElementById(`ps-status-${pid}`);
+  const setErr = (m) => { if (statusEl) { statusEl.style.color = '#E74C3C'; statusEl.textContent = m; } };
+  if (statusEl) { statusEl.style.color = '#6B7280'; statusEl.textContent = 'Saving…'; }
 
-    const addressParts = [street, city, state ? (zip ? `${state} ${zip}` : state) : zip].filter(Boolean);
-    const address = addressParts.length ? `${street}, ${city}, ${state} ${zip}`.replace(/,?\s*$/, '').trim() : '';
+  const name   = document.getElementById(`ps-name-${pid}`).value.trim();
+  const street = document.getElementById(`ps-street-${pid}`).value.trim();
+  const city   = document.getElementById(`ps-city-${pid}`).value.trim();
+  const state  = document.getElementById(`ps-state-${pid}`).value.trim();
+  const zip    = document.getElementById(`ps-zip-${pid}`).value.trim();
+  if (!name) { setErr('Parish name is required.'); return; }
 
-    // Auto-detect timezone from state (instant — no network call)
-    const detected = state ? _detectTimezone(state) : null;
-    const timezone = detected ?? data?.timezone ?? null;
-    const tzEl = document.getElementById('ps-tz-display');
-    if (tzEl) {
-      tzEl.innerHTML = timezone
-        ? `Timezone: <strong>${timezone}</strong> <span style="color:#9CA3AF;">(auto-detected)</span>`
-        : `<span style="color:#9CA3AF;">Could not detect timezone — select a state to auto-detect.</span>`;
-    }
+  const addressParts = [street, city, state ? (zip ? `${state} ${zip}` : state) : zip].filter(Boolean);
+  const address = addressParts.length ? `${street}, ${city}, ${state} ${zip}`.replace(/,?\s*$/, '').trim() : '';
 
-    statusEl.textContent = 'Saving…';
-    // Preserve the EDITED parish's OWN principal institution FK across a rename. Bug 2
-    // fix: the old fallback used store.parishSettings.principal_institution_id (the
-    // ADMIN's parish), so renaming a sibling parish repointed its principal to
-    // Basilica's. Prefer the edited row's existing FK; only name-match for a fresh
-    // insert that has none yet.
-    const principalId = data?.principal_institution_id
-      || (store.institutions || []).find(i => i.name === name)?.id
-      || (data ? null : store.parishSettings?.principal_institution_id)
-      || null;
-    // Display Name (short) is now an explicit field. Persist what the admin typed;
-    // blank → null so COALESCE(display_name, parish_name) falls back to the full name
-    // everywhere. Editing the full name no longer force-overwrites a deliberate short
-    // label (the admin controls it directly in its own field).
-    const displayName = document.getElementById('ps-display-name')?.value.trim() || null;
-    const payload = { parish_name: name, primary_institution: name, display_name: displayName, address, timezone, principal_institution_id: principalId };
-    const { error: saveErr } = data
-      ? await sb.from('parish_settings').update(payload).eq('id', data.id)
-      : await sb.from('parish_settings').insert(payload);
-    if (saveErr) { statusEl.textContent = 'Error: ' + saveErr.message; return; }
-    // Only refresh the in-memory current parish + sidebar label when editing the
-    // admin's OWN parish; editing another group parish must not clobber it.
-    if (!data || data.id === store.parishSettings?.id) {
-      store.parishSettings = { ...store.parishSettings, ...payload };
-      applyParishName(name);   // naming rule: sidebar+login show the FULL name (parish_name)
-    }
-    statusEl.textContent = 'Saved.';
-    window.flashSaved();
-    // Refresh the group cache (selector + placement dropdowns + shared-tree headings)
-    // and re-render so the renamed parish shows everywhere immediately.
-    await _fetchGroupParishes();
-    _settingsParishId = data?.id || _settingsParishId;
-    _renderSettingsTab();
-  });
+  const detected = state ? _detectTimezone(state) : null;
+  const timezone = detected ?? p?.timezone ?? null;
+  const tzEl = document.getElementById(`ps-tz-display-${pid}`);
+  if (tzEl) {
+    tzEl.innerHTML = timezone
+      ? `Timezone: <strong>${timezone}</strong> <span style="color:#9CA3AF;">(auto-detected)</span>`
+      : `<span style="color:#9CA3AF;">Could not detect timezone — select a state to auto-detect.</span>`;
+  }
 
-  // Parish selector → re-render the tab for the chosen parish.
-  document.getElementById('ps-parish-select')?.addEventListener('change', (e) => {
-    _settingsParishId = e.target.value;
-    _renderSettingsTab();
-  });
+  // Preserve this parish's OWN principal institution FK across a rename (never the
+  // admin's). Name-match only when there's no existing FK.
+  const principalId = p?.principal_institution_id
+    || (store.institutions || []).find(i => i.name === name)?.id
+    || null;
+  // Display Name (short): persist what was typed; blank → null (COALESCE falls back).
+  const displayName = document.getElementById(`ps-display-name-${pid}`)?.value.trim() || null;
+  const payload = { parish_name: name, primary_institution: name, display_name: displayName, address, timezone, principal_institution_id: principalId };
 
-  // Add Parish → swap to the add-parish form.
-  document.getElementById('ps-add-parish')?.addEventListener('click', () => _renderAddParishForm());
+  const { error } = await sb.from('parish_settings').update(payload).eq('id', pid);
+  if (error) { setErr('Error: ' + error.message); return; }
 
-  // Delete Parish → refuse-if-nonempty, else cascade-delete (Bug 4).
-  document.getElementById('ps-delete')?.addEventListener('click', () => _deleteParish(data));
+  // Only refresh the in-memory current parish + nav label when editing the admin's OWN
+  // parish; a sibling edit must not clobber it. Nav shows group name first, else this name.
+  if (pid === store.parishSettings?.id) {
+    store.parishSettings = { ...store.parishSettings, ...payload };
+    applyParishName(store.parishGroup?.display_name || name);
+  }
+  if (statusEl) { statusEl.style.color = '#2D6A4F'; statusEl.textContent = 'Saved.'; }
+  window.flashSaved();
+  await _fetchGroupParishes();
+  _renderSettingsTab();
+}
+
+// Save the parish GROUP name → parish_groups.display_name (drives nav header + login only).
+async function _saveGroupName() {
+  const statusEl = document.getElementById('pg-status');
+  const gid = store.parishSettings?.group_id;
+  if (!gid) { if (statusEl) { statusEl.style.color = '#E74C3C'; statusEl.textContent = 'No group resolved.'; } return; }
+  const value = document.getElementById('pg-name').value.trim() || null;   // blank → NULL (fall back to parish name)
+  if (statusEl) { statusEl.style.color = '#6B7280'; statusEl.textContent = 'Saving…'; }
+  const { error } = await sb.from('parish_groups').update({ display_name: value }).eq('id', gid);
+  if (error) {
+    if (statusEl) { statusEl.style.color = '#E74C3C'; statusEl.textContent = /display_name|schema cache/i.test(error.message) ? 'Apply the parish-group migration first.' : 'Save failed.'; }
+    return;
+  }
+  store.parishGroup = { ...(store.parishGroup || { id: gid }), display_name: value };
+  applyParishName(value || store.parishSettings?.parish_name || store.parishSettings?.display_name);
+  if (statusEl) { statusEl.style.color = '#2D6A4F'; statusEl.textContent = 'Saved.'; }
+  window.flashSaved?.();
 }
 
 // Tables that reference parish_settings with ON DELETE NO ACTION — any row here
@@ -1239,11 +1263,11 @@ const PARISH_BLOCKING_TABLES = [
   'sacramental_baptism', 'sacramental_confirmation', 'sacramental_firstcomm', 'sacramental_ocia',
 ];
 
-async function _deleteParish(parish) {
+async function _deleteParish(parish, statusElId = 'ps-status') {
   if (!parish?.id) return;
   if (parish.id === store.parishSettings?.id) { alert('You cannot delete the parish you are currently in.'); return; }
 
-  const statusEl = document.getElementById('ps-status');
+  const statusEl = document.getElementById(statusElId);
   if (statusEl) { statusEl.style.color = '#6B7280'; statusEl.textContent = 'Checking for dependent records…'; }
 
   // Count blocking rows per table (head-only count, parallel).
@@ -1274,7 +1298,6 @@ async function _deleteParish(parish) {
   if (error) { if (statusEl) { statusEl.style.color = '#8B1A2F'; statusEl.textContent = 'Delete failed: ' + error.message; } return; }
 
   window.flashSaved?.();
-  _settingsParishId = null;            // fall back to the admin's own parish
   await _fetchGroupParishes();
   _renderSettingsTab();
 }
@@ -1404,9 +1427,8 @@ async function _saveNewParish() {
 
   if (statusEl) { statusEl.style.color = '#2D6A4F'; statusEl.textContent = 'Created.'; }
   window.flashSaved?.();
-  _settingsParishId = newParish.id;            // show the new parish on return
   await _fetchGroupParishes();
-  _renderSettingsTab();
+  _renderSettingsTab();   // all parishes render as boxes; the new one appears in order
 }
 
 // ── Invite tab ─────────────────────────────────────────────────────────────

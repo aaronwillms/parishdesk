@@ -216,10 +216,11 @@ export function applyNavVisibility() {
   if (newProjectBtn) newProjectBtn.style.display = isAdmin() ? '' : 'none';
 }
 
-// Sets the parish label in the sidebar (.app-sub) and login screen (.auth-sub). Per the
-// naming rule these surfaces show the FULL name (parish_settings.parish_name) — callers
-// pass parish_name (this reverts 3b, which passed the short display_name here). The SHORT
-// name is reserved for TABS (HR institution tabs, future sacramental switchers/pills).
+// Sets the GROUP/parish label in the sidebar (.app-sub) and login screen (.auth-sub).
+// These are GROUP-level surfaces ("what am I in"): callers pass the parish GROUP's
+// display_name when set, else the current parish FULL name (parish_settings.parish_name).
+// The SHORT name (display_name) is reserved for TABS (HR institution tabs, future
+// sacramental switchers/pills); the directory header/dropdowns keep per-parish names.
 // The " · Natchez" city suffix was removed in 3b (it hardcoded one parish's city).
 export function applyParishName(name) {
   if (!name) return;

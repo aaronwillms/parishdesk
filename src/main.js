@@ -51,16 +51,22 @@ async function loadParishSettings(user) {
     return;
   }
   store.parishSettings = data;
-  applyParishName(data.parish_name || data.display_name);   // naming rule: sidebar+login show the FULL name
 
-  // Load the sibling parishes in this group (for shared-tree heading labels and the
-  // Add-Parish picker). Single-parish → just this one row. Non-fatal if it fails.
+  // Load the GROUP (for the group-level nav/login label) and the sibling parishes
+  // (for shared-tree headings + the Add-Parish picker). Single-parish → one sibling
+  // row and (usually) no group display_name. Non-fatal if either fails.
   if (data.group_id) {
-    const { data: siblings } = await sb.from('parish_settings')
-      .select('id, parish_name, display_name, principal_institution_id')
-      .eq('group_id', data.group_id);
+    const [{ data: group }, { data: siblings }] = await Promise.all([
+      sb.from('parish_groups').select('id, name, display_name').eq('id', data.group_id).maybeSingle(),
+      sb.from('parish_settings').select('id, parish_name, display_name, principal_institution_id').eq('group_id', data.group_id),
+    ]);
+    store.parishGroup  = group || null;
     store.groupParishes = siblings || [];
   }
+
+  // Nav header + login: GROUP display name when set, else the current parish FULL
+  // name (naming rule). Inert for single-parish: blank group name → parish name.
+  applyParishName(store.parishGroup?.display_name || data.parish_name || data.display_name);
 }
 
 async function loadDiocesanOverrides() {

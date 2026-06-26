@@ -1,0 +1,22 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Parish Group display name — a GROUP-level identity for the nav header + login.
+--
+-- PROPOSED — pause for approval before applying. Additive + idempotent + nullable.
+--
+-- parish_groups already has `name` (NOT NULL — the canonical/internal group name,
+-- e.g. "Basilica of Saint Mary & Assumption"). This adds a SEPARATE nullable
+-- user-facing label that drives ONLY the navigation header (.app-sub) and the
+-- login screen (.auth-sub) — so a multi-parish group can show a group identity
+-- ("Natchez Parishes") instead of one parish's full name.
+--
+-- Named display_name to parallel parish_settings.display_name (canonical `name`
+-- + nullable `display_name` label). NULL is the "no group name set" state: the
+-- nav/login then fall back to the current parish's full parish_name (so a
+-- single-parish customer sees NO change — inert unless set). Not backfilled.
+--
+-- Does NOT change the directory header, dropdowns, or tabs — those keep the
+-- per-parish names per the existing naming rule. No RLS step (column on an
+-- existing table; parish_groups RLS is unchanged).
+-- ═══════════════════════════════════════════════════════════════════════════
+
+ALTER TABLE parish_groups ADD COLUMN IF NOT EXISTS display_name text;
