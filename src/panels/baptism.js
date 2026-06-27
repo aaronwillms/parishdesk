@@ -2,7 +2,7 @@ import { sb, withWriteRetry, serializeWrite, insertWithRetry, deleteWithRetry } 
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
-import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
+import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
@@ -384,9 +384,21 @@ async function _bapWriteEdit(id, payload, name) {
   const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
   if (prior && statusOf(prior) !== 'complete' && newStatus === 'complete') tl.push({ type: 'auto', text: 'Baptism Complete', created_at: nowIso() });
   payload.timeline = tl;
+  const priorStatus = prior ? statusOf(prior) : null;
   const { error } = await withWriteRetry(() => sb.from('sacramental_baptism').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('baptism update', error); return { ok: false }; }
   logActivity({ action: 'updated Baptism record', entityType: 'baptism', entityName: name, contextType: 'baptism', contextId: id });
+  // Notify on TRANSITION into a fire-state (Scheduled / Complete) — two distinct
+  // lifecycle events, not re-fired on resaves while already in the state. Baptism is
+  // not cross-linkable (originType null) → origin-panel recipients only.
+  if (priorStatus !== newStatus && (newStatus === 'scheduled' || newStatus === 'complete')) {
+    const { data: { user } } = await sb.auth.getUser();
+    notifySacramentEvent({
+      keys: ['baptism'], parishId: prior?.parish_id ?? null, actorUserId: user?.id,
+      message: newStatus === 'complete' ? `${name} Baptism — marked complete` : `${name} Baptism — scheduled`,
+      type: newStatus === 'complete' ? 'success' : 'info', module: 'baptism', record_id: id,
+    });
+  }
   if (prior) Object.assign(prior, payload);
   return { ok: true, record: prior };
 }

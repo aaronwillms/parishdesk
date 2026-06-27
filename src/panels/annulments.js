@@ -1,5 +1,5 @@
 import { sb, withWriteRetry, serializeWrite, insertWithRetry, deleteWithRetry } from '../supabase.js';
-import { notifyUsers } from '../notifications.js';
+import { notifyUsers, notifySacramentEvent } from '../notifications.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity, reportWriteError, applyDocCheck, docCheckStampHtml } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
@@ -1106,11 +1106,26 @@ export async function anlSaveEdit(id) {
   const { payload } = r;
   const prior = allCases.find(c => c.id === id);
   const { newStatus, statusChanged } = _anlApplyEditFields(payload, prior);
+  // Capture the finalize TRANSITION before Object.assign overwrites prior's flag
+  // (judgement_finalized is the string 'yes'/'no'; mirrors _anlApplyEditFields:justFinalized).
+  const justFinalized = payload.judgement_finalized === 'yes'
+    && prior?.judgement_finalized !== 'yes' && prior?.judgement_finalized !== true;
   const { error } = await withWriteRetry(() => sb.from('annulment_cases').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('annulment update', error); return { ok: false }; }
   if (prior) Object.assign(prior, payload);
   await logActivity({ action: 'updated annulment case', entityType: 'annulments', entityName: payload.petitioner || 'Case', contextType: 'annulments', contextId: id });
   if (statusChanged && prior) await notifyStatusChange(prior, newStatus);
+  // Notify on the judgement-finalized transition (status ∈ {affirm,negative}). Annulments
+  // are cross-linkable (record_links + case-group) and add the advocate door.
+  if (justFinalized && (newStatus === 'affirm' || newStatus === 'negative')) {
+    const { data: { user } } = await sb.auth.getUser();
+    notifySacramentEvent({
+      keys: ['annulments'], parishId: prior?.parish_id ?? null, advocates: true,
+      originType: 'annulment', originId: id, actorUserId: user?.id,
+      message: `${payload.petitioner || 'Case'} Annulment — ${newStatus === 'affirm' ? 'Affirmative' : 'Negative'} Judgement finalized`,
+      type: 'success', module: 'annulments', record_id: id,
+    });
+  }
   await loadCasesData();
   return { ok: true };
 }

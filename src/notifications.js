@@ -1,6 +1,7 @@
 import { sb } from './supabase.js';
 import { store } from './store.js';
 import { deriveParishStaffPersonnelIds } from './ui/parishStaff.js';
+import { getLinks } from './sacramental/recordLinks.js';
 
 let currentUserId = null;
 let realtimeChannel = null;
@@ -46,18 +47,104 @@ export async function notifyUsers(userIds, triggeringUserId, message, type = 'in
   if (error) console.error('[notifications] notifyUsers insert failed:', error);
 }
 
-// Fetch all user IDs who have a specific sacramental role or are super_admin/admin.
-// Parish-aware (2b): route a sacrament notification to that sacrament's coordinators
-// whose role is group-shared (parish_id NULL) OR scoped to the relevant parish, plus all
-// admins. parishId defaults to the current user's resolved parish (single-parish → the
-// one parish; multi-parish callers should pass the record's parish_id).
-export async function getUserIdsForSacrament(sacrament, parishId = (store.parishSettings?.id || null)) {
-  const [{ data: sacRoles }, { data: adminRoles }] = await Promise.all([
-    sb.from('sacramental_roles').select('user_id, parish_id').eq('sacrament', sacrament),
-    sb.from('user_roles').select('user_id').in('role', ['admin', 'super_admin']),
+// ── Door-complete, parish-matched recipient resolver (notifications routing core) ─
+// Inverts roles.js' canAccessSacrament/canAccessPanel into a recipient SET so the
+// people notified are EXACTLY those who can open the originating panel ("agrees with
+// the predicate by construction" — under-notify is the failure we guard against). It
+// mirrors all three access doors plus the always-on tier:
+//   • super_admin              — always (canAccessSacrament short-circuits on it; a plain
+//                                ADMIN is NOT auto-granted a sacrament, so admins are
+//                                included only when they hold one of the doors below).
+//   • sacramental_roles        — user_id-keyed; parish-matched.
+//   • program_coordinators     — personnel_id inside coordinator_ids[]; parish-matched;
+//                                resolved to accounts via user_profiles (no account → skip).
+//   • panel_grants             — user_id-keyed; parish-matched (canAccessSacrament ORs it).
+//   • advocates (annulments)   — annulment_cases.advocate_id (personnel) on ANY case →
+//                                canAccessPanel('annulments') grants on advocateCaseIds>0.
+// `keys` is the access-key SET for the panel. First Communion holds TWO keys —
+// 'first_communion' in sacramental_roles vs 'firstcomm' in program_coordinators — and the
+// panel ORs both (firstcomm.js:29), so both are queried. Parish match follows
+// _setMatchesParish: a door row matches record-parish P iff parish_id IS NULL (group-
+// shared cura) OR (P != null AND parish_id === P).
+export async function resolvePanelRecipients(keys, parishId = null, { advocates = false } = {}) {
+  const matchesParish = (pid) => pid == null || (parishId != null && pid === parishId);
+  const [sacRes, gntRes, coordRes, superRes] = await Promise.all([
+    sb.from('sacramental_roles').select('user_id, parish_id').in('sacrament', keys),
+    sb.from('panel_grants').select('user_id, parish_id').in('panel', keys),
+    sb.from('program_coordinators').select('coordinator_ids, parish_id').in('program', keys),
+    sb.from('user_roles').select('user_id').eq('role', 'super_admin'),
   ]);
-  const matched = (sacRoles || []).filter(r => r.parish_id == null || r.parish_id === parishId);
-  return [...new Set([...matched, ...(adminRoles || [])].map(r => r.user_id))];
+  const userIds = new Set();
+  (superRes.data || []).forEach(r => r.user_id && userIds.add(r.user_id));
+  (sacRes.data || []).filter(r => matchesParish(r.parish_id)).forEach(r => r.user_id && userIds.add(r.user_id));
+  (gntRes.data || []).filter(r => matchesParish(r.parish_id)).forEach(r => r.user_id && userIds.add(r.user_id));
+  // Coordinators + advocates are personnel-keyed; collect, then resolve to accounts.
+  const personnel = new Set();
+  (coordRes.data || []).filter(r => matchesParish(r.parish_id))
+    .forEach(r => (r.coordinator_ids || []).forEach(pid => pid && personnel.add(pid)));
+  if (advocates) {
+    const { data: adv } = await sb.from('annulment_cases').select('advocate_id').not('advocate_id', 'is', null);
+    (adv || []).forEach(r => r.advocate_id && personnel.add(r.advocate_id));
+  }
+  if (personnel.size) {
+    const { data: profs } = await sb.from('user_profiles').select('user_id').in('personnel_id', [...personnel]);
+    (profs || []).forEach(p => p.user_id && userIds.add(p.user_id));
+  }
+  return [...userIds];
+}
+
+// Panel access-key set per sacrament key (First Communion is dual-key; see above).
+const _SAC_KEYS = {
+  baptism:         ['baptism'],
+  first_communion: ['first_communion', 'firstcomm'],
+  firstcomm:       ['first_communion', 'firstcomm'],
+  confirmation:    ['confirmation'],
+  ocia:            ['ocia'],
+  marriage:        ['marriage'],
+  annulments:      ['annulments'],
+};
+// record_links / case-group vocabulary ('ocia'|'marriage'|'annulment', singular) →
+// {access keys, table for the linked record's parish, advocates?}. Only these three
+// panels are linkable (recordLinks.js); baptism/firstcomm/confirmation pass originType
+// null and fan out to the origin panel only.
+const _LINK_PANEL = {
+  ocia:      { keys: ['ocia'],       table: 'sacramental_ocia', advocates: false },
+  marriage:  { keys: ['marriage'],   table: 'couples',          advocates: false },
+  annulment: { keys: ['annulments'], table: 'annulment_cases',  advocates: true  },
+};
+
+// Fetch all user IDs who can access a sacramental panel (door-complete; mirrors
+// canAccessSacrament). Back-compat shim over resolvePanelRecipients — keeps the existing
+// "New X added" create-notification call-sites working while making them door-complete.
+export async function getUserIdsForSacrament(sacrament, parishId = (store.parishSettings?.id || null)) {
+  return resolvePanelRecipients(_SAC_KEYS[sacrament] || [sacrament], parishId, { advocates: sacrament === 'annulments' });
+}
+
+// Fire a linked sacramental EVENT (notifications triggers 1/2 + linked fanout 1-2b +
+// dedup 1-2c). Resolves the origin panel's recipients, then for every LINKED record
+// (record_links cross-panel + annulment case-group siblings, via getLinks) resolves that
+// record's panel recipients keyed on the LINKED record's own parish, UNIONs all sets, and
+// emits ONE notifyUsers call — its Set-dedup + actor-exclusion guarantee one row per user,
+// one text. The message reflects the ORIGINATING event; module/record_id point at the
+// ORIGIN record (a link-only recipient lands on a panel they can't navigate — accepted).
+// originType is the record_links vocabulary ('ocia'|'marriage'|'annulment') for linkable
+// panels, or null to skip link traversal (baptism/firstcomm/confirmation).
+export async function notifySacramentEvent({ keys, parishId = null, advocates = false, originType = null, originId = null, actorUserId = null, message, type = 'info', module = null, record_id = null }) {
+  try {
+    const sets = [await resolvePanelRecipients(keys, parishId, { advocates })];
+    if (originType && originId) {
+      const links = await getLinks(originType, originId);
+      for (const ln of links) {
+        const reg = _LINK_PANEL[ln.type];
+        if (!reg) continue;
+        const { data: lr } = await sb.from(reg.table).select('parish_id').eq('id', ln.id).maybeSingle();
+        sets.push(await resolvePanelRecipients(reg.keys, lr?.parish_id ?? null, { advocates: reg.advocates }));
+      }
+    }
+    await notifyUsers(sets.flat(), actorUserId, message, type, module, record_id);
+  } catch (e) {
+    console.error('[notifications] notifySacramentEvent failed:', e);
+  }
 }
 
 // Fetch all user IDs who are members of a specific team (via personnel link).

@@ -3,7 +3,7 @@ import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError, applyDocCheck, docCheckStampHtml } from '../utils.js';
 import { expandCase, ensureCaseDisplays, getCaseDisplay } from './annulments.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
-import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
+import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { inheritCohortFormation, setFieldLocked,
@@ -837,11 +837,23 @@ export async function ociaSaveEdit(id) {
   if (!r.ok) { alert('Candidate name is required.'); return { ok: false }; }
   const { payload, familyGroupId, linkTargetToUpdate } = r;
   const prior = allOcia.find(x => x.id === id);
+  const priorStatus = prior?.status_code ?? null;
   _ociaApplyEditFields(payload, prior);
   const { error } = await withWriteRetry(() => sb.from('sacramental_ocia').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('ocia update', error); return { ok: false }; }
   if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);
   logActivity({ action: 'updated OCIA record', entityType: 'ocia', entityName: payload.name, contextType: 'ocia', contextId: id });
+  // Notify on TRANSITION into a fire-state: 'complete' (Preparation Complete) or
+  // 'received' (Received) — two distinct lifecycle events. OCIA is cross-linkable
+  // (record_links + annulment case-group) → fan out to linked panels' recipients.
+  if (priorStatus !== payload.status_code && (payload.status_code === 'complete' || payload.status_code === 'received')) {
+    const { data: { user } } = await sb.auth.getUser();
+    notifySacramentEvent({
+      keys: ['ocia'], parishId: prior?.parish_id ?? null, originType: 'ocia', originId: id, actorUserId: user?.id,
+      message: payload.status_code === 'received' ? `${payload.name} OCIA — received` : `${payload.name} OCIA — preparation complete`,
+      type: 'success', module: 'ocia', record_id: id,
+    });
+  }
   await loadOciaData();
   return { ok: true };
 }

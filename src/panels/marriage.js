@@ -4,7 +4,7 @@ import { store } from '../store.js';
 import { expandCase, ensureCaseDisplays, getCaseDisplay } from './annulments.js';
 import { ensureOciaDisplays, getOciaDisplay } from './ocia.js';
 import { isAdmin, canAccessSacrament } from '../roles.js';
-import { notifyUsers, getUserIdsForSacrament } from '../notifications.js';
+import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
@@ -95,6 +95,25 @@ function progressOf(c) {
   if (!total) return null;
   const done = docs.filter(d => d.received).length + steps.filter(s => s.completed).length;
   return Math.round((done / total) * 100);
+}
+// "Finalized" = every document received AND every prep step completed (both checkbox
+// booleans), INDEPENDENT of status_code. Requires ≥1 doc/step so an empty file isn't
+// trivially finalized. Same mechanics as progressOf's done/total.
+function _marIsFinalized(c) {
+  const docs = normDocs(c), steps = normSteps(c);
+  const total = docs.length + steps.length;
+  return total > 0 && docs.every(d => d.received) && steps.every(s => s.completed);
+}
+// Fire the derived "Finalized" event ONCE, on the false→true transition (the last
+// missing doc/step just filled). Marriage is cross-linkable → fan out to linked panels.
+async function _marMaybeFinalized(c, wasFinalized) {
+  if (wasFinalized || !_marIsFinalized(c)) return;
+  const { data: { user } } = await sb.auth.getUser();
+  notifySacramentEvent({
+    keys: ['marriage'], parishId: c.parish_id ?? null, originType: 'marriage', originId: c.id, actorUserId: user?.id,
+    message: `${s1Name(c)} & ${s2Name(c)}'s Marriage Preparation File is Finalized`,
+    type: 'success', module: 'marriage', record_id: c.id,
+  });
 }
 function notesOf(c) {
   const out = (Array.isArray(c.notes_log) ? c.notes_log : []).map(n => ({ note: n.note || '', by: n.by || null, created_at: n.created_at || null, edited_at: n.edited_at || null }));
@@ -272,17 +291,19 @@ async function _patch(coupleId, patch) {
 }
 async function toggleCoupleDoc(coupleId, i) {
   const c = allCouples.find(x => x.id === coupleId); if (!c) return;
+  const wasFinalized = _marIsFinalized(c);
   const docs = normDocs(c); applyDocCheck(docs[i], !docs[i].received);
-  if (await _patch(coupleId, { documents: docs })) refreshActivePanel();
+  if (await _patch(coupleId, { documents: docs })) { await _marMaybeFinalized(c, wasFinalized); refreshActivePanel(); }
 }
 async function toggleCoupleStep(coupleId, i) {
   const c = allCouples.find(x => x.id === coupleId); if (!c) return;
+  const wasFinalized = _marIsFinalized(c);
   const steps = JSON.parse(JSON.stringify(normSteps(c)));
   const done = !steps[i].completed;
   steps[i].completed = done;
   steps[i].completed_date = done ? nowIso() : null;
   steps[i].completed_by = done ? _curUserName() : null;
-  if (await _patch(coupleId, { steps })) refreshActivePanel();
+  if (await _patch(coupleId, { steps })) { await _marMaybeFinalized(c, wasFinalized); refreshActivePanel(); }
 }
 async function toggleCoupleFee(coupleId, i) {
   const c = allCouples.find(x => x.id === coupleId); if (!c) return;
@@ -860,9 +881,19 @@ async function _marWriteEdit(id) {
   if (st === 'external') st = 'inprogress';
   payload.status_code = st;
   payload.archived = _chk('mf-archive');
+  const priorStatus = prior?.status_code ?? null;
   const { error } = await withWriteRetry(() => sb.from('couples').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('couples update', error); return { ok: false }; }
   logActivity({ action: 'updated marriage prep record', entityType: 'marriage', entityName: `${payload.groom} & ${payload.bride}`, contextType: 'couple', contextId: id });
+  // Notify on TRANSITION into Complete (separate event from the derived "Finalized").
+  // Marriage is cross-linkable → fan out to linked panels' recipients.
+  if (priorStatus !== 'complete' && st === 'complete') {
+    const { data: { user } } = await sb.auth.getUser();
+    notifySacramentEvent({
+      keys: ['marriage'], parishId: prior?.parish_id ?? null, originType: 'marriage', originId: id, actorUserId: user?.id,
+      message: `${s1Name(prior)} & ${s2Name(prior)} Marriage — marked complete`, type: 'success', module: 'marriage', record_id: id,
+    });
+  }
   await loadCouplesData();
   return { ok: true };
 }
