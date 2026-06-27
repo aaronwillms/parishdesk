@@ -14,7 +14,7 @@ export async function onRequestPost(context) {
       return new Response(JSON.stringify({ error: 'Email required' }), { status: 400, headers: JSON_HEADERS });
     }
 
-    const response = await fetch(`${env.VITE_SUPA_URL}/auth/v1/admin/invite`, {
+    const response = await fetch(`${env.VITE_SUPA_URL}/auth/v1/invite`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
