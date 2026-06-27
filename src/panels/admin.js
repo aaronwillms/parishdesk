@@ -184,7 +184,6 @@ function _render() {
     { key: 'diocesan',  label: 'Diocesan Calendar' },
     { key: 'settings',  label: 'Parish Settings' },
     { key: 'audit',     label: 'Access Audit' },
-    { key: 'invite',    label: 'Invite User' },
   ];
 
   el.innerHTML = `
@@ -216,7 +215,6 @@ function _render() {
       if (_activeTab === 'diocesan')  await _renderDiocesanTab();
       if (_activeTab === 'settings')  await _renderSettingsTab();
       if (_activeTab === 'audit')     await _renderAuditTab();
-      if (_activeTab === 'invite')    _renderInviteTab();
     });
   });
 
@@ -224,7 +222,6 @@ function _render() {
   else if (_activeTab === 'diocesan') _renderDiocesanTab();
   else if (_activeTab === 'settings') _renderSettingsTab();
   else if (_activeTab === 'audit')    _renderAuditTab();
-  else if (_activeTab === 'invite')   _renderInviteTab();
   else _renderUsersTab();
 }
 
@@ -1431,76 +1428,12 @@ async function _saveNewParish() {
   _renderSettingsTab();   // all parishes render as boxes; the new one appears in order
 }
 
-// ── Invite tab ─────────────────────────────────────────────────────────────
-
-function _renderInviteTab() {
-  const el = document.getElementById('admin-tab-content');
-  if (!el) return;
-  el.innerHTML = `
-    <div style="background:#fff;border:.5px solid #E2DDD6;border-radius:8px;padding:1.2rem 1.4rem;max-width:420px;">
-      <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:1rem;">Invite New User</div>
-      <label style="display:block;font-size:11.5px;color:#6B7280;margin-bottom:3px;">Email address</label>
-      <input id="inv-email" type="email" placeholder="name@parish.org" style="
-        width:100%;box-sizing:border-box;padding:.4rem .65rem;border:.5px solid #D1C9BE;
-        border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;outline:none;margin-bottom:1rem;
-      " />
-      <div style="display:flex;align-items:center;gap:12px;">
-        <button id="inv-send" style="
-          padding:.4rem 1.1rem;background:#1C2B3A;color:#fff;border:none;
-          border-radius:5px;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
-        ">Send Invite</button>
-        <div id="inv-status" style="font-size:12px;color:#6B7280;min-height:16px;"></div>
-      </div>
-      <div style="font-size:11.5px;color:#9CA3AF;margin-top:.85rem;line-height:1.5;">
-        Invited users receive basic access only. Assign roles in the Users tab after they accept.
-      </div>
-    </div>
-  `;
-
-  document.getElementById('inv-send').addEventListener('click', async () => {
-    const emailEl  = document.getElementById('inv-email');
-    const sendBtn  = document.getElementById('inv-send');
-    const statusEl = document.getElementById('inv-status');
-    const email    = emailEl.value.trim();
-    if (!email) { statusEl.style.color = '#8B1A2F'; statusEl.textContent = 'Email is required.'; return; }
-
-    sendBtn.disabled = true;
-    sendBtn.textContent = 'Sending…';
-    statusEl.style.color = '#6B7280';
-    statusEl.textContent = '';
-
-    const controller = new AbortController();
-    const timeout    = setTimeout(() => controller.abort(), 10000);
-
-    try {
-      const res  = await fetch('/invite-user', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      const data = await res.json();
-      if (!res.ok) {
-        statusEl.style.color = '#8B1A2F';
-        statusEl.textContent = data.error || 'Invite failed.';
-      } else {
-        statusEl.style.color = '#2E7D32';
-        statusEl.textContent = `Invite sent to ${email}`;
-        emailEl.value = '';
-      }
-    } catch (err) {
-      clearTimeout(timeout);
-      statusEl.style.color = '#8B1A2F';
-      statusEl.textContent = err.name === 'AbortError'
-        ? 'Request timed out — please try again.'
-        : 'Network error — please try again.';
-    } finally {
-      sendBtn.disabled = false;
-      sendBtn.textContent = 'Send Invite';
-    }
-  });
-}
+// ── Invite ─────────────────────────────────────────────────────────────────
+// The Invite User tab was relocated to the fa-user-plus launcher in the top bar
+// (src/ui/invitePanel.js) — a role-tiered modal with optional link/place (all
+// inviters) + grant matrix (super-admin only). The old email-only tab handler
+// lived here; its logic now lives in invitePanel.js (the account exists at
+// invite-SEND, so pre-fill writes against the returned user_id immediately).
 
 // ── Expose save handler globally ───────────────────────────────────────────
 

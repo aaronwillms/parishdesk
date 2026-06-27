@@ -14,6 +14,7 @@ import { loadPersonnel } from './panels/personnel.js';
 import { loadTeams, loadTeamsStore } from './panels/teams.js';
 import { ensurePanel } from './panels/registry.js';
 import { initNotifications } from './notifications.js';
+import { initInviteLauncher } from './ui/invitePanel.js';
 import { loadMessaging, initChatBubble } from './panels/messaging.js';
 import { sb, deleteWithRetry } from './supabase.js';
 import { store } from './store.js';
@@ -177,6 +178,7 @@ async function startApp(user) {
   if (user?.id) {
     initNotifications(user.id);
     initChatBubble(user.id);
+    initInviteLauncher();   // top-bar fa-user-plus → role-tiered invite modal
     // Hard-delete conversations and discussions soft-deleted more than 14 days ago
     const _cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
     deleteWithRetry(() => sb.from('conversations').delete()

@@ -24,5 +24,9 @@ export async function onRequestPost(context) {
     return new Response(JSON.stringify({ error: data.message || 'Invite failed' }), { status: response.status });
   }
 
-  return new Response(JSON.stringify({ success: true }), { status: 200 });
+  // GoTrue's admin/invite returns the new auth user object at the top level — the
+  // auth.users row exists NOW (invited_at set), so the caller can write
+  // link/place/grant rows against this id immediately (no holding mechanism).
+  const userId = data?.id || data?.user?.id || null;
+  return new Response(JSON.stringify({ success: true, userId }), { status: 200 });
 }

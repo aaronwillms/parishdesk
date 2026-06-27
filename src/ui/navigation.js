@@ -135,6 +135,10 @@ export function resetNavVisibility() {
   document.querySelectorAll('.nav-item[data-panel], .nav-sec').forEach(el => {
     el.style.display = '';
   });
+  // Re-hide the top-bar invite launcher on logout (not a .nav-item, so it isn't
+  // covered by the reset above) — applyNavVisibility re-shows it for inviters.
+  const inviteLauncher = document.getElementById('invite-launcher');
+  if (inviteLauncher) inviteLauncher.style.display = 'none';
 }
 
 export function renderMinistryNav() {
@@ -200,6 +204,12 @@ export function applyNavVisibility() {
   if (teamsSubNav && !canAccessPanel('teams')) teamsSubNav.style.display = 'none';
 
   show('admin', isSuperAdmin());
+
+  // Top-bar invite launcher (fa-user-plus, left of the bell): visible to inviters.
+  // isAdmin() is true for admin AND super_admin; the panel itself further gates the
+  // grant matrix to super-admin only (see ui/invitePanel.js).
+  const inviteLauncher = document.getElementById('invite-launcher');
+  if (inviteLauncher) inviteLauncher.style.display = isAdmin() ? 'inline-flex' : 'none';
 
   renderMinistryNav();
 
