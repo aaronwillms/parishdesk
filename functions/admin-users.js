@@ -32,7 +32,7 @@ export async function onRequestGet(context) {
 
   // Fetch all user_profiles (left join in JS)
   const profilesRes = await fetch(
-    `${supaUrl}/rest/v1/user_profiles?select=user_id,personnel_id,avatar_url`,
+    `${supaUrl}/rest/v1/user_profiles?select=user_id,personnel_id,avatar_url,deactivated`,
     { headers: { ...headers, 'Accept': 'application/json' } }
   );
   const profiles = profilesRes.ok ? await profilesRes.json() : [];
@@ -44,10 +44,14 @@ export async function onRequestGet(context) {
   const users = allAuthUsers.map(u => {
     const p = profileMap[u.id] || null;
     return {
-      id:           u.id,
-      email:        u.email || null,
-      personnel_id: p?.personnel_id || null,
-      avatar_url:   p?.avatar_url   || null,
+      id:            u.id,
+      email:         u.email || null,
+      personnel_id:  p?.personnel_id || null,
+      avatar_url:    p?.avatar_url   || null,
+      // User-lifecycle: ban state (auth layer) + profile flag (in-session). The
+      // client treats a user as deactivated if EITHER is set (belt-and-suspenders).
+      banned_until:  u.banned_until || null,
+      deactivated:   p?.deactivated === true,
     };
   });
 

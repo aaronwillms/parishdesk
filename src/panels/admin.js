@@ -6,7 +6,7 @@ import { applyParishName } from '../ui/navigation.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { fetchAllGrants, revokeGrant, setGrantNote, labelForGrant, userName, ensureIdentities, recordTypeLabel, PRIORITY_TYPES } from '../ui/grants.js';
 import { personTitle } from '../utils.js';
-import { computePermissionBasis } from '../roles.js';
+import { computePermissionBasis, isSuperAdmin } from '../roles.js';
 import { deriveParishStaffPersonnelIds } from '../ui/parishStaff.js';
 import { createInstitutionWithRoot } from '../ui/institutions.js';
 
@@ -31,6 +31,7 @@ let _activeTab = 'users';
 let _users = [];
 let _expandedUserId = null;
 let _currentAuthUserId = null;
+let _showDeactivated = false;   // collapse state for the Deactivated section
 
 // 3c multi-parish: the parishes in the admin's group (id, parish_name, display_name).
 // Empty/one until Add-Parish creates a second — the picker/selector stay inert for
@@ -80,7 +81,7 @@ export async function loadAdmin() {
 async function _loadUsers() {
   await _fetchGroupParishes();   // for the per-user Parish Placement picker (inert if single-parish)
   const [profilesRes, rolesRes, sacramentRes, grantsRes, teamMembersRes, authRes, coordRes] = await Promise.all([
-    sb.from('user_profiles').select('user_id, personnel_id, parish_id, avatar_url, personnel(id,name)'),
+    sb.from('user_profiles').select('user_id, personnel_id, parish_id, avatar_url, deactivated, personnel(id,name)'),
     sb.from('user_roles').select('user_id, role'),
     sb.from('sacramental_roles').select('user_id, sacrament'),
     sb.from('panel_grants').select('user_id, panel'),
@@ -114,9 +115,10 @@ async function _loadUsers() {
     teamsByPersonnel[tm.personnel_id].push(tm.team_id);
   });
 
-  // Build email lookup from auth users
+  // Build email + ban-state lookups from auth users
   const emailById = {};
-  authUsers.forEach(u => { emailById[u.id] = u.email || null; });
+  const bannedById = {};
+  authUsers.forEach(u => { emailById[u.id] = u.email || null; bannedById[u.id] = u.banned_until || null; });
 
   // Build a map keyed by user_id
   const map = {};
@@ -151,6 +153,10 @@ async function _loadUsers() {
   const parishStaffIds = new Set(await deriveParishStaffPersonnelIds());
   Object.values(map).forEach(u => {
     u.isParishStaff = !!(u.profile?.personnel_id && parishStaffIds.has(u.profile.personnel_id));
+    // Deactivated = the profile flag OR an active GoTrue ban (belt-and-suspenders;
+    // either marks the account as deactivated for the Active/Deactivated split).
+    u.banned_until = bannedById[u.userId] || null;
+    u.isDeactivated = !!(u.profile?.deactivated) || !!(u.banned_until && new Date(u.banned_until) > new Date());
   });
 
   const lastName = name => {
@@ -236,7 +242,24 @@ function _renderUsersTab() {
     return;
   }
 
-  el.innerHTML = `<div id="admin-user-list">${_users.map(_userRow).join('')}</div>`;
+  // Split Active vs Deactivated. Active renders as before; deactivated users go into
+  // a collapsed section below (count in the header; click to expand).
+  const active      = _users.filter(u => !u.isDeactivated);
+  const deactivated = _users.filter(u =>  u.isDeactivated);
+
+  const deactivatedSection = deactivated.length ? `
+    <div style="margin-top:1.5rem;border-top:1.5px solid #E2DDD6;padding-top:1rem;">
+      <div id="admin-deactivated-toggle" style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin-bottom:${_showDeactivated ? '.8rem' : '0'};">
+        <span style="color:#9CA3AF;font-size:14px;">${_showDeactivated ? '▾' : '›'}</span>
+        <span style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;">Deactivated (${deactivated.length})</span>
+      </div>
+      ${_showDeactivated ? deactivated.map(_userRow).join('') : ''}
+    </div>` : '';
+
+  el.innerHTML = `<div id="admin-user-list">${active.map(_userRow).join('')}${deactivatedSection}</div>`;
+
+  const deToggle = document.getElementById('admin-deactivated-toggle');
+  if (deToggle) deToggle.addEventListener('click', () => { _showDeactivated = !_showDeactivated; _renderUsersTab(); });
 
   // Hydrate avatar placeholders — can't call createAvatar() inside innerHTML strings
   el.querySelectorAll('.admin-avatar-slot').forEach(slot => {
@@ -257,6 +280,17 @@ function _renderUsersTab() {
   });
   el.querySelectorAll('.au-link-remove').forEach(btn => {
     btn.addEventListener('click', e => { e.stopPropagation(); _unlinkUser(btn.dataset.userId); });
+  });
+
+  // Account lifecycle (super-admin only; buttons only rendered for non-self).
+  el.querySelectorAll('.au-deactivate-btn').forEach(btn => {
+    btn.addEventListener('click', e => { e.stopPropagation(); _deactivateUser(btn.dataset.userId, btn.closest('.admin-user-detail')); });
+  });
+  el.querySelectorAll('.au-reactivate-btn').forEach(btn => {
+    btn.addEventListener('click', e => { e.stopPropagation(); _reactivateUser(btn.dataset.userId, btn.closest('.admin-user-detail')); });
+  });
+  el.querySelectorAll('.au-delete-btn').forEach(btn => {
+    btn.addEventListener('click', e => { e.stopPropagation(); _deleteUser(btn.dataset.userId, btn.dataset.email, btn.closest('.admin-user-detail')); });
   });
 
   document.querySelectorAll('.admin-user-row').forEach(row => {
@@ -285,6 +319,7 @@ function _userRow(u) {
                   : '#F3F4F6';
   const roleColor = u.roles.includes('super_admin') ? '#F8F7F4' : '#4B5563';
   const roleBadges = [
+    u.isDeactivated ? `<span style="font-size:10.5px;font-weight:600;background:#4B5563;color:#F8F7F4;border-radius:20px;padding:2px 8px;">Deactivated</span>` : '',
     `<span style="font-size:10.5px;font-weight:600;background:${roleBg};color:${roleColor};border-radius:20px;padding:2px 8px;">${roleLabel}</span>`,
     isUnlinked ? `<span style="font-size:10.5px;font-weight:600;background:#FDEAED;color:#8B1A2F;border-radius:20px;padding:2px 8px;border:.5px solid #F5C2CB;">Unlinked</span>` : '',
   ].filter(Boolean).join(' ');
@@ -488,6 +523,33 @@ function _userDetail(u) {
         <div style="font-size:11.5px;color:#9CA3AF;margin-top:4px;line-height:1.5;">Where this user is placed (link) and which parish's prep panels are granted. Cura/group-wide grants ignore this.</div>
       </div>` : '';
 
+  // Account lifecycle (super-admin only; never on your own account). Active users
+  // get Deactivate (reversible); deactivated users get Reactivate + Delete (Delete
+  // is type-the-email-to-confirm, irreversible).
+  const lifecycleBlock = (isSuperAdmin() && !isSelf) ? `
+      <div style="margin-top:1rem;border-top:.5px solid #F0EDE8;padding-top:1rem;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">Account</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          ${u.isDeactivated ? `
+            <button class="au-reactivate-btn" data-user-id="${u.userId}" style="
+              padding:.4rem 1.1rem;background:#2E7D32;color:#fff;border:none;border-radius:5px;
+              font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
+            ">Reactivate</button>
+            <button class="au-delete-btn" data-user-id="${u.userId}" data-email="${(u.email || '').replace(/"/g, '&quot;')}" style="
+              padding:.4rem 1.1rem;background:#fff;color:#8B1A2F;border:.5px solid #F2C9D1;border-radius:5px;
+              font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
+            ">Delete User</button>
+          ` : `
+            <button class="au-deactivate-btn" data-user-id="${u.userId}" style="
+              padding:.4rem 1.1rem;background:#fff;color:#8B1A2F;border:.5px solid #F2C9D1;border-radius:5px;
+              font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;font-weight:500;
+            ">Deactivate</button>
+          `}
+          <div class="au-lifecycle-status" style="font-size:12px;color:#6B7280;min-height:16px;"></div>
+        </div>
+        ${u.isDeactivated ? `<div style="font-size:11.5px;color:#9CA3AF;margin-top:.5rem;line-height:1.5;">Delete is permanent. Records they entered are kept but show “Unknown User”. Cannot be undone.</div>` : ''}
+      </div>` : '';
+
   return `
     <div class="admin-user-detail" data-user-id="${u.userId}" style="border-top:.5px solid #F0EDE8;padding:1rem 1.1rem;background:#FAFAF8;">
       <div style="margin-bottom:1rem;">
@@ -546,8 +608,59 @@ function _userDetail(u) {
         ">Send Password Reset Email</button>` : ''}
         <div class="au-status" style="font-size:12px;color:#6B7280;min-height:16px;"></div>
       </div>
+
+      ${lifecycleBlock}
     </div>
   `;
+}
+
+// ── Account lifecycle (deactivate / reactivate / delete) ─────────────────────
+// All three post to the authoritative Cloudflare Function, which re-verifies the
+// caller (forwarded token) and enforces the guards server-side. The client gates
+// (super-admin + not-self, which decide whether the buttons render) are UX-only.
+
+async function _lifecycleAction(action, userId, detailEl, { confirmFn } = {}) {
+  const statusEl = detailEl?.querySelector('.au-lifecycle-status');
+  if (confirmFn && !confirmFn()) return;
+  if (statusEl) { statusEl.style.color = '#6B7280'; statusEl.textContent = 'Working…'; }
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const token = session?.access_token;
+    if (!token) { if (statusEl) { statusEl.style.color = '#8B1A2F'; statusEl.textContent = 'No active session.'; } return; }
+    const res = await fetch('/admin-user-lifecycle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ action, userId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (statusEl) { statusEl.style.color = '#8B1A2F'; statusEl.textContent = data.error || 'Action failed.'; }
+      return;
+    }
+    await _loadUsers();   // user moves between sections / disappears
+  } catch (err) {
+    if (statusEl) { statusEl.style.color = '#8B1A2F'; statusEl.textContent = 'Network error — please try again.'; }
+  }
+}
+
+function _deactivateUser(userId, detailEl) {
+  _lifecycleAction('deactivate', userId, detailEl, {
+    confirmFn: () => confirm('Deactivate this account? They will be unable to log in until reactivated. This is reversible.'),
+  });
+}
+
+function _reactivateUser(userId, detailEl) {
+  _lifecycleAction('reactivate', userId, detailEl);
+}
+
+function _deleteUser(userId, email, detailEl) {
+  const typed = prompt(`Permanently delete this account?\n\nRecords they entered are kept but will show “Unknown User”. This CANNOT be undone.\n\nType the user's email to confirm:\n${email || ''}`);
+  if (typed === null) return;
+  if ((typed || '').trim().toLowerCase() !== (email || '').trim().toLowerCase()) {
+    alert('Email did not match — deletion cancelled.');
+    return;
+  }
+  _lifecycleAction('delete', userId, detailEl);
 }
 
 // ── User save ──────────────────────────────────────────────────────────────

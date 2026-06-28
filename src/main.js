@@ -188,6 +188,15 @@ async function startApp(user) {
     deleteWithRetry(() => sb.from('project_log').delete()
       .lt('deleted_at', _cutoff).not('deleted_at', 'is', null)).then(() => {});
     try { await loadUserProfile(); } catch (e) { console.error('[startApp] loadUserProfile failed:', e); }
+    // User-lifecycle ejection: a deactivated account that still holds an open session
+    // is signed out immediately (the GoTrue ban alone would only drop them on the next
+    // token refresh, up to ~1h later). signOut → onAuthStateChange SIGNED_OUT → login screen.
+    if (store.currentUserProfile?.deactivated) {
+      console.warn('[startApp] account deactivated — signing out');
+      await sb.auth.signOut();
+      alert('This account has been deactivated. Please contact a parish administrator.');
+      return;
+    }
     // Apply dark mode on load — mobile only
     if (store.currentUserProfile?.dark_mode && window.innerWidth < 768) {
       document.body.classList.add('dark-mode');
