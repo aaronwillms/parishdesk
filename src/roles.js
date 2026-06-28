@@ -186,6 +186,37 @@ export function canAccessSacrament(sacrament, parishId = _myParish()) {
       || _setMatchesParish(r.panelGrants?.get(sacrament), parishId);
 }
 
+// Enumerate the parishes the current user can SEE for a given set of sacrament keys
+// (the inverse of canAccessSacrament's predicate — used by the in-panel parish
+// switcher). Returns parish objects from store.groupParishes.
+//   • super-admin                 → all group parishes.
+//   • a NULL parish in any key's  → group-wide/cura access → all group parishes.
+//     Set (sacraments|panelGrants)
+//   • otherwise                   → only the group parishes whose id appears in the
+//                                   union of parish_ids across the given keys.
+// firstcomm is dual-key (['first_communion','firstcomm']); pass both. NO existing
+// enumerator did this — single source of truth for the switcher options.
+export function accessibleParishesForSacrament(keys) {
+  const all = store.groupParishes || [];
+  if (isSuperAdmin()) return all.slice();
+  const r = store.currentUserRoles;
+  if (!r) return [];
+  const ids = new Set();
+  let unrestricted = false;
+  for (const key of (keys || [])) {
+    for (const src of [r.sacraments, r.panelGrants]) {
+      const set = src && src.get ? src.get(key) : null;
+      if (!set) continue;
+      for (const pid of set) {
+        if (pid == null) unrestricted = true;
+        else ids.add(pid);
+      }
+    }
+  }
+  if (unrestricted) return all.slice();
+  return all.filter(p => ids.has(p.id));
+}
+
 // ── Discernment PANEL ACCESS (axis 1) ───────────────────────────────────────
 // True for super-admin + anyone holding the 'discernment' panel grant (granted
 // in the Admin Panel by a super-admin — same family as the sacramental-

@@ -1,10 +1,10 @@
 import { sb, withWriteRetry, serializeWrite, insertWithRetry, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError, applyDocCheck, docCheckStampHtml } from '../utils.js';
-import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
+import { isAdmin, canAccessSacrament, isSacramentCoordinator, accessibleParishesForSacrament } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
-import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
+import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
@@ -58,11 +58,13 @@ async function loadFcCoordinator() {
 // Data-only refresh (used by the shell + autosave). Returns the record list.
 export async function loadFcData() {
   await Promise.all([loadTemplate(), loadCohorts(), loadFcCoordinator()]);
-  // Parish-scope (Step 2b): STRICT match to the resolved parish (creates now stamp parish_id;
-  // 2a backfilled all rows). Single-parish → today's rows; multi-parish → hard isolation.
-  const _pid = store.parishSettings?.id;
+  // Parish-scope: fetch the UNION of parishes this user can access (firstcomm is dual-key);
+  // the in-panel switcher filters per-tab client-side. Single-parish → [home] (≡ old .eq).
+  // Fallback to the home parish when the group list is empty (no-group / unresolved).
+  const ids = accessibleParishesForSacrament(['first_communion', 'firstcomm']).map(p => p.id);
   let _q = sb.from('sacramental_firstcomm').select('*').order('created_at', { ascending: false });
-  if (_pid) _q = _q.eq('parish_id', _pid);
+  if (ids.length) _q = _q.in('parish_id', ids);
+  else if (store.parishSettings?.id) _q = _q.eq('parish_id', store.parishSettings.id);
   const { data, error } = await _q;
   if (error) { console.error('[firstcomm]', error); return []; }
   allFc = data || [];
@@ -376,7 +378,7 @@ async function fcSave() {
   payload.status_code = 'enrolled';
   payload.archived = false;
   payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-  payload.parish_id = store.parishSettings?.id;   // Step 2b: stamp the resolved parish
+  payload.parish_id = getSelectedParish('firstcommunion');   // stamp the switcher's selected parish (All ⇒ home)
   const { data: ins, error } = await insertWithRetry('sacramental_firstcomm', payload);
   if (error) { reportWriteError('firstcomm insert', error); return; }
   // Apply the pending "Link Family Member" pick via the shared rule (mint/join).

@@ -8,6 +8,8 @@
 
 import { todayCST } from '../utils.js';
 import { flashSaved } from '../ui/saveButton.js';
+import { store } from '../store.js';
+import { accessibleParishesForSacrament } from '../roles.js';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -50,15 +52,35 @@ function flagHtml(f) {
 }
 
 // ── Single active instance (only one sacramental panel is visible at a time) ─
-let _active = null;   // { config, container, records, selectedId, editing, filter, search, bulk, selected:Set }
+let _active = null;   // { config, container, records, selectedId, editing, filter, search, bulk, selected:Set, parishTab }
+
+// Selected parish per panelKey — read by the panel create sites to stamp new records
+// (see getSelectedParish). 'all'/unset ⇒ the user's home parish.
+const _selectedByPanel = {};
+
+// The parish a new record should be stamped to for this panel: the active tab when a
+// specific parish is selected, else the user's home parish ('all' is a view-only union).
+export function getSelectedParish(panelKey) {
+  const sel = _selectedByPanel[panelKey];
+  if (sel && sel !== 'all') return sel;
+  return store.parishSettings?.id ?? null;
+}
 
 export function renderSacramentalPanel(containerEl, config) {
+  // Parish switcher: default to the user's HOME parish if it's among the accessible
+  // parishes, else 'all'. Only rendered when >1 parish is accessible (see listPaneHtml).
+  const accParishes = accessibleParishesForSacrament(config.sacramentKeys || []);
+  const homeId = store.parishSettings?.id ?? null;
+  const initTab = (homeId && accParishes.some(p => p.id === homeId)) ? homeId : 'all';
+  _selectedByPanel[config.panelKey] = initTab;
+
   _active = {
     config, container: containerEl,
     records: [], selectedId: null, editing: false,
     filter: 'all', search: '',
     bulk: false, selected: new Set(),
     groupsCollapsed: new Set(), groupInit: false,
+    parishTab: initTab,
   };
   containerEl.innerHTML = `<div class="sac-shell" id="sac-shell"></div>`;
   containerEl.querySelector('#sac-shell').addEventListener('click', onShellClick);
@@ -112,6 +134,9 @@ function visibleRecords() {
   const f = (cfg.statusFilters || []).find(x => x.key === s.filter);
   const out = s.records.filter(r => {
     if (f && f.match && !f.match(r)) return false;
+    // Parish switcher: a specific parish tab filters to that parish; 'all' (or unset)
+    // shows the full accessible union (records already fetched for all accessible parishes).
+    if (s.parishTab && s.parishTab !== 'all' && r.parish_id !== s.parishTab) return false;
     if (q) {
       const txt = (cfg.searchText ? cfg.searchText(r) : cfg.listItem(r).title) || '';
       if (!String(txt).toLowerCase().includes(q)) return false;
@@ -127,6 +152,16 @@ function listPaneHtml() {
   const canManage = cfg.canManage ? cfg.canManage() : true;
   const pills = (cfg.statusFilters || []).map(f =>
     `<button class="cf-btn${s.filter === f.key ? ' active' : ''}" data-act="filter" data-key="${f.key}">${esc(f.label)}</button>`).join('');
+
+  // Parish switcher (only when the user can see >1 parish). Mirrors the cf-btn pill
+  // idiom; labels use the SHORT name (display_name) per the naming rule. 'All' = union.
+  const accParishes = accessibleParishesForSacrament(cfg.sacramentKeys || []);
+  const parishSwitcher = accParishes.length > 1 ? `
+      <div style="display:flex;gap:5px;margin-top:.5rem;flex-wrap:wrap;align-items:center;">
+        <button class="cf-btn${s.parishTab === 'all' ? ' active' : ''}" data-act="parish" data-pid="all">All</button>
+        ${accParishes.map(p => `<button class="cf-btn${s.parishTab === p.id ? ' active' : ''}" data-act="parish" data-pid="${p.id}">${esc(p.display_name || p.parish_name || 'Parish')}</button>`).join('')}
+      </div>` : '';
+
   const listBody = listBodyHtml();
 
   const bulkBar = s.bulk
@@ -145,6 +180,7 @@ function listPaneHtml() {
       </div>
       <input type="text" id="sac-search" placeholder="Search…" value="${esc(s.search)}" data-act="search"
         style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;outline:none;" />
+      ${parishSwitcher}
       <div style="display:flex;gap:5px;margin-top:.5rem;flex-wrap:wrap;align-items:center;">
         ${pills}
         ${(cfg.canBulk ? cfg.canBulk() : canManage) ? `<button class="cf-btn" data-act="bulk-toggle" title="Select multiple" style="margin-left:auto;${s.bulk ? 'background:var(--navy);color:var(--gold);' : ''}"><i class="fa-solid fa-list-check"></i></button>` : ''}
@@ -325,6 +361,7 @@ async function onShellClick(e) {
 
   switch (act) {
     case 'filter':     s.filter = t.dataset.key; render(); break;
+    case 'parish':     s.parishTab = t.dataset.pid; _selectedByPanel[cfg.panelKey] = s.parishTab; render(); break;
     case 'search':     break;  // handled by input listener below
     case 'toggle-group': { const k = t.dataset.key; s.groupsCollapsed.has(k) ? s.groupsCollapsed.delete(k) : s.groupsCollapsed.add(k); render(); break; }
     case 'new':        cfg.openCreate?.(); break;

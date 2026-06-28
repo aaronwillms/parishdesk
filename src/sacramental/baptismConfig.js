@@ -105,6 +105,7 @@ function emailFamily(p) {
 // ── Config object ───────────────────────────────────────────────────────────
 export const baptismConfig = {
   panelKey: 'baptism',
+  sacramentKeys: ['baptism'],   // parish switcher: access keys that gate visible parishes
   title: 'Child Records',
   newLabel: '+ Add Child',
   groupBy: null,   // flat list; archived sinks to the bottom (shell-handled)

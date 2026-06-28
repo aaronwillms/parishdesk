@@ -3,10 +3,10 @@ import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError, ap
 import { store } from '../store.js';
 import { expandCase, ensureCaseDisplays, getCaseDisplay } from './annulments.js';
 import { ensureOciaDisplays, getOciaDisplay } from './ocia.js';
-import { isAdmin, canAccessSacrament } from '../roles.js';
+import { isAdmin, canAccessSacrament, accessibleParishesForSacrament } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
-import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
+import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { buildPreparerField, readPreparerValue, clergyNames } from '../sacramental/preparerField.js';
@@ -148,11 +148,13 @@ async function loadMarriageCoordinator() {
 // Data-only refresh (used by the shell + autosave). Returns the record list.
 export async function loadCouplesData() {
   await Promise.all([loadTemplates(), loadMarriageCoordinator()]);
-  // Parish-scope (Step 2b): STRICT match to the resolved parish (creates now stamp parish_id;
-  // 2a backfilled all rows). Single-parish → today's rows; multi-parish → hard isolation.
-  const _pid = store.parishSettings?.id;
+  // Parish-scope: fetch the UNION of parishes this user can access; the in-panel switcher
+  // filters per-tab client-side. Single-parish → [home] (≡ old .eq). Fallback to the home
+  // parish when the group list is empty (no-group / unresolved).
+  const ids = accessibleParishesForSacrament(['marriage']).map(p => p.id);
   let _q = sb.from('couples').select('*');
-  if (_pid) _q = _q.eq('parish_id', _pid);
+  if (ids.length) _q = _q.in('parish_id', ids);
+  else if (store.parishSettings?.id) _q = _q.eq('parish_id', store.parishSettings.id);
   const { data, error } = await _q;
   if (error) { console.error('[marriage]', error); return []; }
   allCouples = data || [];
@@ -908,7 +910,7 @@ async function marSaveCouple() {
   if (st === 'external') st = 'inprogress';
   payload.status_code = st;
   payload.archived = false;
-  payload.parish_id = store.parishSettings?.id;   // Step 2b: stamp the resolved parish
+  payload.parish_id = getSelectedParish('marriage');   // stamp the switcher's selected parish (All ⇒ home)
   const { error } = await insertWithRetry('couples', payload);
   if (error) { reportWriteError('couples insert', error); return; }
   logActivity({ action: 'created marriage prep record', entityType: 'marriage', entityName: `${payload.groom} & ${payload.bride}`, contextType: 'couple' });

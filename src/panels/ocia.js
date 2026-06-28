@@ -2,7 +2,7 @@ import { sb, withWriteRetry, serializeWrite, insertWithRetry, deleteWithRetry } 
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError, applyDocCheck, docCheckStampHtml } from '../utils.js';
 import { expandCase, ensureCaseDisplays, getCaseDisplay } from './annulments.js';
-import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
+import { isAdmin, canAccessSacrament, isSacramentCoordinator, accessibleParishesForSacrament } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
@@ -11,7 +11,7 @@ import { inheritCohortFormation, setFieldLocked,
 import { promptNoteEdit } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { registerCohortManager } from '../sacramental/cohortManager.js';
-import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
+import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
 
 const OCIA_STATUS = {
   inquirer:    { label:'Inquirer',             color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -213,11 +213,13 @@ async function loadTemplates() {
 // Data-only refresh (used by the shell + autosave/modal). Returns the record list.
 export async function loadOciaData() {
   await Promise.all([loadTemplates(), loadOciaCoordinator(), loadCohorts()]);
-  // Parish-scope (Step 2b): STRICT match to the resolved parish (creates now stamp parish_id;
-  // 2a backfilled all rows). Single-parish → today's rows; multi-parish → hard isolation.
-  const _pid = store.parishSettings?.id;
+  // Parish-scope: fetch the UNION of parishes this user can access; the in-panel switcher
+  // filters per-tab client-side. Single-parish → [home] (≡ old .eq). Fallback to the home
+  // parish when the group list is empty (no-group / unresolved).
+  const ids = accessibleParishesForSacrament(['ocia']).map(p => p.id);
   let _q = sb.from('sacramental_ocia').select('*').order('created_at', { ascending: false });
-  if (_pid) _q = _q.eq('parish_id', _pid);
+  if (ids.length) _q = _q.in('parish_id', ids);
+  else if (store.parishSettings?.id) _q = _q.eq('parish_id', store.parishSettings.id);
   const { data, error } = await _q;
   if (error) { console.error('[ocia]', error); return []; }
   allOcia = data || [];
@@ -814,7 +816,7 @@ async function ociaSave() {
   const { payload, familyGroupId, linkTargetToUpdate } = r;
   payload.status_code = document.getElementById('of-status')?.value || 'inquirer';
   payload.archived = false;
-  payload.parish_id = store.parishSettings?.id;   // Step 2b: stamp the resolved parish
+  payload.parish_id = getSelectedParish('ocia');   // stamp the switcher's selected parish (All ⇒ home)
   const { error } = await insertWithRetry('sacramental_ocia', payload);
   if (error) { reportWriteError('ocia insert', error); return; }
   if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);
