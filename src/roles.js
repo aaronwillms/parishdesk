@@ -186,6 +186,23 @@ export function canAccessSacrament(sacrament, parishId = _myParish()) {
       || _setMatchesParish(r.panelGrants?.get(sacrament), parishId);
 }
 
+// Panel-VISIBILITY predicate: true if the user has access to this sacrament at ANY
+// parish — unlike canAccessSacrament(), which defaults to the HOME parish and so
+// hid the panel from a user whose only access is at a non-home parish (e.g. a
+// Basilica-placed Assumption coordinator). A key present in .sacraments or
+// .panelGrants always carries a non-empty Set (≥1 parish id, or null for group-wide
+// cura), so presence == access-to-≥1-parish. Mirrors canAccessSacrament's single-key
+// lookup (it does NO key normalization — the caller passes the resolved key). Used
+// ONLY by the nav/panel-visibility gate; per-parish and per-record checks keep using
+// the two-arg canAccessSacrament.
+export function canAccessSacramentAnyParish(sacrament) {
+  if (isSuperAdmin()) return true;
+  const r = store.currentUserRoles;
+  if (!r) return false;
+  return (r.sacraments?.get(sacrament)?.size > 0)
+      || (r.panelGrants?.get(sacrament)?.size > 0);
+}
+
 // Enumerate the parishes the current user can SEE for a given set of sacrament keys
 // (the inverse of canAccessSacrament's predicate — used by the in-panel parish
 // switcher). Returns parish objects from store.groupParishes.
@@ -317,7 +334,9 @@ export function canAccessPanel(panel) {
     marriage:     'marriage',
     annulments:   'annulments',
   };
-  if (SACRAMENTAL[panel]) return canAccessSacrament(SACRAMENTAL[panel]);
+  // Nav/panel VISIBILITY: any-parish (not home-parish-biased) so a user with access
+  // at a non-home parish still sees the panel. Per-parish record scoping happens later.
+  if (SACRAMENTAL[panel]) return canAccessSacramentAnyParish(SACRAMENTAL[panel]);
 
   // Panel grants catch-all (non-sacramental panels) — parish-unaware (key presence only).
   return !!r.panelGrants?.has(panel);
