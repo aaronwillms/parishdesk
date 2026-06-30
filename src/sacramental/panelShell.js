@@ -66,6 +66,19 @@ export function getSelectedParish(panelKey) {
   return store.parishSettings?.id ?? null;
 }
 
+// The RAW active parish tab for a panel ('all' | parishId) — unlike getSelectedParish,
+// 'all' survives so consumers (e.g. the coordinator header) can distinguish the union
+// view from a specific parish.
+export function getActiveParishTab(panelKey) {
+  return _selectedByPanel[panelKey] ?? 'all';
+}
+
+// Tab-change notifier so external UI (the coordinator header) can react without reaching
+// into shell internals. Single latest-wins callback — only one prep panel is open at a
+// time. Fired (panelKey, rawTab) after the switcher updates state + re-renders.
+let _onParishTabChange = null;
+export function onParishTabChange(fn) { _onParishTabChange = fn; }
+
 export function renderSacramentalPanel(containerEl, config) {
   // Parish switcher: default to "All" (the union view). Tabs only render when >1 parish
   // is accessible (see parishTabsHtml); at ≤1 parish there are no tabs and 'all' is a
@@ -371,7 +384,7 @@ async function onShellClick(e) {
 
   switch (act) {
     case 'filter':     s.filter = t.dataset.key; render(); break;
-    case 'parish':     s.parishTab = t.dataset.pid; _selectedByPanel[cfg.panelKey] = s.parishTab; render(); break;
+    case 'parish':     s.parishTab = t.dataset.pid; _selectedByPanel[cfg.panelKey] = s.parishTab; render(); _onParishTabChange?.(cfg.panelKey, s.parishTab); break;
     case 'search':     break;  // handled by input listener below
     case 'toggle-group': { const k = t.dataset.key; s.groupsCollapsed.has(k) ? s.groupsCollapsed.delete(k) : s.groupsCollapsed.add(k); render(); break; }
     case 'new':        cfg.openCreate?.(); break;

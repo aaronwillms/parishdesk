@@ -3,64 +3,137 @@ import { store } from '../store.js';
 import { todayCST, fmtDateYear, PANEL_TITLES, personTitle } from '../utils.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { upsertProgramCoordinators, PREP_PROGRAMS } from './programCoordinators.js';
+import { accessibleParishesForSacrament } from '../roles.js';
+import { getActiveParishTab, onParishTabChange } from '../sacramental/panelShell.js';
 
-let coordData = {};
+// Header program key → the sacrament access key(s) used by accessibleParishesForSacrament.
+// ⚠️ First Communion's header prog is 'firstcomm' but its access keys are the dual
+// ['first_communion','firstcomm'] — map it explicitly so FC resolves its parishes.
+const PROG_ACCESS_KEYS = {
+  baptism:      ['baptism'],
+  firstcomm:    ['first_communion', 'firstcomm'],
+  confirmation: ['confirmation'],
+  ocia:         ['ocia'],
+  marriage:     ['marriage'],
+};
+// Header prog → panelShell panelKey (the tab state is keyed by panelKey, and FC's
+// panelKey 'firstcommunion' ≠ its header prog 'firstcomm').
+const PROG_PANEL_KEY = {
+  baptism: 'baptism', firstcomm: 'firstcommunion', confirmation: 'confirmation', ocia: 'ocia', marriage: 'marriage',
+};
+// Inverse: panelShell panelKey → header prog (for the tab-change callback).
+const PANEL_KEY_PROG = {
+  baptism: 'baptism', firstcommunion: 'firstcomm', confirmation: 'confirmation', ocia: 'ocia', marriage: 'marriage',
+};
+
+let coordData = {};      // prep → { [parishId]: row }; cura → single row|null (unchanged shape)
 let scheduleData = {};
 
 export async function loadCoordData(prog) {
+  const isPrep = PREP_PROGRAMS.has(prog);
+  // PREP: fetch coordinator rows for ALL accessible parishes (the header then renders
+  // per-parish, filtered by the active tab). CURA (annulments/discernment/homebound):
+  // the single group-shared NULL-parish row, exactly as before.
+  let coordQuery;
+  if (isPrep) {
+    const accessibleIds = accessibleParishesForSacrament(PROG_ACCESS_KEYS[prog] || [prog]).map(p => p.id);
+    coordQuery = accessibleIds.length
+      ? sb.from('program_coordinators').select('*').eq('program', prog).in('parish_id', accessibleIds)
+      : sb.from('program_coordinators').select('*').eq('program', prog).eq('parish_id', store.parishSettings?.id); // no group list → home parish
+  } else {
+    coordQuery = sb.from('program_coordinators').select('*').eq('program', prog).is('parish_id', null);
+  }
   const [coordRes, schedRes] = await Promise.all([
-    (PREP_PROGRAMS.has(prog)
-      ? sb.from('program_coordinators').select('*').eq('program', prog).eq('parish_id', store.parishSettings?.id)
-      : sb.from('program_coordinators').select('*').eq('program', prog).is('parish_id', null)
-    ).maybeSingle(),   // prep → resolved parish row, cura → NULL-parish row
+    coordQuery,   // array (no maybeSingle — prep may have multiple rows)
     sb.from('program_schedule').select('*').eq('program', prog).gte('event_date', todayCST()).order('event_date').order('event_time')
   ]);
-  coordData[prog] = coordRes.data || null;
+  if (isPrep) {
+    const byParish = {};
+    (coordRes.data || []).forEach(row => { if (row.parish_id) byParish[row.parish_id] = row; });
+    coordData[prog] = byParish;                          // { [parishId]: row }
+  } else {
+    coordData[prog] = (coordRes.data && coordRes.data[0]) || null;   // single row|null (unchanged shape)
+  }
   scheduleData[prog] = schedRes.data || [];
   renderCoordCard(prog);
 }
 
-// Resolve coordinator_ids → personnel records from store.
-// Falls back to legacy embedded coordinators JSONB for old rows.
-function getCoordinators(prog) {
-  const d = coordData[prog];
+// Resolve a single program_coordinators ROW → personnel records (or legacy embedded
+// coordinator objects). Used per-parish for prep and once for cura.
+function coordinatorsFromRow(d) {
   if (!d) return [];
   if (d.coordinator_ids && d.coordinator_ids.length) {
     const personnel = store.personnel || [];
-    return d.coordinator_ids
-      .map(id => personnel.find(p => p.id === id))
-      .filter(Boolean);
+    return d.coordinator_ids.map(id => personnel.find(p => p.id === id)).filter(Boolean);
   }
-  // Backward compat: embedded name/phone/email objects
-  if (d.coordinators && d.coordinators.length) return d.coordinators;
+  if (d.coordinators && d.coordinators.length) return d.coordinators;   // legacy embedded
   if (d.name) return [{ name: d.name, phone: d.phone || null, email: d.email || null }];
   return [];
 }
 
+// One coordinator person (name + phone/email links). `sep` adds the divider for 2nd+.
+function coordPersonHtml(c, sep) {
+  const contacts = [
+    c.phone ? `<a href="tel:${normalizePhone(c.phone)}" style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:#8FA8BF;text-decoration:none;">📞 ${formatPhone(c.phone)}</a>` : '',
+    c.email ? `<a href="mailto:${c.email}" style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:#8FA8BF;text-decoration:none;">✉️ ${c.email}</a>` : '',
+  ].filter(Boolean).join('');
+  return `<div style="${sep ? 'margin-top:8px;padding-top:8px;border-top:.5px solid rgba(255,255,255,.1);' : ''}">
+    <div style="font-family:'Inter',sans-serif;font-weight:500;font-size:14px;color:#F5F1EB;">${c.name}</div>
+    ${contacts ? `<div style="margin-top:3px;display:flex;flex-wrap:wrap;gap:8px;">${contacts}</div>` : ''}
+  </div>`;
+}
+// Section label: grey "Program Coordinator(s)" heading, or a gold parish-name tag.
+const _coordHeading = (txt, gold) => `<div style="font-size:10.5px;font-weight:600;color:${gold ? 'var(--gold)' : '#6B7280'};text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">${txt}</div>`;
+// The classic single-group output (heading + people) — single-parish prep + cura.
+function _singleGroupHtml(coords) {
+  return _coordHeading(coords.length > 1 ? 'Program Coordinators' : 'Program Coordinator')
+    + coords.map((c, i) => coordPersonHtml(c, i > 0)).join('');
+}
+
 function renderCoordCard(prog) {
-  const coords = getCoordinators(prog);
+  const isPrep = PREP_PROGRAMS.has(prog);
   const schedule = scheduleData[prog] || [];
   const nameEl = document.getElementById('coord-name-' + prog);
   const contactEl = document.getElementById('coord-contact-' + prog);
   const nextEl = document.getElementById('coord-next-' + prog);
   if (!nameEl) return;
 
-  if (coords.length) {
-    const heading = coords.length > 1 ? 'Program Coordinators' : 'Program Coordinator';
-    nameEl.innerHTML = `<div style="font-size:10.5px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">${heading}</div>` +
-    coords.map((c, i) => {
-      const contacts = [
-        c.phone ? `<a href="tel:${normalizePhone(c.phone)}" style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:#8FA8BF;text-decoration:none;">📞 ${formatPhone(c.phone)}</a>` : '',
-        c.email ? `<a href="mailto:${c.email}" style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:#8FA8BF;text-decoration:none;">✉️ ${c.email}</a>` : '',
-      ].filter(Boolean).join('');
-      return `<div style="${i > 0 ? 'margin-top:8px;padding-top:8px;border-top:.5px solid rgba(255,255,255,.1);' : ''}">
-        <div style="font-family:'Inter',sans-serif;font-weight:500;font-size:14px;color:#F5F1EB;">${c.name}</div>
-        ${contacts ? `<div style="margin-top:3px;display:flex;flex-wrap:wrap;gap:8px;">${contacts}</div>` : ''}
-      </div>`;
-    }).join('');
+  if (isPrep) {
+    const accParishes = accessibleParishesForSacrament(PROG_ACCESS_KEYS[prog] || [prog]);
+    const byParish = coordData[prog] || {};
+    const multi = accParishes.length > 1;
+    const shortName = (p) => (p.display_name || p.parish_name || 'Parish');
+
+    if (!multi) {
+      // Single-parish: one group, classic heading, no parish tag (parity with today).
+      const coords = accParishes[0] ? coordinatorsFromRow(byParish[accParishes[0].id]) : [];
+      if (coords.length) nameEl.innerHTML = _singleGroupHtml(coords);
+      else nameEl.textContent = 'No coordinator set';
+    } else {
+      // Multi-parish: follow the active tab. All → every parish that HAS a coordinator,
+      // each tagged with its short name; a specific tab → only that parish.
+      const tab = getActiveParishTab(PROG_PANEL_KEY[prog] || prog);   // 'all' | parishId
+      const targets = tab === 'all' ? accParishes : accParishes.filter(p => p.id === tab);
+      const groups = targets
+        .map(p => ({ p, coords: coordinatorsFromRow(byParish[p.id]) }))
+        .filter(g => tab === 'all' ? g.coords.length : true);   // All omits empty parishes; a specific tab keeps it to show "none"
+      if (!groups.some(g => g.coords.length)) {
+        nameEl.textContent = 'No coordinator set';
+      } else {
+        nameEl.innerHTML = groups.map((g, gi) =>
+          `<div style="${gi > 0 ? 'margin-top:10px;padding-top:10px;border-top:.5px solid rgba(255,255,255,.14);' : ''}">`
+          + _coordHeading(shortName(g.p), /*gold tag*/true)
+          + g.coords.map((c, i) => coordPersonHtml(c, i > 0)).join('')
+          + `</div>`
+        ).join('');
+      }
+    }
     if (contactEl) contactEl.innerHTML = '';
   } else {
-    nameEl.textContent = 'No coordinator set';
+    // CURA (annulments/discernment/homebound) — single group-shared row, unchanged.
+    const coords = coordinatorsFromRow(coordData[prog]);
+    if (coords.length) nameEl.innerHTML = _singleGroupHtml(coords);
+    else nameEl.textContent = 'No coordinator set';
     if (contactEl) contactEl.innerHTML = '';
   }
 
@@ -203,4 +276,12 @@ Object.assign(window, {
   openCoordModal, saveCoord,
   openScheduleModal, saveScheduleEntries, deleteScheduleEntry,
   addScheduleRow, removeScheduleRow,
+});
+
+// Live-update the coordinator header when the user switches parish tabs in the shell.
+// The shell fires (panelKey, rawTab); map panelKey → header prog and re-render that
+// card from already-loaded data (renderCoordCard reads the active tab fresh).
+onParishTabChange((panelKey) => {
+  const prog = PANEL_KEY_PROG[panelKey];
+  if (prog) renderCoordCard(prog);
 });
