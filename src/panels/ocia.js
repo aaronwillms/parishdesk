@@ -12,6 +12,7 @@ import { promptNoteEdit } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { registerCohortManager } from '../sacramental/cohortManager.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid } from '../sacramental/parishCreateField.js';
 
 const OCIA_STATUS = {
   inquirer:    { label:'Inquirer',             color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -380,7 +381,17 @@ function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;le
 // ── Create / Edit ────────────────────────────────────────────────────────────
 async function openOciaCreate() {
   _M = newModalState(null, 'catechumen');
-  _ociaOpen(buildModalHtml(null)); _hydrate();
+  _ociaOpen(buildModalHtml(null)); _hydrate(); ociaValidateParish();
+}
+
+// Parish-field lockout ONLY: disables Save until a parish is chosen when the create
+// parish field is shown; a no-op (Save enabled) otherwise. Other required-field checks
+// keep their alert-on-submit behavior.
+function ociaValidateParish() {
+  const ok = parishFieldValid(['ocia'], 'ocia', 'ocia-parish-select');
+  const btn = document.getElementById('ocia-save');
+  if (btn) { btn.disabled = !ok; btn.style.opacity = ok ? '1' : '.5'; btn.style.cursor = ok ? 'pointer' : 'not-allowed'; }
+  return ok;
 }
 function openOciaEdit(id) {
   const p = allOcia.find(x => x.id === id); if (!p) return;
@@ -441,6 +452,12 @@ function buildModalHtml(p, opts = {}) {
   const instOpts = (store.institutions || []).map(i => `<option value="${i.name}"${p?.reception_church === i.name ? ' selected' : ''}>${_esc(i.name)}</option>`).join('');
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit OCIA File' : 'New OCIA Candidate'}</div>`;
+
+  // Parish picker (CREATE on the "All" tab with >1 accessible parish only). Save stays
+  // locked until a parish is chosen (ociaValidateParish). Never shown in edit/inline.
+  if ((!isEdit && !inline) && shouldShowParishField(['ocia'], 'ocia')) {
+    h += parishCreateFieldHtml(['ocia'], { selectId: 'ocia-parish-select', onChange: 'ociaValidateParish()' });
+  }
 
   // Section 1 — Cohort FIRST (SELECT an existing cohort; creation lives in Manage
   // Cohorts). Picking it first defaults BOTH the reception church and the formation
@@ -539,7 +556,7 @@ function buildModalHtml(p, opts = {}) {
   if (!inline) {
     h += `<div class="modal-actions" style="justify-content:space-between;">
       ${isEdit ? `<button class="btn-delete" onclick="ociaDeletePerson('${_M.id}')">Delete</button>` : '<span></span>'}
-      <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="ociaCloseModal()">Cancel</button><button class="btn-primary" onclick="ociaSave()">${isEdit ? 'Save' : 'Create File'}</button></div>
+      <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="ociaCloseModal()">Cancel</button><button class="btn-primary" id="ocia-save" onclick="ociaSave()">${isEdit ? 'Save' : 'Create File'}</button></div>
     </div>`;
   }
   return h;
@@ -816,7 +833,8 @@ async function ociaSave() {
   const { payload, familyGroupId, linkTargetToUpdate } = r;
   payload.status_code = document.getElementById('of-status')?.value || 'inquirer';
   payload.archived = false;
-  payload.parish_id = getSelectedParish('ocia');   // stamp the switcher's selected parish (All ⇒ home)
+  payload.parish_id = resolveCreateParish(['ocia'], 'ocia', 'ocia-parish-select');   // field value / active tab / single parish
+  if (!payload.parish_id) { alert('Please select a parish for this record.'); return; }   // safety floor (lockout already prevents this)
   const { error } = await insertWithRetry('sacramental_ocia', payload);
   if (error) { reportWriteError('ocia insert', error); return; }
   if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);
@@ -920,7 +938,7 @@ Object.assign(window, {
   ociaPriorToggle, ociaAddPrior, ociaRemovePrior, ociaPriorEnded, ociaPickParty,
   ociaDocReceived, ociaRemoveDoc, ociaAddDoc, ociaToggleDoc,
   ociaFamilySearch, ociaRemoveFamily, ociaAnnulSearch, ociaRemoveAnnul,
-  ociaSave, ociaDeletePerson,
+  ociaSave, ociaDeletePerson, ociaValidateParish,
   // Viewer-editable notes + minor permission (write-retry wrapped).
   ociaAddNote, ociaEditNote, ociaDeleteNote, ociaSavePermField, ociaTogglePermission,
   ociaTplTab, ociaTplAdd, ociaTplRemove, ociaTplSave,

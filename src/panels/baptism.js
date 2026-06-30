@@ -4,6 +4,7 @@ import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } f
 import { isAdmin, canAccessSacrament, isSacramentCoordinator, accessibleParishesForSacrament } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid } from '../sacramental/parishCreateField.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { normalizePhone } from '../utils/phone.js';
@@ -181,6 +182,12 @@ function buildModalHtml(p, opts = {}) {
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Baptism File' : 'New Baptism'}</div>`;
 
+  // 0 — Parish picker (CREATE on the "All" tab with >1 accessible parish only). Save
+  // stays locked until a parish is chosen (bapValidate). Never shown in edit/inline.
+  if ((!isEdit && !inline) && shouldShowParishField(['baptism'], 'baptism')) {
+    h += parishCreateFieldHtml(['baptism'], { selectId: 'bf-parish-select', onChange: 'bapValidate()' });
+  }
+
   // 1 — Person responsible for formation (clergy + Baptism coordinator + Other)
   h += _sectionHead('Person Responsible for Formation');
   h += buildPreparerField('bf-preparer', p?.preparer || '', { coordinatorNames: _bapCoordinatorNames, label: 'Person Responsible for Formation' });
@@ -313,8 +320,8 @@ function bapValidate() {
   else if (bothNonCath) msg = 'At least one godparent must be Catholic.';
   if (gpErr) { gpErr.style.display = msg ? 'block' : 'none'; gpErr.textContent = msg; }
   [document.getElementById('bf-gp1'), document.getElementById('bf-gp2-wrap')].forEach(el => { if (el) { el.style.opacity = msg ? '.5' : '1'; } });
-  // save button
-  const invalid = overAge || !!msg;
+  // save button — also locked until a parish is chosen when the create parish field shows
+  const invalid = overAge || !!msg || !parishFieldValid(['baptism'], 'baptism', 'bf-parish-select');
   const btn = document.getElementById('bf-save'); if (btn) { btn.disabled = invalid; btn.style.opacity = invalid ? '.5' : '1'; btn.style.cursor = invalid ? 'not-allowed' : 'pointer'; }
   return !invalid;
 }
@@ -367,7 +374,8 @@ async function bapSave() {
     payload.status_code = 'scheduled';
     payload.archived = false;
     payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-    payload.parish_id = getSelectedParish('baptism');   // stamp the switcher's selected parish (All ⇒ home)
+    payload.parish_id = resolveCreateParish(['baptism'], 'baptism', 'bf-parish-select');   // field value / active tab / single parish
+    if (!payload.parish_id) { alert('Please select a parish for this record.'); return; }   // safety floor (lockout already prevents this)
     const { error } = await insertWithRetry('sacramental_baptism', payload);
     if (error) { reportWriteError('baptism insert', error); return; }
     logActivity({ action: 'added Baptism child', entityType: 'baptism', entityName: name, contextType: 'baptism' });

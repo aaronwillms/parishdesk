@@ -5,6 +5,7 @@ import { isAdmin, canAccessSacrament, isSacramentCoordinator, accessibleParishes
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid } from '../sacramental/parishCreateField.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
@@ -199,9 +200,19 @@ function _instSelect(id, name, onchange) {
 async function openConfCreate() {
   clearPendingAdd('confirmation');
   _M = newModalState(null, 'youth');
-  _confOpen(buildModalHtml(null)); _hydrate();
+  _confOpen(buildModalHtml(null)); _hydrate(); confValidateParish();
 }
 function openConfEdit(id) { const p = allConf.find(x => x.id === id); if (!p) return; _M = newModalState(p, tmplType(p)); _confOpen(buildModalHtml(p)); _hydrate(); }
+
+// Parish-field lockout ONLY: disables Save until a parish is chosen when the create
+// parish field is shown; a no-op (Save enabled) otherwise. Other required-field checks
+// keep their alert-on-submit behavior.
+function confValidateParish() {
+  const ok = parishFieldValid(['confirmation'], 'confirmation', 'conf-parish-select');
+  const btn = document.getElementById('conf-save');
+  if (btn) { btn.disabled = !ok; btn.style.opacity = ok ? '1' : '.5'; btn.style.cursor = ok ? 'pointer' : 'not-allowed'; }
+  return ok;
+}
 function newModalState(p, type) {
   return {
     id: p?.id || null, isEdit: !!p, type,
@@ -223,6 +234,12 @@ function buildModalHtml(p, opts = {}) {
   const isAdultAge = age !== null && age >= 18;
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Confirmation File' : 'New Confirmation Candidate'}</div>`;
+
+  // Parish picker (CREATE on the "All" tab with >1 accessible parish only). Save stays
+  // locked until a parish is chosen (confValidateParish). Never shown in edit/inline.
+  if ((!isEdit && !inline) && shouldShowParishField(['confirmation'], 'confirmation')) {
+    h += parishCreateFieldHtml(['confirmation'], { selectId: 'conf-parish-select', onChange: 'confValidateParish()' });
+  }
 
   // 1 — Cohort FIRST (SELECT only; created in the panel via Manage Cohorts). Picking it
   // first defaults BOTH the church and the formation person (confCohortPick).
@@ -318,7 +335,7 @@ function buildModalHtml(p, opts = {}) {
   if (!inline) {
     h += `<div class="modal-actions" style="justify-content:space-between;">
       ${isEdit ? `<button class="btn-delete" onclick="confDeletePerson('${_M.id}')">Delete</button>` : '<span></span>'}
-      <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="confCloseModal()">Cancel</button><button class="btn-primary" onclick="confSave()">${isEdit ? 'Save' : 'Create File'}</button></div>
+      <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="confCloseModal()">Cancel</button><button class="btn-primary" id="conf-save" onclick="confSave()">${isEdit ? 'Save' : 'Create File'}</button></div>
     </div>`;
   }
   return h;
@@ -476,7 +493,8 @@ async function confSave() {
   payload.service_hours_required = (type === 'youth' && tmpl.service_hours_enabled) ? (tmpl.service_hours_required || 20) : 0;
   payload.service_hours_completed = 0;
   payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-  payload.parish_id = getSelectedParish('confirmation');   // stamp the switcher's selected parish (All ⇒ home)
+  payload.parish_id = resolveCreateParish(['confirmation'], 'confirmation', 'conf-parish-select');   // field value / active tab / single parish
+  if (!payload.parish_id) { alert('Please select a parish for this record.'); return; }   // safety floor (lockout already prevents this)
   const { data: ins, error } = await insertWithRetry('sacramental_confirmation', payload);
   if (error) { reportWriteError('confirmation insert', error); return; }
   const pend = getPendingAdd('confirmation');
@@ -582,6 +600,6 @@ Object.assign(window, {
   confSetType, confCohortPick, confDobChange, confChurchChange,
   confSchoolChange, confBaptismChange, confFcChurchChange,
   confDocReceived, confRemoveDoc, confAddDoc,
-  confSave, confDeletePerson,
+  confSave, confDeletePerson, confValidateParish,
   confTplTab, confTplAdd, confTplRemove, confTplSvcToggle, confTplSave,
 });

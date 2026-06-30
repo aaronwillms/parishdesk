@@ -7,6 +7,7 @@ import { isAdmin, canAccessSacrament, accessibleParishesForSacrament } from '../
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid } from '../sacramental/parishCreateField.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { buildPreparerField, readPreparerValue, clergyNames } from '../sacramental/preparerField.js';
@@ -379,6 +380,17 @@ export async function openCoupleAdd() {
   _M = newModalState(null, type);
   _marOpen(buildCoupleModalHtml(null));
   _hydrateModal();
+  marValidateParish();
+}
+
+// Parish-field lockout ONLY: disables Save until a parish is chosen when the create
+// parish field is shown; a no-op (Save enabled) otherwise. Other required-field checks
+// keep their alert-on-submit behavior.
+function marValidateParish() {
+  const ok = parishFieldValid(['marriage'], 'marriage', 'mar-parish-select');
+  const btn = document.getElementById('mar-save');
+  if (btn) { btn.disabled = !ok; btn.style.opacity = ok ? '1' : '.5'; btn.style.cursor = ok ? 'pointer' : 'not-allowed'; }
+  return ok;
 }
 
 function openCoupleEdit(id) {
@@ -444,6 +456,12 @@ function buildCoupleModalHtml(c, opts = {}) {
   const instOpts = (store.institutions || []).map(inst => `<option value="${inst.id}"${c?.wedding_institution_id === inst.id ? ' selected' : ''}>${_esc(inst.name)}</option>`).join('');
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Marriage File' : 'New Marriage File'}</div>`;
+
+  // Parish picker (CREATE on the "All" tab with >1 accessible parish only). Save stays
+  // locked until a parish is chosen (marValidateParish). Never shown in edit/inline.
+  if ((!isEdit && !inline) && shouldShowParishField(['marriage'], 'marriage')) {
+    h += parishCreateFieldHtml(['marriage'], { selectId: 'mar-parish-select', onChange: 'marValidateParish()' });
+  }
 
   // Section 1 — Person responsible for formation (clergy + marriage coordinator + Other) + External
   // Marriage panel uses context-dependent labels for this ONE field (same value/
@@ -537,7 +555,7 @@ function buildCoupleModalHtml(c, opts = {}) {
   if (!inline) {
     h += `<div class="modal-actions" style="justify-content:space-between;">
       ${isEdit ? `<button class="btn-delete" onclick="marDeleteCouple('${_M.id}')">Delete</button>` : '<span></span>'}
-      <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="marCloseModal()">Cancel</button><button class="btn-primary" onclick="marSaveCouple()">${isEdit ? 'Save' : 'Create File'}</button></div>
+      <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="marCloseModal()">Cancel</button><button class="btn-primary" id="mar-save" onclick="marSaveCouple()">${isEdit ? 'Save' : 'Create File'}</button></div>
     </div>`;
   }
   return h;
@@ -910,7 +928,8 @@ async function marSaveCouple() {
   if (st === 'external') st = 'inprogress';
   payload.status_code = st;
   payload.archived = false;
-  payload.parish_id = getSelectedParish('marriage');   // stamp the switcher's selected parish (All ⇒ home)
+  payload.parish_id = resolveCreateParish(['marriage'], 'marriage', 'mar-parish-select');   // field value / active tab / single parish
+  if (!payload.parish_id) { alert('Please select a parish for this record.'); return; }   // safety floor (lockout already prevents this)
   const { error } = await insertWithRetry('couples', payload);
   if (error) { reportWriteError('couples insert', error); return; }
   logActivity({ action: 'created marriage prep record', entityType: 'marriage', entityName: `${payload.groom} & ${payload.bride}`, contextType: 'couple' });
@@ -1011,7 +1030,7 @@ async function marTplSave() {
 Object.assign(window, {
   openCoupleAdd, openCoupleEdit,
   toggleCoupleDoc, toggleCoupleStep, toggleCoupleFee, toggleCoupleDelegation, toggleCoupleWeddingComplete, toggleCoupleRecordsPlaced, addCoupleNoteLog, coupleEditNoteLog,
-  marCloseModal, marSaveCouple, marDeleteCouple,
+  marCloseModal, marSaveCouple, marDeleteCouple, marValidateParish,
   marOnExternalToggle, marOnTypeChange, marOnNonChurchToggle, marOnInstitutionChange, marOnOfficiantOtherToggle, marOnStatusChange, marOnWeddingCompleteToggle,
   marSpouseToggle, marPriorToggle, marAddPrior, marRemovePrior, marPriorEndedChange,
   marOciaSearch, marRemoveOcia, marAnnulSearch, marRemoveAnnul,

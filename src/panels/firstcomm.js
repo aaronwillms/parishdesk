@@ -5,6 +5,7 @@ import { isAdmin, canAccessSacrament, isSacramentCoordinator, accessibleParishes
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid } from '../sacramental/parishCreateField.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
@@ -185,7 +186,17 @@ function _instSelect(id, name, onchange) {
 async function openFcCreate() {
   clearPendingAdd('firstcomm');
   _M = newModalState(null);
-  _fcOpen(buildModalHtml(null)); _hydrate();
+  _fcOpen(buildModalHtml(null)); _hydrate(); fcValidateParish();
+}
+
+// Parish-field lockout ONLY: disables Save until a parish is chosen when the create
+// parish field is shown; a no-op (Save enabled) otherwise. Does NOT touch the form's
+// other required-field checks (those keep their alert-on-submit behavior).
+function fcValidateParish() {
+  const ok = parishFieldValid(['first_communion', 'firstcomm'], 'firstcommunion', 'fc-parish-select');
+  const btn = document.getElementById('fc-save');
+  if (btn) { btn.disabled = !ok; btn.style.opacity = ok ? '1' : '.5'; btn.style.cursor = ok ? 'pointer' : 'not-allowed'; }
+  return ok;
 }
 function openFcEdit(id) { const p = allFc.find(x => x.id === id); if (!p) return; _M = newModalState(p); _fcOpen(buildModalHtml(p)); _hydrate(); }
 function newModalState(p) {
@@ -210,6 +221,12 @@ function buildModalHtml(p, opts = {}) {
   const cohortOpts = _cohorts.map(c => `<option value="${c.id}"${p?.cohort_id === c.id ? ' selected' : ''}>${cohortLabel(c.cohort_date)}</option>`).join('');
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit First Communion File' : 'New First Communion Student'}</div>`;
+
+  // Parish picker (CREATE on the "All" tab with >1 accessible parish only). Save stays
+  // locked until a parish is chosen (fcValidateParish). Never shown in edit/inline.
+  if ((!isEdit && !inline) && shouldShowParishField(['first_communion', 'firstcomm'], 'firstcommunion')) {
+    h += parishCreateFieldHtml(['first_communion', 'firstcomm'], { selectId: 'fc-parish-select', onChange: 'fcValidateParish()' });
+  }
 
   // 1 — Cohort FIRST (SELECT an existing cohort only; cohorts are created in the panel
   // via Manage Cohorts, never from here). Picking it first defaults BOTH the church
@@ -288,7 +305,7 @@ function buildModalHtml(p, opts = {}) {
   if (!inline) {
     h += `<div class="modal-actions" style="justify-content:space-between;">
       ${isEdit ? `<button class="btn-delete" onclick="fcDeletePerson('${_M.id}')">Delete</button>` : '<span></span>'}
-      <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="fcCloseModal()">Cancel</button><button class="btn-primary" onclick="fcSave()">${isEdit ? 'Save' : 'Create File'}</button></div>
+      <div style="display:flex;gap:8px;"><button class="btn-secondary" onclick="fcCloseModal()">Cancel</button><button class="btn-primary" id="fc-save" onclick="fcSave()">${isEdit ? 'Save' : 'Create File'}</button></div>
     </div>`;
   }
   return h;
@@ -378,7 +395,8 @@ async function fcSave() {
   payload.status_code = 'enrolled';
   payload.archived = false;
   payload.timeline = [{ type: 'auto', text: 'File opened', created_at: nowIso() }];
-  payload.parish_id = getSelectedParish('firstcommunion');   // stamp the switcher's selected parish (All ⇒ home)
+  payload.parish_id = resolveCreateParish(['first_communion', 'firstcomm'], 'firstcommunion', 'fc-parish-select');   // field value / active tab / single parish
+  if (!payload.parish_id) { alert('Please select a parish for this record.'); return; }   // safety floor (lockout already prevents this)
   const { data: ins, error } = await insertWithRetry('sacramental_firstcomm', payload);
   if (error) { reportWriteError('firstcomm insert', error); return; }
   // Apply the pending "Link Family Member" pick via the shared rule (mint/join).
@@ -506,6 +524,6 @@ Object.assign(window, {
   toggleFcDoc, addFcNote, fcEditNote,
   fcCohortPick, fcDobChange, fcChurchChange, fcSchoolChange, fcBaptismChange,
   fcDocReceived, fcRemoveDoc, fcAddDoc,
-  fcSave, fcDeletePerson,
+  fcSave, fcDeletePerson, fcValidateParish,
   fcTplAdd, fcTplRemove, fcTplSave,
 });
