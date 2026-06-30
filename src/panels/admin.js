@@ -523,15 +523,16 @@ function _userDetail(u) {
     const parishSubHead = (txt) => `<div style="font-size:10.5px;font-weight:600;letter-spacing:.05em;color:#6B7280;margin:.6rem 0 .15rem;">${txt}</div>`;
     let sacramentChecks;
     if (multiParish) {
+      // PREP sacraments per parish. Annulments is group-wide (cura) and now renders
+      // under "Panel Grants" (see annulmentsBox below) — it's still an au-sac-cb /
+      // sacramental_roles row (null parish), just relocated for clarity.
       sacramentChecks = _groupParishes.map(p =>
         parishSubHead((p.display_name || p.parish_name || 'Parish').replace(/</g, '&lt;'))
         + PREP_SACRAMENTS.map(s => prepBox(s, p.id)).join('')
-      ).join('')
-      + parishSubHead('Group-wide')
-      + annulmentsBox;
+      ).join('');
     } else {
       // Single-parish: flat list as today (prep boxes stamp the one parish id).
-      sacramentChecks = PREP_SACRAMENTS.map(s => prepBox(s, singleParishId)).join('') + annulmentsBox;
+      sacramentChecks = PREP_SACRAMENTS.map(s => prepBox(s, singleParishId)).join('');
     }
 
     // Panel grants (institution permissions): manual stays editable; Admin locks all.
@@ -561,6 +562,7 @@ function _userDetail(u) {
         <div>
           <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#9CA3AF;text-transform:uppercase;margin-bottom:.5rem;">Panel Grants</div>
           ${grantChecks}
+          ${annulmentsBox}
         </div>
         ${teams.length ? `
         <div>
