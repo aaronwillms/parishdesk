@@ -83,11 +83,11 @@ async function _loadUsers() {
   const [profilesRes, rolesRes, sacramentRes, grantsRes, teamMembersRes, authRes, coordRes] = await Promise.all([
     sb.from('user_profiles').select('user_id, personnel_id, parish_id, avatar_url, deactivated, personnel(id,name)'),
     sb.from('user_roles').select('user_id, role'),
-    sb.from('sacramental_roles').select('user_id, sacrament'),
+    sb.from('sacramental_roles').select('user_id, sacrament, parish_id'),
     sb.from('panel_grants').select('user_id, panel'),
     sb.from('team_members').select('team_id, personnel_id'),
     fetch('/admin-users').then(r => r.ok ? r.json() : { users: [] }).catch(() => ({ users: [] })),
-    sb.from('program_coordinators').select('program, coordinator_ids'),
+    sb.from('program_coordinators').select('program, coordinator_ids, parish_id'),
   ]);
 
   const profiles   = profilesRes.data  || [];
@@ -99,12 +99,20 @@ async function _loadUsers() {
   const grants     = grantsRes.data    || [];
   const authUsers  = authRes.users     || [];
 
-  // Build personnelId → coordinator programs[] map
+  // Build personnelId → coordinator programs[] map (flat; back-compat for the
+  // panel_grants homebound-roster lock and the group-wide annulments box) PLUS a
+  // parish-aware variant { [personnelId]: { [parishId]: Set<program> } } that drives
+  // the per-parish coordinator lock in the multi-parish grid.
   const coordByPersonnel = {};
+  const coordByPersonnelParish = {};
   (coordRes.data || []).forEach(row => {
     (row.coordinator_ids || []).forEach(pid => {
       if (!coordByPersonnel[pid]) coordByPersonnel[pid] = [];
       coordByPersonnel[pid].push(row.program);
+      if (!coordByPersonnelParish[pid]) coordByPersonnelParish[pid] = {};
+      const pkey = row.parish_id || null;
+      if (!coordByPersonnelParish[pid][pkey]) coordByPersonnelParish[pid][pkey] = new Set();
+      coordByPersonnelParish[pid][pkey].add(row.program);
     });
   });
 
@@ -142,10 +150,30 @@ async function _loadUsers() {
     if (!map[au.id]) map[au.id] = { userId: au.id, email: au.email || null, profile: null, roles: [], sacraments: [], grants: [], teamIds: [] };
   });
 
-  // Attach coordinator-granted sacraments per user
+  // Per-parish manual sacramental_roles index (drives the multi-parish grid):
+  //   sacByUserParish[user] = { [parishId]: Set<sacrament> }  — PREP rows (non-null parish)
+  //   sacGroupWideByUser[user] = Set<sacrament>               — group-wide rows (null parish, e.g. annulments)
+  const sacByUserParish = {};
+  const sacGroupWideByUser = {};
+  sacraments.forEach(r => {
+    if (r.parish_id) {
+      if (!sacByUserParish[r.user_id]) sacByUserParish[r.user_id] = {};
+      if (!sacByUserParish[r.user_id][r.parish_id]) sacByUserParish[r.user_id][r.parish_id] = new Set();
+      sacByUserParish[r.user_id][r.parish_id].add(r.sacrament);
+    } else {
+      if (!sacGroupWideByUser[r.user_id]) sacGroupWideByUser[r.user_id] = new Set();
+      sacGroupWideByUser[r.user_id].add(r.sacrament);
+    }
+  });
+
+  // Attach coordinator-granted sacraments per user (flat, back-compat) + the per-parish
+  // structures the new grid reads.
   Object.values(map).forEach(u => {
     const pid = u.profile?.personnel_id;
     u.coordinatorSacraments = pid ? (coordByPersonnel[pid] || []) : [];
+    u.coordinatorByParish   = (pid && coordByPersonnelParish[pid]) || {};
+    u.sacramentsByParish    = sacByUserParish[u.userId] || {};
+    u.sacramentsGroupWide   = sacGroupWideByUser[u.userId] || new Set();
   });
 
   // "Parish Staff" membership is DERIVED from HR (not team_members), so the badge
@@ -458,16 +486,53 @@ function _userDetail(u) {
 
     // Sacraments: manual grants stay EDITABLE; only the coordinator "role" basis
     // locks. Admin does NOT lock sacraments.
-    const coordinatorSacraments = u.coordinatorSacraments || [];
-    const sacramentChecks = SACRAMENTS.map(s => {
+    //   • PREP sacraments (the 5) are parish-scoped → with >1 parish they repeat under
+    //     a per-parish heading; each box carries data-parish so checked/locked state is
+    //     read from the per-parish maps and the save stamps that parish.
+    //   • ANNULMENTS is group-wide (cura, parish_id null) → ONE box outside the
+    //     per-parish section, no data-parish (stamps null on save).
+    // Single-parish (≤1) collapses to one flat block, exactly as before; prep boxes
+    // still carry the single parish's id so the save stamps a real parish_id.
+    const PREP_SACRAMENTS = SACRAMENTS.filter(s => s !== 'annulments');
+    const multiParish = _groupParishes.length > 1;
+    const singleParishId = _groupParishes[0]?.id || store.parishSettings?.id || '';
+    const coordinatorSacraments = u.coordinatorSacraments || [];   // flat (annulments + back-compat)
+
+    // One prep checkbox for sacrament `s` at parish `pid` — checked/locked from the
+    // per-parish maps; the data-parish attribute carries the stamp for the save.
+    const prepBox = (s, pid) => {
       const state = computePermissionBasis({
         kind: 'sacrament',
-        hasManual: u.sacraments.includes(s),
-        hasRole:   coordinatorSacraments.includes(s),
+        hasManual: !!(u.sacramentsByParish?.[pid]?.has(s)),
+        hasRole:   !!(u.coordinatorByParish?.[pid]?.has(s)),
         roleLabel: SACRAMENT_LABELS[s],
       });
-      return permRow('au-sac-cb', `data-sacrament="${s}"`, SACRAMENT_LABELS[s], state, SACRAMENT_LABELS[s]);
-    }).join('');
+      return permRow('au-sac-cb', `data-sacrament="${s}" data-parish="${pid}"`, SACRAMENT_LABELS[s], state, SACRAMENT_LABELS[s]);
+    };
+    // The single group-wide annulments box (no data-parish → null on save).
+    const annulmentsBox = (() => {
+      const state = computePermissionBasis({
+        kind: 'sacrament',
+        hasManual: !!(u.sacramentsGroupWide?.has('annulments')),
+        hasRole:   coordinatorSacraments.includes('annulments'),
+        roleLabel: SACRAMENT_LABELS['annulments'],
+      });
+      return permRow('au-sac-cb', `data-sacrament="annulments"`, SACRAMENT_LABELS['annulments'], state, SACRAMENT_LABELS['annulments']);
+    })();
+
+    const parishSubHead = (txt) => `<div style="font-size:10.5px;font-weight:600;letter-spacing:.05em;color:#6B7280;margin:.6rem 0 .15rem;">${txt}</div>`;
+    let sacramentChecks;
+    if (multiParish) {
+      sacramentChecks = _groupParishes.map(p =>
+        parishSubHead((p.display_name || p.parish_name || 'Parish').replace(/</g, '&lt;'))
+        + PREP_SACRAMENTS.map(s => prepBox(s, p.id)).join('')
+      ).join('')
+      + parishSubHead('Group-wide')
+      + annulmentsBox;
+    } else {
+      // Single-parish: flat list as today (prep boxes stamp the one parish id).
+      sacramentChecks = PREP_SACRAMENTS.map(s => prepBox(s, singleParishId)).join('') + annulmentsBox;
+    }
 
     // Panel grants (institution permissions): manual stays editable; Admin locks all.
     // Homebound additionally locks for account-linked Ministers-to-the-Sick roster
@@ -702,16 +767,37 @@ async function _saveUser(userId) {
   // A disabled checkbox = a derived lock at render time → preserve its manual row
   // as-is; an enabled checkbox expresses the user's manual intent directly.
 
-  // Sacramental roles (manual). Editable-checked = keep; coordinator-locked rows
-  // that already have a manual grant are preserved.
+  // Sacramental roles (manual), per-(sacrament, parish). Each box carries its OWN
+  // data-parish (prep → a real parish id; annulments → absent → NULL), so a single
+  // save can persist e.g. baptism@Basilica + confirmation@Assumption. Editable-checked
+  // boxes are kept; coordinator-locked (disabled) boxes that already have a manual row
+  // at that parish are preserved (manual-only, non-destructive). This NO LONGER uses
+  // _chosenParishId — each box is self-describing. (Home-placement write below still
+  // uses _chosenParishId; that's a separate fact — see user_profiles update.)
   const sacCbs = Array.from(detail.querySelectorAll('.au-sac-cb'));
-  const desiredSac = new Set(sacCbs.filter(cb => !cb.disabled && cb.checked).map(cb => cb.dataset.sacrament));
-  u.sacraments.forEach(s => { const cb = sacCbs.find(c => c.dataset.sacrament === s); if (cb && cb.disabled) desiredSac.add(s); });
+  const desiredSac = [];   // [{ sacrament, parish_id }]
+  const _sacSeen = new Set();
+  const _addSac = (s, pid) => {
+    const key = s + '|' + (pid || '');
+    if (_sacSeen.has(key)) return;
+    _sacSeen.add(key);
+    desiredSac.push({ sacrament: s, parish_id: pid || null });
+  };
+  // Editable + checked → keep, at the box's own parish (data-parish absent ⇒ null).
+  sacCbs.filter(cb => !cb.disabled && cb.checked).forEach(cb => _addSac(cb.dataset.sacrament, cb.dataset.parish || null));
+  // Preserve manual rows masked by a coordinator lock (disabled box at that parish).
+  Object.entries(u.sacramentsByParish || {}).forEach(([pid, set]) => set.forEach(s => {
+    const cb = sacCbs.find(c => c.dataset.sacrament === s && (c.dataset.parish || null) === pid);
+    if (cb && cb.disabled) _addSac(s, pid);
+  }));
+  (u.sacramentsGroupWide || new Set()).forEach(s => {
+    const cb = sacCbs.find(c => c.dataset.sacrament === s && !c.dataset.parish);
+    if (cb && cb.disabled) _addSac(s, null);
+  });
   await deleteWithRetry(() => sb.from('sacramental_roles').delete().eq('user_id', userId));
-  if (desiredSac.size) {
-    await sb.from('sacramental_roles').insert([...desiredSac].map(s => ({
-      user_id: userId, sacrament: s,
-      parish_id: PREP_PROGRAMS.has(s) ? (_chosenParishId(detail) || null) : null,   // prep → chosen parish, cura → NULL
+  if (desiredSac.length) {
+    await sb.from('sacramental_roles').insert(desiredSac.map(d => ({
+      user_id: userId, sacrament: d.sacrament, parish_id: d.parish_id,
     })));
   }
 
