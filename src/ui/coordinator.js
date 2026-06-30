@@ -90,6 +90,31 @@ function _singleGroupHtml(coords) {
     + coords.map((c, i) => coordPersonHtml(c, i > 0)).join('');
 }
 
+// The parish a coordinator Edit/Save targets for a prog:
+//   • cura (non-prep)        → null (group-wide), handled by the callers, not here.
+//   • single accessible parish → that one parish (the active tab is 'all' by default
+//     even when there's only one parish, so resolve by count, not the tab).
+//   • multi-parish + specific tab → that parish.
+//   • multi-parish + 'All' tab → null (no single target → Edit disabled, save aborted).
+function _editParishId(prog) {
+  const accParishes = accessibleParishesForSacrament(PROG_ACCESS_KEYS[prog] || [prog]);
+  if (accParishes.length <= 1) return accParishes[0]?.id || store.parishSettings?.id || null;
+  const tab = getActiveParishTab(PROG_PANEL_KEY[prog] || prog);
+  return tab === 'all' ? null : tab;
+}
+
+// Toggle the STATIC blue-bar Edit button (in index.html) — there's no id on it, so we
+// select by its onclick attribute. Disabled (greyed) for a prep program with no single
+// target parish (i.e. multi-parish on the "All" tab); enabled otherwise.
+function _setEditDisabled(prog, disabled) {
+  const btn = document.querySelector(`button[onclick="openCoordModal('${prog}')"]`);
+  if (!btn) return;
+  btn.disabled = disabled;
+  btn.style.opacity = disabled ? '0.4' : '';
+  btn.style.cursor = disabled ? 'not-allowed' : 'pointer';
+  btn.title = disabled ? 'Select a parish to edit coordinators' : '';
+}
+
 function renderCoordCard(prog) {
   const isPrep = PREP_PROGRAMS.has(prog);
   const schedule = scheduleData[prog] || [];
@@ -97,6 +122,10 @@ function renderCoordCard(prog) {
   const contactEl = document.getElementById('coord-contact-' + prog);
   const nextEl = document.getElementById('coord-next-' + prog);
   if (!nameEl) return;
+
+  // Edit is only disabled for a prep program whose target parish is ambiguous (multi
+  // on All). Recomputed every render so it reacts live to tab switches (onParishTabChange).
+  _setEditDisabled(prog, isPrep && _editParishId(prog) == null);
 
   if (isPrep) {
     const accParishes = accessibleParishesForSacrament(PROG_ACCESS_KEYS[prog] || [prog]);
@@ -150,8 +179,22 @@ function renderCoordCard(prog) {
 // ── Coordinator modal ──────────────────────────────────────────────────────────
 
 function openCoordModal(prog) {
-  const d = coordData[prog];
-  const selectedIds = (d?.coordinator_ids) || [];
+  const isPrep = PREP_PROGRAMS.has(prog);
+  // PREP: edit the ACTIVE parish's row; pre-check that parish's current coordinators.
+  // CURA: the single group-shared row (unchanged shape).
+  let selectedIds, parishLabel = '';
+  if (isPrep) {
+    const parishId = _editParishId(prog);
+    if (parishId == null) return;   // no single target (multi + All) — Edit is disabled; safety no-op
+    selectedIds = coordData[prog]?.[parishId]?.coordinator_ids || [];
+    const accParishes = accessibleParishesForSacrament(PROG_ACCESS_KEYS[prog] || [prog]);
+    if (accParishes.length > 1) {
+      const p = accParishes.find(gp => gp.id === parishId);
+      if (p) parishLabel = ' — ' + (p.display_name || p.parish_name || 'Parish');
+    }
+  } else {
+    selectedIds = coordData[prog]?.coordinator_ids || [];   // cura: single object
+  }
   const lastName = name => (name || '').trim().split(/\s+/).pop();
   const personnel = (store.personnel || []).slice().sort((a, b) =>
     lastName(a.name).localeCompare(lastName(b.name)) || (a.name || '').localeCompare(b.name || '')
@@ -173,7 +216,7 @@ function openCoordModal(prog) {
   }).join('');
 
   document.getElementById('modal-content').innerHTML = `
-    <div class="modal-title">Coordinators — ${PANEL_TITLES[prog] || prog}</div>
+    <div class="modal-title">Coordinators — ${PANEL_TITLES[prog] || prog}${parishLabel}</div>
     ${personnel.length
       ? `<div id="cd-person-list" style="max-height:320px;overflow-y:auto;">${options}</div>`
       : `<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">No personnel found. Add staff or volunteers in the Personnel panel first.</div>`
@@ -188,13 +231,18 @@ function openCoordModal(prog) {
 async function saveCoord(prog) {
   const checkboxes = document.querySelectorAll('#cd-person-list input[type="checkbox"]:checked');
   const coordinator_ids = Array.from(checkboxes).map(cb => cb.value);
-  // Prep programs are parish-scoped (single-parish → the user's resolved parish); cura
-  // programs (annulments, discernment, homebound) stay group-shared at NULL parish.
-  const parishId = PREP_PROGRAMS.has(prog) ? (store.parishSettings?.id || null) : null;
+  // PREP writes to the ACTIVE parish tab (a (program, parish_id) row — coexists with the
+  // other parish's row, no overwrite). CURA stays group-wide (NULL parish).
+  let parishId = null;
+  if (PREP_PROGRAMS.has(prog)) {
+    parishId = _editParishId(prog);
+    if (parishId == null) { console.warn('[coordinator] saveCoord aborted — no parish selected (All tab)'); return; }
+  }
   const { error } = await upsertProgramCoordinators(prog, coordinator_ids, parishId);
   if (error) { alert('Save failed: ' + error.message); return; }
-  if (!coordData[prog]) coordData[prog] = {};
-  coordData[prog].coordinator_ids = coordinator_ids;
+  // Re-fetch the per-parish map and re-render the active tab so the bar updates
+  // immediately (mirrors the schedule handlers — no stale in-memory patch).
+  await loadCoordData(prog);
   renderCoordCard(prog);
   window.flashSavedThen(() => closeModal());
 }
