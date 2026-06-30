@@ -67,11 +67,12 @@ export function getSelectedParish(panelKey) {
 }
 
 export function renderSacramentalPanel(containerEl, config) {
-  // Parish switcher: default to the user's HOME parish if it's among the accessible
-  // parishes, else 'all'. Only rendered when >1 parish is accessible (see listPaneHtml).
-  const accParishes = accessibleParishesForSacrament(config.sacramentKeys || []);
-  const homeId = store.parishSettings?.id ?? null;
-  const initTab = (homeId && accParishes.some(p => p.id === homeId)) ? homeId : 'all';
+  // Parish switcher: default to "All" (the union view). Tabs only render when >1 parish
+  // is accessible (see parishTabsHtml); at ≤1 parish there are no tabs and 'all' is a
+  // no-op filter (records loaded are the single parish's), so behavior matches today.
+  // NOTE: getSelectedParish('all') still resolves to the home parish for the create
+  // stamp — unchanged (the forced-choice-on-All orphan guard is a later prompt).
+  const initTab = 'all';
   _selectedByPanel[config.panelKey] = initTab;
 
   _active = {
@@ -125,7 +126,24 @@ function render() {
   const shell = s.container.querySelector('#sac-shell');
   if (!shell) return;
   shell.classList.toggle('detail-open', !!s.selectedId);
-  shell.innerHTML = `<div class="sac-list">${listPaneHtml()}</div><div class="sac-detail">${detailPaneHtml()}</div>`;
+  // Parish tab strip spans the top of the panel (above the list/detail split); the
+  // panes are wrapped in .sac-panes so .sac-shell can stack tabs over the split.
+  shell.innerHTML = `${parishTabsHtml()}<div class="sac-panes"><div class="sac-list">${listPaneHtml()}</div><div class="sac-detail">${detailPaneHtml()}</div></div>`;
+}
+
+// Top tab strip for the parish switcher — only when the user can see >1 parish.
+// 'All' (the union) is first and active by default; each parish tab uses the SHORT
+// name. data-act="parish" is handled by onShellClick (unchanged wiring).
+function parishTabsHtml() {
+  const s = _active, cfg = s.config;
+  const accParishes = accessibleParishesForSacrament(cfg.sacramentKeys || []);
+  if (accParishes.length <= 1) return '';
+  const tab = (pid, label, active) =>
+    `<button class="sac-parish-tab${active ? ' active' : ''}" data-act="parish" data-pid="${pid}">${esc(label)}</button>`;
+  return `<div class="sac-parish-tabs">
+    ${tab('all', 'All', s.parishTab === 'all')}
+    ${accParishes.map(p => tab(p.id, p.display_name || p.parish_name || 'Parish', s.parishTab === p.id)).join('')}
+  </div>`;
 }
 
 function visibleRecords() {
@@ -152,15 +170,8 @@ function listPaneHtml() {
   const canManage = cfg.canManage ? cfg.canManage() : true;
   const pills = (cfg.statusFilters || []).map(f =>
     `<button class="cf-btn${s.filter === f.key ? ' active' : ''}" data-act="filter" data-key="${f.key}">${esc(f.label)}</button>`).join('');
-
-  // Parish switcher (only when the user can see >1 parish). Mirrors the cf-btn pill
-  // idiom; labels use the SHORT name (display_name) per the naming rule. 'All' = union.
-  const accParishes = accessibleParishesForSacrament(cfg.sacramentKeys || []);
-  const parishSwitcher = accParishes.length > 1 ? `
-      <div style="display:flex;gap:5px;margin-top:.5rem;flex-wrap:wrap;align-items:center;">
-        <button class="cf-btn${s.parishTab === 'all' ? ' active' : ''}" data-act="parish" data-pid="all">All</button>
-        ${accParishes.map(p => `<button class="cf-btn${s.parishTab === p.id ? ' active' : ''}" data-act="parish" data-pid="${p.id}">${esc(p.display_name || p.parish_name || 'Parish')}</button>`).join('')}
-      </div>` : '';
+  // (Parish switcher now renders as a TOP TAB STRIP — see parishTabsHtml() — not as
+  // pills in this list-head cluster. Status-pill filters below stay as-is.)
 
   const listBody = listBodyHtml();
 
@@ -180,7 +191,6 @@ function listPaneHtml() {
       </div>
       <input type="text" id="sac-search" placeholder="Search…" value="${esc(s.search)}" data-act="search"
         style="width:100%;box-sizing:border-box;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;outline:none;" />
-      ${parishSwitcher}
       <div style="display:flex;gap:5px;margin-top:.5rem;flex-wrap:wrap;align-items:center;">
         ${pills}
         ${(cfg.canBulk ? cfg.canBulk() : canManage) ? `<button class="cf-btn" data-act="bulk-toggle" title="Select multiple" style="margin-left:auto;${s.bulk ? 'background:var(--navy);color:var(--gold);' : ''}"><i class="fa-solid fa-list-check"></i></button>` : ''}

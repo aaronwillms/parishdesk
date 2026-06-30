@@ -557,7 +557,14 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 .auth-error{font-size:12.5px;color:#A32D2D;text-align:center;margin-top:.75rem;min-height:18px;}
 
 /* ── Sacramental master-detail shell (config-driven) ───────────────────────── */
-.sac-shell{display:flex;gap:0;align-items:stretch;min-height:60vh;border:.5px solid var(--stone);border-radius:var(--radius);overflow:hidden;background:#FFFFFF;}
+.sac-shell{display:flex;flex-direction:column;gap:0;min-height:60vh;border:.5px solid var(--stone);border-radius:var(--radius);overflow:hidden;background:#FFFFFF;}
+.sac-panes{display:flex;flex:1;min-height:0;align-items:stretch;}
+/* Parish switcher rendered as a top tab strip (visual language matches the HR tabs:
+   underline-active, navy active / grey inactive). 'All' is first + active by default. */
+.sac-parish-tabs{display:flex;gap:2px;flex-wrap:wrap;align-items:center;padding:.35rem .6rem 0;border-bottom:.5px solid var(--stone);background:#FFFFFF;}
+.sac-parish-tab{background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-.5px;padding:.5rem .85rem;cursor:pointer;white-space:nowrap;font-family:'Inter',sans-serif;font-size:13px;font-weight:400;color:#6B7280;transition:color .12s,border-color .12s;}
+.sac-parish-tab:hover{color:var(--navy);}
+.sac-parish-tab.active{font-weight:600;color:var(--navy);border-bottom-color:var(--cardinal);}
 .sac-list{width:280px;flex-shrink:0;border-right:.5px solid var(--stone);display:flex;flex-direction:column;background:var(--parch);}
 .sac-list-head{padding:.75rem .8rem;border-bottom:.5px solid var(--stone);background:#FFFFFF;}
 .sac-list-title{font-family:'Cormorant Garamond',Georgia,serif;font-size:18px;font-weight:700;color:var(--navy);}
@@ -607,6 +614,9 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
   body.dark-mode .sac-list{background:#15202C !important;border-color:#2D3F50 !important;}
   body.dark-mode .sac-list-head,body.dark-mode .sac-detail{background:#1A2634 !important;}
   body.dark-mode .sac-list-head{border-color:#2D3F50 !important;}
+  body.dark-mode .sac-parish-tabs{background:#1A2634 !important;border-color:#2D3F50 !important;}
+  body.dark-mode .sac-parish-tab{color:#9CA3AF !important;}
+  body.dark-mode .sac-parish-tab.active{color:#F8F7F4 !important;border-bottom-color:var(--gold) !important;}
   body.dark-mode .sac-item{background:#1A2634 !important;border-color:#2D3F50 !important;}
   body.dark-mode .sac-item:hover,body.dark-mode .sac-item.selected{background:#243447 !important;}
   body.dark-mode .sac-item.selected{border-left-color:var(--gold) !important;}
