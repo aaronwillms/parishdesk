@@ -7,7 +7,7 @@ import { isAdmin, canAccessSacrament, accessibleParishesForSacrament } from '../
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
-import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid } from '../sacramental/parishCreateField.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish } from '../sacramental/parishCreateField.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { buildPreparerField, readPreparerValue, clergyNames } from '../sacramental/preparerField.js';
@@ -457,10 +457,12 @@ function buildCoupleModalHtml(c, opts = {}) {
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Marriage File' : 'New Marriage File'}</div>`;
 
-  // Parish picker (CREATE on the "All" tab with >1 accessible parish only). Save stays
-  // locked until a parish is chosen (marValidateParish). Never shown in edit/inline.
+  // Parish picker. CREATE (All tab, >1 parish): placeholder + Save-lockout. EDIT (>1
+  // parish): the record's parish preselected, reassignable, NO lockout. Distinct ids.
   if ((!isEdit && !inline) && shouldShowParishField(['marriage'], 'marriage')) {
     h += parishCreateFieldHtml(['marriage'], { selectId: 'mar-parish-select', onChange: 'marValidateParish()' });
+  } else if (isEdit && shouldShowParishFieldEdit(['marriage'])) {
+    h += parishEditFieldHtml(['marriage'], { selectId: 'mar-parish-edit', currentParishId: c?.parish_id || null });
   }
 
   // Section 1 — Person responsible for formation (clergy + marriage coordinator + Other) + External
@@ -901,6 +903,7 @@ async function _marWriteEdit(id) {
   if (st === 'external') st = 'inprogress';
   payload.status_code = st;
   payload.archived = _chk('mf-archive');
+  const _ep = readEditParish('mar-parish-edit'); if (_ep) payload.parish_id = _ep;   // parish reassignment (edit field shown)
   const priorStatus = prior?.status_code ?? null;
   const { error } = await withWriteRetry(() => sb.from('couples').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('couples update', error); return { ok: false }; }

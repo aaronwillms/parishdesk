@@ -356,6 +356,15 @@ function detailPaneHtml() {
   const sections = (cfg.detailSections || []).filter(sec => !sec.when || sec.when(r)).map(sec =>
     `<div class="sac-section"><div class="sac-section-title">${esc(sec.title)}</div><div>${sec.render(r)}</div></div>`).join('');
 
+  // Plain-text parish line — only when the user can see >1 parish (single-parish: redundant).
+  // Resolved from the group parish list by the record's parish_id.
+  let parishLine = '';
+  if (accessibleParishesForSacrament(cfg.sacramentKeys || []).length > 1 && r.parish_id) {
+    const gp = (store.groupParishes || []).find(p => p.id === r.parish_id);
+    const label = gp?.display_name || gp?.parish_name;
+    if (label) parishLine = `<div style="font-size:12px;color:#6B7280;margin:.4rem 0 .2rem;">Parish: <span style="color:var(--navy);font-weight:500;">${esc(label)}</span></div>`;
+  }
+
   return `
     <div class="sac-detail-head">
       <button class="sac-back" data-act="back" aria-label="Back">‹</button>
@@ -372,6 +381,7 @@ function detailPaneHtml() {
         ${canManage ? `<button class="btn-primary sac-detail-btn" data-act="edit" data-id="${r.id}" aria-label="Edit"><i class="fa-solid fa-pencil"></i> <span class="sac-btn-label">Edit</span></button>` : ''}
       </div>
     </div>
+    ${parishLine}
     ${sections}`;
 }
 

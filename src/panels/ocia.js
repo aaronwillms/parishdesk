@@ -12,7 +12,7 @@ import { promptNoteEdit } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { registerCohortManager } from '../sacramental/cohortManager.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
-import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid } from '../sacramental/parishCreateField.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish } from '../sacramental/parishCreateField.js';
 
 const OCIA_STATUS = {
   inquirer:    { label:'Inquirer',             color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -453,10 +453,12 @@ function buildModalHtml(p, opts = {}) {
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit OCIA File' : 'New OCIA Candidate'}</div>`;
 
-  // Parish picker (CREATE on the "All" tab with >1 accessible parish only). Save stays
-  // locked until a parish is chosen (ociaValidateParish). Never shown in edit/inline.
+  // Parish picker. CREATE (All tab, >1 parish): placeholder + Save-lockout. EDIT (>1
+  // parish): the record's parish preselected, reassignable, NO lockout. Distinct ids.
   if ((!isEdit && !inline) && shouldShowParishField(['ocia'], 'ocia')) {
     h += parishCreateFieldHtml(['ocia'], { selectId: 'ocia-parish-select', onChange: 'ociaValidateParish()' });
+  } else if (isEdit && shouldShowParishFieldEdit(['ocia'])) {
+    h += parishEditFieldHtml(['ocia'], { selectId: 'ocia-parish-edit', currentParishId: p?.parish_id || null });
   }
 
   // Section 1 — Cohort FIRST (SELECT an existing cohort; creation lives in Manage
@@ -859,6 +861,7 @@ export async function ociaSaveEdit(id) {
   const prior = allOcia.find(x => x.id === id);
   const priorStatus = prior?.status_code ?? null;
   _ociaApplyEditFields(payload, prior);
+  const _ep = readEditParish('ocia-parish-edit'); if (_ep) payload.parish_id = _ep;   // parish reassignment (edit field shown)
   const { error } = await withWriteRetry(() => sb.from('sacramental_ocia').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('ocia update', error); return { ok: false }; }
   if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);

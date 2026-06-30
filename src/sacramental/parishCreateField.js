@@ -50,3 +50,27 @@ export function parishFieldValid(_keys, _panelKey, selectId) {
   if (!el) return true;
   return !!el.value;
 }
+
+// ── EDIT variant (reassign an existing record's parish) ─────────────────────
+// Edit is NOT tab-scoped — the record already has a real parish, so the field shows
+// whenever the user can see >1 parish (no 'all'-tab condition). NO placeholder and NO
+// lockout: the record can be REASSIGNED but never blanked.
+export function shouldShowParishFieldEdit(keys) {
+  return accessibleParishesForSacrament(keys).length > 1;
+}
+
+// All accessible parishes; the record's current parish preselected. Uses its OWN id
+// (distinct from the create field) so the create lockout/validate never watches it.
+export function parishEditFieldHtml(keys, { selectId, currentParishId, onChange }) {
+  const opts = accessibleParishesForSacrament(keys)
+    .map(p => `<option value="${esc(p.id)}"${p.id === currentParishId ? ' selected' : ''}>${esc(p.display_name || p.parish_name || 'Parish')}</option>`).join('');
+  return `<label>Parish</label>
+    <select id="${esc(selectId)}"${onChange ? ` onchange="${onChange}"` : ''}>${opts}</select>`;
+}
+
+// Read the edit field's chosen parish on save → the (possibly reassigned) id. Returns
+// null when the field isn't present (single-parish) so the caller leaves parish_id as-is.
+export function readEditParish(selectId) {
+  const el = document.getElementById(selectId);
+  return el ? (el.value || null) : null;
+}

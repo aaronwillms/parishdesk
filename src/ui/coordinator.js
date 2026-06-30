@@ -84,10 +84,19 @@ function coordPersonHtml(c, sep) {
 }
 // Section label: grey "Program Coordinator(s)" heading, or a gold parish-name tag.
 const _coordHeading = (txt, gold) => `<div style="font-size:10.5px;font-weight:600;color:${gold ? 'var(--gold)' : '#6B7280'};text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">${txt}</div>`;
-// The classic single-group output (heading + people) — single-parish prep + cura.
-function _singleGroupHtml(coords) {
-  return _coordHeading(coords.length > 1 ? 'Program Coordinators' : 'Program Coordinator')
+// The classic single-group output (heading + people) — single-parish prep + cura,
+// and the collapsed "identical across parishes" case in the All view. `headingText`
+// overrides the default label (the collapsed case passes "Coordinator(s)"); others
+// keep the "Program Coordinator(s)" default.
+function _singleGroupHtml(coords, headingText) {
+  const heading = headingText || (coords.length > 1 ? 'Program Coordinators' : 'Program Coordinator');
+  return _coordHeading(heading)
     + coords.map((c, i) => coordPersonHtml(c, i > 0)).join('');
+}
+// Order-independent identity key for a coordinator set (by person id; legacy rows
+// fall back to name). Used to detect parishes sharing the IDENTICAL set.
+function _coordSetKey(coords) {
+  return (coords || []).map(c => c.id || c.name).filter(Boolean).slice().sort().join('|');
 }
 
 // The parish a coordinator Edit/Save targets for a prog:
@@ -139,22 +148,42 @@ function renderCoordCard(prog) {
       if (coords.length) nameEl.innerHTML = _singleGroupHtml(coords);
       else nameEl.textContent = 'No coordinator set';
     } else {
-      // Multi-parish: follow the active tab. All → every parish that HAS a coordinator,
-      // each tagged with its short name; a specific tab → only that parish.
+      // Multi-parish: follow the active tab.
       const tab = getActiveParishTab(PROG_PANEL_KEY[prog] || prog);   // 'all' | parishId
-      const targets = tab === 'all' ? accParishes : accParishes.filter(p => p.id === tab);
-      const groups = targets
-        .map(p => ({ p, coords: coordinatorsFromRow(byParish[p.id]) }))
-        .filter(g => tab === 'all' ? g.coords.length : true);   // All omits empty parishes; a specific tab keeps it to show "none"
-      if (!groups.some(g => g.coords.length)) {
-        nameEl.textContent = 'No coordinator set';
+      if (tab !== 'all') {
+        // Specific parish tab: just that parish, tagged (or "No coordinator set").
+        const p = accParishes.find(x => x.id === tab);
+        const coords = p ? coordinatorsFromRow(byParish[p.id]) : [];
+        if (coords.length) {
+          nameEl.innerHTML = _coordHeading(shortName(p), /*gold tag*/true)
+            + coords.map((c, i) => coordPersonHtml(c, i > 0)).join('');
+        } else {
+          nameEl.textContent = 'No coordinator set';
+        }
       } else {
-        nameEl.innerHTML = groups.map((g, gi) =>
-          `<div style="${gi > 0 ? 'margin-top:10px;padding-top:10px;border-top:.5px solid rgba(255,255,255,.14);' : ''}">`
-          + _coordHeading(shortName(g.p), /*gold tag*/true)
-          + g.coords.map((c, i) => coordPersonHtml(c, i > 0)).join('')
-          + `</div>`
-        ).join('');
+        // All view: parishes that HAVE coordinators.
+        const withCoords = accParishes
+          .map(p => ({ p, coords: coordinatorsFromRow(byParish[p.id]) }))
+          .filter(g => g.coords.length);
+        const sameSet = withCoords.length >= 2
+          && withCoords.every(g => _coordSetKey(g.coords) === _coordSetKey(withCoords[0].coords));
+        if (!withCoords.length) {
+          nameEl.textContent = 'No coordinator set';
+        } else if (sameSet) {
+          // Every parish shares the IDENTICAL set → collapse to one untagged group,
+          // labeled "Coordinator(s)" (not the single-parish "Program Coordinator(s)").
+          nameEl.innerHTML = _singleGroupHtml(withCoords[0].coords, withCoords[0].coords.length > 1 ? 'Coordinators' : 'Coordinator');
+        } else {
+          // Per-parish tagged columns, side by side (flex row, wraps on narrow widths).
+          nameEl.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start;">`
+            + withCoords.map(g =>
+                `<div style="min-width:170px;">`
+                + _coordHeading(shortName(g.p), /*gold tag*/true)
+                + g.coords.map((c, i) => coordPersonHtml(c, i > 0)).join('')
+                + `</div>`
+              ).join('')
+            + `</div>`;
+        }
       }
     }
     if (contactEl) contactEl.innerHTML = '';

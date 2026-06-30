@@ -5,7 +5,7 @@ import { isAdmin, canAccessSacrament, isSacramentCoordinator, accessibleParishes
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
-import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid } from '../sacramental/parishCreateField.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish } from '../sacramental/parishCreateField.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
@@ -222,10 +222,12 @@ function buildModalHtml(p, opts = {}) {
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit First Communion File' : 'New First Communion Student'}</div>`;
 
-  // Parish picker (CREATE on the "All" tab with >1 accessible parish only). Save stays
-  // locked until a parish is chosen (fcValidateParish). Never shown in edit/inline.
+  // Parish picker. CREATE (All tab, >1 parish): placeholder + Save-lockout. EDIT (>1
+  // parish): the record's parish preselected, reassignable, NO lockout. Distinct ids.
   if ((!isEdit && !inline) && shouldShowParishField(['first_communion', 'firstcomm'], 'firstcommunion')) {
     h += parishCreateFieldHtml(['first_communion', 'firstcomm'], { selectId: 'fc-parish-select', onChange: 'fcValidateParish()' });
+  } else if (isEdit && shouldShowParishFieldEdit(['first_communion', 'firstcomm'])) {
+    h += parishEditFieldHtml(['first_communion', 'firstcomm'], { selectId: 'fc-parish-edit', currentParishId: p?.parish_id || null });
   }
 
   // 1 — Cohort FIRST (SELECT an existing cohort only; cohorts are created in the panel
@@ -419,6 +421,7 @@ async function _fcWriteEdit(id, r) {
   const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
   if (prior && statusOf(prior) !== 'received' && newStatus === 'received') tl.push({ type: 'auto', text: 'First Communion Received', created_at: nowIso() });
   payload.timeline = tl;
+  const _ep = readEditParish('fc-parish-edit'); if (_ep) payload.parish_id = _ep;   // parish reassignment (edit field shown)
   const priorStatus = prior ? statusOf(prior) : null;
   const { error } = await withWriteRetry(() => sb.from('sacramental_firstcomm').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('firstcomm update', error); return { ok: false }; }

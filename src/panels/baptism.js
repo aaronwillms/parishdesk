@@ -4,7 +4,7 @@ import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } f
 import { isAdmin, canAccessSacrament, isSacramentCoordinator, accessibleParishesForSacrament } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
-import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid } from '../sacramental/parishCreateField.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish } from '../sacramental/parishCreateField.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { normalizePhone } from '../utils/phone.js';
@@ -182,10 +182,12 @@ function buildModalHtml(p, opts = {}) {
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Baptism File' : 'New Baptism'}</div>`;
 
-  // 0 — Parish picker (CREATE on the "All" tab with >1 accessible parish only). Save
-  // stays locked until a parish is chosen (bapValidate). Never shown in edit/inline.
+  // 0 — Parish picker. CREATE (All tab, >1 parish): placeholder + Save-lockout. EDIT
+  // (>1 parish): the record's parish preselected, reassignable, NO lockout. Distinct ids.
   if ((!isEdit && !inline) && shouldShowParishField(['baptism'], 'baptism')) {
     h += parishCreateFieldHtml(['baptism'], { selectId: 'bf-parish-select', onChange: 'bapValidate()' });
+  } else if (isEdit && shouldShowParishFieldEdit(['baptism'])) {
+    h += parishEditFieldHtml(['baptism'], { selectId: 'bf-parish-edit', currentParishId: p?.parish_id || null });
   }
 
   // 1 — Person responsible for formation (clergy + Baptism coordinator + Other)
@@ -395,6 +397,7 @@ async function _bapWriteEdit(id, payload, name) {
   const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
   if (prior && statusOf(prior) !== 'complete' && newStatus === 'complete') tl.push({ type: 'auto', text: 'Baptism Complete', created_at: nowIso() });
   payload.timeline = tl;
+  const _ep = readEditParish('bf-parish-edit'); if (_ep) payload.parish_id = _ep;   // parish reassignment (edit field shown)
   const priorStatus = prior ? statusOf(prior) : null;
   const { error } = await withWriteRetry(() => sb.from('sacramental_baptism').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('baptism update', error); return { ok: false }; }

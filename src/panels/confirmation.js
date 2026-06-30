@@ -5,7 +5,7 @@ import { isAdmin, canAccessSacrament, isSacramentCoordinator, accessibleParishes
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
-import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid } from '../sacramental/parishCreateField.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish } from '../sacramental/parishCreateField.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
@@ -235,10 +235,12 @@ function buildModalHtml(p, opts = {}) {
 
   let h = inline ? '' : `<div class="modal-title">${isEdit ? 'Edit Confirmation File' : 'New Confirmation Candidate'}</div>`;
 
-  // Parish picker (CREATE on the "All" tab with >1 accessible parish only). Save stays
-  // locked until a parish is chosen (confValidateParish). Never shown in edit/inline.
+  // Parish picker. CREATE (All tab, >1 parish): placeholder + Save-lockout. EDIT (>1
+  // parish): the record's parish preselected, reassignable, NO lockout. Distinct ids.
   if ((!isEdit && !inline) && shouldShowParishField(['confirmation'], 'confirmation')) {
     h += parishCreateFieldHtml(['confirmation'], { selectId: 'conf-parish-select', onChange: 'confValidateParish()' });
+  } else if (isEdit && shouldShowParishFieldEdit(['confirmation'])) {
+    h += parishEditFieldHtml(['confirmation'], { selectId: 'conf-parish-edit', currentParishId: p?.parish_id || null });
   }
 
   // 1 — Cohort FIRST (SELECT only; created in the panel via Manage Cohorts). Picking it
@@ -466,6 +468,7 @@ async function _confWriteEdit(id, r) {
   const tl = JSON.parse(JSON.stringify(prior?.timeline || []));
   if (prior && statusOf(prior) !== 'confirmed' && newStatus === 'confirmed') tl.push({ type: 'auto', text: 'Confirmed', created_at: nowIso() });
   payload.timeline = tl;
+  const _ep = readEditParish('conf-parish-edit'); if (_ep) payload.parish_id = _ep;   // parish reassignment (edit field shown)
   const priorStatus = prior ? statusOf(prior) : null;
   const { error } = await withWriteRetry(() => sb.from('sacramental_confirmation').update(payload).eq('id', id), { kind: 'update' });
   if (error) { reportWriteError('confirmation update', error); return { ok: false }; }
