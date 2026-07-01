@@ -758,6 +758,16 @@ export async function loadInit() {
     _dashPersonnelId = scope.personnelId || null;
     _checkGcalButton();
 
+    // Wire the dashboard "+ Add Project" button through window.openModal('project') — the guaranteed
+    // create trigger that does ensurePanel('projects') (imports projects.js) THEN openNewProjectModal.
+    // A bare inline onclick="openNewProjectModal()" would ReferenceError on a fresh dashboard load,
+    // because projects.js (which assigns that global) isn't imported until a project is opened.
+    const _addProjBtn = document.getElementById('dash-add-project-btn');
+    if (_addProjBtn && !_addProjBtn.dataset.wired) {
+      _addProjBtn.dataset.wired = '1';
+      _addProjBtn.addEventListener('click', () => window.openModal('project'));
+    }
+
     // Always re-fetch projects and tasks so dashboard status chips reflect current data
     // (status changes made on the Projects/Tasks panels must show here without a stale cache).
     const [projRes, caseRes, coupleRes, alertRes, tasksRes] = await Promise.all([
