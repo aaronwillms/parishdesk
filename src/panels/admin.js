@@ -11,6 +11,12 @@ import { deriveParishStaffPersonnelIds } from '../ui/parishStaff.js';
 import { createInstitutionWithRoot } from '../ui/institutions.js';
 
 const SACRAMENTS = ['baptism', 'first_communion', 'confirmation', 'ocia', 'marriage', 'annulments'];
+// GRID-LOCAL alias for the coordinator-lock derivation only. First Communion is stored
+// as 'first_communion' in sacramental_roles (the checkbox) but as 'firstcomm' in
+// program_coordinators.program — so the coordinator set carries 'firstcomm' while the
+// grid iterates 'first_communion'. Treat them as equivalent when checking the FC
+// coordinator lock. Does NOT change any stored value or any other consumer.
+const COORD_KEY_ALIASES = { first_communion: ['first_communion', 'firstcomm'] };
 const SACRAMENT_LABELS = { baptism: 'Baptism', first_communion: 'First Communion', confirmation: 'Confirmation', ocia: 'OCIA', marriage: 'Marriage', annulments: 'Annulments' };
 
 // Only non-sacramental, non-auto panels that can be manually granted
@@ -504,7 +510,7 @@ function _userDetail(u) {
       const state = computePermissionBasis({
         kind: 'sacrament',
         hasManual: !!(u.sacramentsByParish?.[pid]?.has(s)),
-        hasRole:   !!(u.coordinatorByParish?.[pid]?.has(s)),
+        hasRole:   (COORD_KEY_ALIASES[s] || [s]).some(k => !!(u.coordinatorByParish?.[pid]?.has(k))),
         roleLabel: SACRAMENT_LABELS[s],
       });
       return permRow('au-sac-cb', `data-sacrament="${s}" data-parish="${pid}"`, SACRAMENT_LABELS[s], state, SACRAMENT_LABELS[s]);
