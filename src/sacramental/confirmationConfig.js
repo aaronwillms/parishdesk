@@ -10,7 +10,7 @@ import { formatPhone } from '../utils/phone.js';
 import { isSacramentCoordinator } from '../roles.js';
 import { familySectionHtml } from './familyLink.js';
 import {
-  getConfRecords, getConfRecord, confCanManage, CONF_STATUS,
+  getConfRecords, getConfRecord, confCanManage, confCanView, CONF_STATUS,
   nameOf, lastNameOf, statusOf, tmplType, confDate, normDocs, notesOf, ageOf,
   svcEnabled, svcIncomplete, isYouth, cohortKeyOf, cohortName, cohortDateOf,
   preparerOf, confChurch, buildConfEditForm, confSaveEdit, confDeleteRec, confBulkStatus,
@@ -95,13 +95,13 @@ function documents(p) {
 }
 function activity(p) {
   const notes = notesOf(p);
-  const add = confCanManage() ? `<div style="display:flex;gap:6px;margin-bottom:8px;">
+  const add = confCanManage(p) ? `<div style="display:flex;gap:6px;margin-bottom:8px;">
       <input type="text" id="cfn-${p.id}" placeholder="Add a note…" onkeydown="if(event.key==='Enter'){event.preventDefault();addConfNote('${p.id}');}"
         style="flex:1;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;outline:none;" />
       <button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="addConfNote('${p.id}')">Add</button>
     </div>` : '';
   const list = notes.length
-    ? notes.map((n, i) => `<div style="font-size:13px;color:#555;margin-bottom:6px;padding:8px 12px;background:#FFF8EE;border-left:3px solid var(--gold);border-radius:3px;"><div style="display:flex;gap:8px;align-items:flex-start;"><div style="white-space:pre-wrap;flex:1;">${esc(n.note)}</div>${confCanManage() && !n.legacy ? `<button title="Edit" onclick="confEditNote('${p.id}',${i})" style="background:none;border:none;cursor:pointer;color:#C0A062;font-size:12px;line-height:1.2;padding:0;">✎</button>` : ''}</div>${(n.by || n.created_at || n.edited_at) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${n.created_at ? esc(fmtDate(String(n.created_at).slice(0, 10))) : ''}${n.by ? ' · ' + esc(n.by) : ''}${noteEditedMarker(n.edited_at)}</div>` : ''}</div>`).join('')
+    ? notes.map((n, i) => `<div style="font-size:13px;color:#555;margin-bottom:6px;padding:8px 12px;background:#FFF8EE;border-left:3px solid var(--gold);border-radius:3px;"><div style="display:flex;gap:8px;align-items:flex-start;"><div style="white-space:pre-wrap;flex:1;">${esc(n.note)}</div>${confCanManage(p) && !n.legacy ? `<button title="Edit" onclick="confEditNote('${p.id}',${i})" style="background:none;border:none;cursor:pointer;color:#C0A062;font-size:12px;line-height:1.2;padding:0;">✎</button>` : ''}</div>${(n.by || n.created_at || n.edited_at) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${n.created_at ? esc(fmtDate(String(n.created_at).slice(0, 10))) : ''}${n.by ? ' · ' + esc(n.by) : ''}${noteEditedMarker(n.edited_at)}</div>` : ''}</div>`).join('')
     : '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No notes yet.</div>';
   return add + list;
 }
@@ -138,7 +138,8 @@ export const confirmationConfig = {
     ? (sk === 'adult' ? 'Adult Candidates' : 'Youth Candidates')
     : (sk === 'adult' ? 'Adults' : 'Youth'),
 
-  canManage: () => confCanManage(),
+  canManage: (r) => confCanManage(r),
+  canView: (r) => confCanView(r),
   canManageTemplate: () => isSacramentCoordinator('confirmation'),
   openTemplate: () => window.openConfTemplates?.(),
   openManageCohorts: () => window.openCohortManager?.('confirmation'),

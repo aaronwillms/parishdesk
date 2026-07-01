@@ -13,7 +13,7 @@ import { formatDateDisplay, fmtDate, todayCST, docCheckStampHtml } from '../util
 import { formatPhone } from '../utils/phone.js';
 import { isSacramentCoordinator } from '../roles.js';
 import {
-  getCaseRecords, getCaseRecord, anlCanManage, CASE_STATUS, TYPE_BADGE,
+  getCaseRecords, getCaseRecord, anlCanManage, anlCanView, CASE_STATUS, TYPE_BADGE,
   caseType, petName, respName, petLast, respLast, advocateName, caseDocs,
   buildAnlEditForm, anlSaveEdit, anlDeleteRec, TIMELINE_EVENTS, parseCaseNotes, BAP_STATUS, loadCasesData,
 } from '../panels/annulments.js';
@@ -418,6 +418,7 @@ export const annulmentConfig = {
   groupCompare: (a, b) => GROUP_ORDER.indexOf(a) - GROUP_ORDER.indexOf(b),
 
   canManage: () => anlCanManage(),
+  canView: (r) => anlCanView(r),   // cura: coordinators see all; advocates see their cases; + grants
   openCreate: () => window.openCaseCreate?.(),
   // Settings gear → per-type document templates (coordinator-gated, like Marriage).
   canManageTemplate: () => isSacramentCoordinator('annulments'),

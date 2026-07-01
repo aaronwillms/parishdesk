@@ -181,6 +181,11 @@ function visibleRecords() {
     // Parish switcher: a specific parish tab filters to that parish; 'all' (or unset)
     // shows the full accessible union (records already fetched for all accessible parishes).
     if (s.parishTab && s.parishTab !== 'all' && r.parish_id !== s.parishTab) return false;
+    // Universal % grant scoping: a per-record canView keeps only records the user may
+    // see — normal parish/role access OR a record_grant. Pure grantees thus see only
+    // the granted file(s); coordinators see their parishes unchanged. (No-op when the
+    // config omits canView.)
+    if (cfg.canView && !cfg.canView(r)) return false;
     if (q) {
       const txt = (cfg.searchText ? cfg.searchText(r) : cfg.listItem(r).title) || '';
       if (!String(txt).toLowerCase().includes(q)) return false;
@@ -385,7 +390,10 @@ function detailPaneHtml() {
   }
 
   const head = cfg.detailHeader(r);
-  const canManage = cfg.canManage ? cfg.canManage() : true;
+  // Per-RECORD manage check: a coordinator may edit only at parishes they hold, so the
+  // Edit button is gated on THIS record's parish (not the home parish). A pure grantee is
+  // therefore read-only. (List-pane "New" calls canManage() with no record — see above.)
+  const canManage = cfg.canManage ? cfg.canManage(r) : true;
   // Action buttons: icon + a labelled span. The CSS class carries padding/font (so the
   // mobile media query can restyle them to icon-only ~44px tap targets); the aria-label
   // keeps an accessible name when the label span is hidden on mobile.

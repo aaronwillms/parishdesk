@@ -3,7 +3,8 @@ import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError, ap
 import { store } from '../store.js';
 import { expandCase, ensureCaseDisplays, getCaseDisplay } from './annulments.js';
 import { ensureOciaDisplays, getOciaDisplay } from './ocia.js';
-import { isAdmin, canAccessSacrament, accessibleParishesForSacrament } from '../roles.js';
+import { isAdmin, canAccessSacrament, canAccessSacramentAnyParish, accessibleParishesForSacrament } from '../roles.js';
+import { hasMyGrantForLink, myGrantedIdsForType } from '../ui/grants.js';
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
@@ -54,7 +55,20 @@ let _templates = {};   // marriage_type → {documents, steps, fees_enabled, fee
 let _M = null;         // create/edit modal working state
 let _marCoordinatorNames = [];   // marriage coordinator display names (preparer source)
 
-function fullAccess() { return isAdmin() || canAccessSacrament('marriage'); }
+// Manage gate. Per-RECORD when a record is supplied (Edit/notes): a coordinator may act
+// only at the record's own parish. With no record (list "New"): any accessible parish —
+// the create form's picker then constrains which. A pure grantee holds neither → read-only.
+function fullAccess(record) {
+  if (isAdmin()) return true;
+  return record
+    ? canAccessSacrament('marriage', record.parish_id)
+    : canAccessSacramentAnyParish('marriage');
+}
+// View gate (universal % grant scoping): normal parish/role access to this record, OR a
+// record_grant on it. Pure grantees see only the granted file(s).
+function canView(r) {
+  return canAccessSacrament('marriage', r.parish_id) || hasMyGrantForLink('marriage', r.id);
+}
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function _curUserName() { return store.currentUserProfile?.personnel?.name || 'Staff'; }
 function nowIso() { return new Date().toISOString(); }
@@ -158,7 +172,19 @@ export async function loadCouplesData() {
   else if (store.parishSettings?.id) _q = _q.eq('parish_id', store.parishSettings.id);
   const { data, error } = await _q;
   if (error) { console.error('[marriage]', error); return []; }
-  allCouples = data || [];
+  let rows = data || [];
+  // Union in any granted records whose parish fell outside the accessible set (a
+  // cross-parish % grant), so the granted file LOADS and its detail resolves.
+  const grantedIds = myGrantedIdsForType('marriage');
+  if (grantedIds.length) {
+    const have = new Set(rows.map(r => r.id));
+    const missing = grantedIds.filter(id => !have.has(id));
+    if (missing.length) {
+      const { data: gd } = await sb.from('couples').select('*').in('id', missing);
+      if (gd) rows = rows.concat(gd);
+    }
+  }
+  allCouples = rows;
   store.allCouples = allCouples;
   // Warm the annulment display cache for every linked prior-marriage case so chips
   // resolve by id without the Annulments panel being loaded.
@@ -186,7 +212,7 @@ export async function loadCouples() {
 // ── Shell accessors (consumed by marriageConfig) ─────────────────────────────
 export function getCouples() { return allCouples; }
 export function getCouple(id) { return allCouples.find(x => x.id === id) || null; }
-export { fullAccess as marCanManage };
+export { fullAccess as marCanManage, canView as marCanView };
 export { MTYPE_BADGE, coupleLabel, s1Name, s2Name, normDocs, normSteps, normFees, notesOf, progressOf, feeTotals };
 export function weddingDateOf(c) { return c?.wedding_date || null; }
 export function officiantOf(c) {

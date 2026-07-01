@@ -1,7 +1,8 @@
 import { sb, withWriteRetry, serializeWrite, insertWithRetry, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } from '../utils.js';
-import { isAdmin, canAccessSacrament, isSacramentCoordinator, accessibleParishesForSacrament } from '../roles.js';
+import { isAdmin, canAccessSacrament, canAccessSacramentAnyParish, isSacramentCoordinator, accessibleParishesForSacrament } from '../roles.js';
+import { hasMyGrantForLink, myGrantedIdsForType } from '../ui/grants.js';
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
 import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish, initialCreateParish } from '../sacramental/parishCreateField.js';
@@ -28,7 +29,21 @@ async function loadBapCoordinator() {
   } catch (_) { _bapCoordinatorNames = []; }
 }
 
-function fullAccess() { return isAdmin() || canAccessSacrament('baptism'); }
+// Manage gate. Per-RECORD when a record is supplied (Edit/notes): a coordinator may act
+// only at the record's own parish. With no record (list "New"): any accessible parish —
+// the create form's picker then constrains which. A pure grantee holds neither, so is
+// read-only.
+function fullAccess(record) {
+  if (isAdmin()) return true;
+  return record
+    ? canAccessSacrament('baptism', record.parish_id)
+    : canAccessSacramentAnyParish('baptism');
+}
+// View gate (universal % grant scoping): normal parish/role access to this record, OR a
+// record_grant on it. Pure grantees thus see only the granted file(s).
+function canView(r) {
+  return canAccessSacrament('baptism', r.parish_id) || hasMyGrantForLink('baptism', r.id);
+}
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function _curUserName() { return store.currentUserProfile?.personnel?.name || 'Staff'; }
 function _curUserId() { return store.currentUserProfile?.user_id || null; }
@@ -77,14 +92,26 @@ export async function loadBaptismData() {
   else if (store.parishSettings?.id) _q = _q.eq('parish_id', store.parishSettings.id);
   const { data, error } = await _q;
   if (error) { console.error('[baptism]', error); return; }
-  allBap = data || [];
+  let rows = data || [];
+  // Union in any granted records whose parish fell outside the accessible set (a
+  // cross-parish % grant), so the granted file LOADS and its detail resolves.
+  const grantedIds = myGrantedIdsForType('baptism');
+  if (grantedIds.length) {
+    const have = new Set(rows.map(r => r.id));
+    const missing = grantedIds.filter(id => !have.has(id));
+    if (missing.length) {
+      const { data: gd } = await sb.from('sacramental_baptism').select('*').in('id', missing);
+      if (gd) rows = rows.concat(gd);
+    }
+  }
+  allBap = rows;
   store.allBaptism = allBap;
   updateStats();
   return allBap;
 }
 export function getBapRecords() { return allBap; }
 export function getBapRecord(id) { return allBap.find(x => x.id === id) || null; }
-export { fullAccess as bapCanManage };
+export { fullAccess as bapCanManage, canView as bapCanView };
 export function bapTemplate() { return _tplRow; }
 
 // Nav loader — fetch then mount the master-detail shell into #baptism-root.

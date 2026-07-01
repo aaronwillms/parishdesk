@@ -1,7 +1,8 @@
 import { sb, withWriteRetry, serializeWrite, insertWithRetry, deleteWithRetry } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError, applyDocCheck, docCheckStampHtml } from '../utils.js';
-import { isAdmin, canAccessSacrament, isSacramentCoordinator, accessibleParishesForSacrament } from '../roles.js';
+import { isAdmin, canAccessSacrament, canAccessSacramentAnyParish, isSacramentCoordinator, accessibleParishesForSacrament } from '../roles.js';
+import { hasMyGrantForLink, myGrantedIdsForType } from '../ui/grants.js';
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
@@ -30,7 +31,20 @@ const FALLBACK_TEMPLATES = {
 let allConf = [], confFilter = 'all', confExpanded = null, _cohortFilter = 'all';
 let _cohorts = [], _templates = {}, _M = null, _confCoordinatorNames = [];
 
-function fullAccess() { return isAdmin() || canAccessSacrament('confirmation'); }
+// Manage gate. Per-RECORD when a record is supplied (Edit/notes): a coordinator may act
+// only at the record's own parish. With no record (list "New"): any accessible parish —
+// the create form's picker then constrains which. A pure grantee holds neither → read-only.
+function fullAccess(record) {
+  if (isAdmin()) return true;
+  return record
+    ? canAccessSacrament('confirmation', record.parish_id)
+    : canAccessSacramentAnyParish('confirmation');
+}
+// View gate (universal % grant scoping): normal parish/role access to this record, OR a
+// record_grant on it. Pure grantees see only the granted file(s).
+function canView(r) {
+  return canAccessSacrament('confirmation', r.parish_id) || hasMyGrantForLink('confirmation', r.id);
+}
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function _curUserName() { return store.currentUserProfile?.personnel?.name || 'Staff'; }
 function nowIso() { return new Date().toISOString(); }
@@ -82,7 +96,19 @@ export async function loadConfData() {
   else if (store.parishSettings?.id) _q = _q.eq('parish_id', store.parishSettings.id);
   const { data, error } = await _q;
   if (error) { console.error('[confirmation]', error); return []; }
-  allConf = data || [];
+  let rows = data || [];
+  // Union in any granted records whose parish fell outside the accessible set (a
+  // cross-parish % grant), so the granted file LOADS and its detail resolves.
+  const grantedIds = myGrantedIdsForType('confirmation');
+  if (grantedIds.length) {
+    const have = new Set(rows.map(r => r.id));
+    const missing = grantedIds.filter(id => !have.has(id));
+    if (missing.length) {
+      const { data: gd } = await sb.from('sacramental_confirmation').select('*').in('id', missing);
+      if (gd) rows = rows.concat(gd);
+    }
+  }
+  allConf = rows;
   store.allConfirmation = allConf;
   updateStats();
   return allConf;
@@ -100,7 +126,7 @@ export async function loadConfirmation() {
 // ── Shell accessors (consumed by confirmationConfig) ─────────────────────────
 export function getConfRecords() { return allConf; }
 export function getConfRecord(id) { return allConf.find(x => x.id === id) || null; }
-export { fullAccess as confCanManage };
+export { fullAccess as confCanManage, canView as confCanView };
 export { CONF_STATUS, nameOf, lastNameOf, statusOf, tmplType, confDate, normDocs, notesOf, ageOf, svcEnabled, svcIncomplete };
 
 // Register with the shared family-link mechanism — same mechanism as First Communion,

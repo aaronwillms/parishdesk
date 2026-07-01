@@ -2,7 +2,8 @@ import { sb, withWriteRetry, serializeWrite, insertWithRetry, deleteWithRetry } 
 import { store } from '../store.js';
 import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError, applyDocCheck, docCheckStampHtml } from '../utils.js';
 import { expandCase, ensureCaseDisplays, getCaseDisplay } from './annulments.js';
-import { isAdmin, canAccessSacrament, isSacramentCoordinator, accessibleParishesForSacrament } from '../roles.js';
+import { isAdmin, canAccessSacrament, canAccessSacramentAnyParish, isSacramentCoordinator, accessibleParishesForSacrament } from '../roles.js';
+import { hasMyGrantForLink, myGrantedIdsForType } from '../ui/grants.js';
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
@@ -48,7 +49,20 @@ async function loadOciaCoordinator() {
   } catch (_) { _ociaCoordinatorNames = []; }
 }
 
-function fullAccess() { return isAdmin() || canAccessSacrament('ocia'); }
+// Manage gate. Per-RECORD when a record is supplied (Edit/notes): a coordinator may act
+// only at the record's own parish. With no record (list "New"): any accessible parish —
+// the create form's picker then constrains which. A pure grantee holds neither → read-only.
+function fullAccess(record) {
+  if (isAdmin()) return true;
+  return record
+    ? canAccessSacrament('ocia', record.parish_id)
+    : canAccessSacramentAnyParish('ocia');
+}
+// View gate (universal % grant scoping): normal parish/role access to this record, OR a
+// record_grant on it. Pure grantees see only the granted file(s).
+function canView(r) {
+  return canAccessSacrament('ocia', r.parish_id) || hasMyGrantForLink('ocia', r.id);
+}
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function _curUserName() { return store.currentUserProfile?.personnel?.name || 'Staff'; }
 function nowIso() { return new Date().toISOString(); }
@@ -223,7 +237,19 @@ export async function loadOciaData() {
   else if (store.parishSettings?.id) _q = _q.eq('parish_id', store.parishSettings.id);
   const { data, error } = await _q;
   if (error) { console.error('[ocia]', error); return []; }
-  allOcia = data || [];
+  let rows = data || [];
+  // Union in any granted records whose parish fell outside the accessible set (a
+  // cross-parish % grant), so the granted file LOADS and its detail resolves.
+  const grantedIds = myGrantedIdsForType('ocia');
+  if (grantedIds.length) {
+    const have = new Set(rows.map(r => r.id));
+    const missing = grantedIds.filter(id => !have.has(id));
+    if (missing.length) {
+      const { data: gd } = await sb.from('sacramental_ocia').select('*').in('id', missing);
+      if (gd) rows = rows.concat(gd);
+    }
+  }
+  allOcia = rows;
   store.allOcia = allOcia;
   // Warm the annulment display cache for every linked prior-marriage case so chips
   // and the "resolved" flag resolve by id without the Annulments panel being loaded.
@@ -244,7 +270,7 @@ export async function loadOcia() {
 // ── Shell accessors (consumed by ociaConfig) ────────────────────────────────
 export function getOciaRecords() { return allOcia; }
 export function getOciaRecord(id) { return allOcia.find(x => x.id === id) || null; }
-export { fullAccess as ociaCanManage, OCIA_STATUS, ociaAge };
+export { fullAccess as ociaCanManage, canView as ociaCanView, OCIA_STATUS, ociaAge };
 export function ociaName(p) { return p?.name || '—'; }
 export function ociaLastName(p) { return lastNameOf(p); }
 export function ociaStatusOf(p) { return p?.status_code || 'inquirer'; }

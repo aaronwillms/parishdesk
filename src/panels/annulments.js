@@ -3,6 +3,7 @@ import { notifyUsers, notifySacramentEvent } from '../notifications.js';
 import { store } from '../store.js';
 import { fmtDate, todayCST, logActivity, reportWriteError, applyDocCheck, docCheckStampHtml } from '../utils.js';
 import { isAdmin, canAccessSacrament, isSacramentCoordinator } from '../roles.js';
+import { hasMyGrantForLink } from '../ui/grants.js';
 import { normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord } from '../sacramental/panelShell.js';
 import { promptNoteEdit } from '../sacramental/noteEdit.js';
@@ -137,6 +138,13 @@ let _anlCoordinatorIds = [];   // annulment coordinator personnel ids (Advocate 
 function fullAccess()  { return isAdmin() || canAccessSacrament('annulments'); }
 function advocateIds()  { return store.currentUserRoles?.advocateCaseIds || []; }
 function advocateOnly() { return !fullAccess() && advocateIds().length > 0; }
+// View gate (universal % grant scoping). Annulments is cura/group-wide, so coordinators
+// (fullAccess) see every case; an ADVOCATE sees only cases they're assigned to; anyone
+// with a record_grant sees the granted case. This scopes an advocate — who reaches the
+// panel via advocateCaseIds — to their own cases instead of the whole caseload.
+function canView(c) {
+  return fullAccess() || advocateIds().includes(c.id) || hasMyGrantForLink('annulment', c.id);
+}
 
 function _esc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -291,7 +299,7 @@ export function getCaseDisplay(id) {
 // ── Shell accessors (consumed by annulmentConfig) ───────────────────────────
 export function getCaseRecords() { return allCases; }
 export function getCaseRecord(id) { return allCases.find(x => x.id === id) || null; }
-export { fullAccess as anlCanManage };   // CASE_STATUS / TYPE_BADGE already exported above
+export { fullAccess as anlCanManage, canView as anlCanView };   // CASE_STATUS / TYPE_BADGE already exported above
 export { caseType, petName, respName, petLast, respLast, advocateName, caseDocs, caseTimeline, BAP_STATUS };
 
 // ── Priority Actions banner ──────────────────────────────────────────────────

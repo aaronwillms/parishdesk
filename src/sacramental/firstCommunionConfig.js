@@ -9,7 +9,7 @@ import { formatPhone } from '../utils/phone.js';
 import { isSacramentCoordinator } from '../roles.js';
 import { familySectionHtml } from './familyLink.js';
 import {
-  getFcRecords, getFcRecord, fcCanManage, FC_STATUS,
+  getFcRecords, getFcRecord, fcCanManage, fcCanView, FC_STATUS,
   nameOf, lastNameOf, statusOf, commDate, ageOf, normDocs, notesOf,
   cohortKeyOf, cohortName, cohortDateOf, communionChurch, preparerOf,
   buildFcEditForm, fcSaveEdit, fcDeleteRec, fcBulkStatus,
@@ -82,13 +82,13 @@ function documents(p) {
 }
 function activity(p) {
   const notes = notesOf(p);
-  const add = fcCanManage() ? `<div style="display:flex;gap:6px;margin-bottom:8px;">
+  const add = fcCanManage(p) ? `<div style="display:flex;gap:6px;margin-bottom:8px;">
       <input type="text" id="fcn-${p.id}" placeholder="Add a note…" onkeydown="if(event.key==='Enter'){event.preventDefault();addFcNote('${p.id}');}"
         style="flex:1;border-radius:var(--radius-sm);border:.5px solid var(--stone);padding:.4rem .6rem;font-size:13px;font-family:'Inter',sans-serif;outline:none;" />
       <button class="btn-secondary" style="padding:.35rem .9rem;font-size:12px;" onclick="addFcNote('${p.id}')">Add</button>
     </div>` : '';
   const noteList = notes.length
-    ? notes.map((n, i) => `<div style="font-size:13px;color:#555;margin-bottom:6px;padding:8px 12px;background:#FFF8EE;border-left:3px solid var(--gold);border-radius:3px;"><div style="display:flex;gap:8px;align-items:flex-start;"><div style="white-space:pre-wrap;flex:1;">${esc(n.note)}</div>${fcCanManage() && !n.legacy ? `<button title="Edit" onclick="fcEditNote('${p.id}',${i})" style="background:none;border:none;cursor:pointer;color:#C0A062;font-size:12px;line-height:1.2;padding:0;">✎</button>` : ''}</div>${(n.by || n.created_at || n.edited_at) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${n.created_at ? esc(fmtDate(String(n.created_at).slice(0, 10))) : ''}${n.by ? ' · ' + esc(n.by) : ''}${noteEditedMarker(n.edited_at)}</div>` : ''}</div>`).join('')
+    ? notes.map((n, i) => `<div style="font-size:13px;color:#555;margin-bottom:6px;padding:8px 12px;background:#FFF8EE;border-left:3px solid var(--gold);border-radius:3px;"><div style="display:flex;gap:8px;align-items:flex-start;"><div style="white-space:pre-wrap;flex:1;">${esc(n.note)}</div>${fcCanManage(p) && !n.legacy ? `<button title="Edit" onclick="fcEditNote('${p.id}',${i})" style="background:none;border:none;cursor:pointer;color:#C0A062;font-size:12px;line-height:1.2;padding:0;">✎</button>` : ''}</div>${(n.by || n.created_at || n.edited_at) ? `<div style="font-size:11px;color:#9CA3AF;margin-top:3px;">${n.created_at ? esc(fmtDate(String(n.created_at).slice(0, 10))) : ''}${n.by ? ' · ' + esc(n.by) : ''}${noteEditedMarker(n.edited_at)}</div>` : ''}</div>`).join('')
     : '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No notes yet.</div>';
   return add + noteList;
 }
@@ -121,7 +121,8 @@ export const firstCommunionConfig = {
   groupLabel: (key) => cohortName(key),
   groupCompare: (a, b) => (cohortDateOf(a) || '').localeCompare(cohortDateOf(b) || ''),
 
-  canManage: () => fcCanManage(),
+  canManage: (r) => fcCanManage(r),
+  canView: (r) => fcCanView(r),
   canManageTemplate: () => isSacramentCoordinator('first_communion') || isSacramentCoordinator('firstcomm'),
   openTemplate: () => window.openFcTemplate?.(),
   openManageCohorts: () => window.openCohortManager?.('firstcomm'),   // shared cohort manager

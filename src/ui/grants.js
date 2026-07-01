@@ -132,6 +132,16 @@ export function hasMyGrantForLink(linkType, recordId) {
   return _myGrants.has(`${gtype}:${recordId}`);
 }
 
+// The current user's granted record_ids for a given record_type/gtype (e.g. 'baptism',
+// 'first_communion', 'annulment'). Used by the shell loaders to UNION granted records
+// into the fetch so CROSS-PARISH grants load (and fetchRecord resolves them). Returns []
+// until loadMyGrants has run.
+export function myGrantedIdsForType(gtype) {
+  if (!_myGrants || !gtype) return [];
+  const prefix = `${gtype}:`;
+  return [..._myGrants].filter(k => k.startsWith(prefix)).map(k => k.slice(prefix.length));
+}
+
 // ── Grant CRUD (each logs through logActivity) ──────────────────────────────
 
 export async function writeGrant({ recordType, recordId, grantedTo, grantedBy, note = null }) {

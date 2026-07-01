@@ -13,7 +13,7 @@ import { formatDateDisplay, fmtDate, docCheckStampHtml } from '../utils.js';
 import { formatPhone } from '../utils/phone.js';
 import { isSacramentCoordinator } from '../roles.js';
 import {
-  getOciaRecords, getOciaRecord, ociaCanManage, OCIA_STATUS,
+  getOciaRecords, getOciaRecord, ociaCanManage, ociaCanView, OCIA_STATUS,
   ociaName, ociaLastName, ociaStatusOf, candTypeOf, ociaAge, ociaNotesOf, ociaIsMinor, ociaNeedsAnnulment,
   pmHowEnded, pmDisplayName,
   cohortKeyOf, ociaCohortName, ociaCohortDateOf,
@@ -91,7 +91,7 @@ function personDetails(p) {
 // Notes (notes_log) — list with a per-note hover-X delete (shared sac-tl-* pattern)
 // plus an "Add Note" input. Writes route through the retry wrapper.
 function notes(p) {
-  const canManage = ociaCanManage();
+  const canManage = ociaCanManage(p);
   const list = ociaNotesOf(p);
   const body = list.length
     ? `<div class="sac-tl">${list.map((n, i) => `<div class="sac-tl-entry">
@@ -116,7 +116,7 @@ function notes(p) {
 // only). GRANTED → read-only display. Reuses the baptism-doc lock-gate structure.
 const PERM_LOCK_TIP = 'Enter the parent/guardian name and the date before marking permission granted.';
 function minorPermission(p) {
-  const canManage = ociaCanManage();
+  const canManage = ociaCanManage(p);
   if (p.parental_consent) {
     const name = p.minor_guardian_name || p.consent_parent_name || '';
     const date = p.minor_permission_date || p.consent_date || '';
@@ -210,7 +210,8 @@ export const ociaConfig = {
   subGroupOrder: ['catechumen', 'candidate'],
   subGroupLabel: (sk) => sk === 'candidate' ? 'Candidates' : 'Catechumens',
 
-  canManage: () => ociaCanManage(),
+  canManage: (r) => ociaCanManage(r),
+  canView: (r) => ociaCanView(r),
   canManageTemplate: () => isSacramentCoordinator('ocia'),
   openTemplate: () => window.openOciaTemplates?.(),
   openManageCohorts: () => window.openCohortManager?.('ocia'),   // shared cohort manager
