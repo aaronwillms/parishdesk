@@ -10,6 +10,7 @@ import { todayCST } from '../utils.js';
 import { flashSaved } from '../ui/saveButton.js';
 import { store } from '../store.js';
 import { accessibleParishesForSacrament } from '../roles.js';
+import { loadPins, isPinned, togglePin } from '../ui/pins.js';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -35,6 +36,13 @@ function archivedDivider(collapsed) {
   return `<div data-act="toggle-group" data-key="__archived" style="display:flex;align-items:center;gap:8px;margin:14px 0 6px;font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#9CA3AF;cursor:pointer;">
     <div style="flex:1;height:1px;background:var(--stone);"></div>
     <i class="fa-solid fa-chevron-${collapsed ? 'right' : 'down'}" style="font-size:9px;"></i>Archived
+    <div style="flex:1;height:1px;background:var(--stone);"></div></div>`;
+}
+// "📌 Pinned" divider for the flat panels — always-visible section header (the
+// grouped panels get an equivalent '__pinned' group via groupLabel).
+function pinnedDivider() {
+  return `<div style="display:flex;align-items:center;gap:8px;margin:2px 0 6px;font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--cardinal);">
+    <i class="fa-solid fa-thumbtack" style="font-size:10px;"></i>Pinned
     <div style="flex:1;height:1px;background:var(--stone);"></div></div>`;
 }
 
@@ -110,6 +118,7 @@ export function openSacramentalRecord(panelKey, recordId) {
 async function refresh(initial) {
   const s = _active; if (!s) return;
   s.records = (await s.config.fetchRecords()) || [];
+  if (s.config.pinRecordType) await loadPins(s.config.pinRecordType);   // per-user pins for isPinned()
   applyHash();           // pick up #/panel/:id selection
   render();
   if (initial) window.addEventListener('hashchange', onHashChange);
@@ -227,15 +236,23 @@ function listBodyHtml() {
   // output is byte-for-byte the old flat list. Otherwise: active records (sorted
   // by sortByDate when set) above, then an "Archived" cluster (most recent first).
   if (!cfg.groupBy) {
-    const hasArchived = recs.some(isArchived);
-    if (!cfg.sortByDate && !hasArchived) return recs.map(itemHtml).join('');
-    const active = recs.filter(r => !isArchived(r));
-    const archived = recs.filter(isArchived);
+    // Pinned float into a top "📌 Pinned" cluster (compare-sorted, already sorted in
+    // `recs`); the rest excludes them so a card appears ONCE. Order: Pinned → active
+    // → Archived. When there are no pins the original path is byte-for-byte preserved.
+    const pinRT = cfg.pinRecordType;
+    const pinned = pinRT ? recs.filter(r => isPinned(pinRT, r.id)) : [];
+    const rest = pinRT ? recs.filter(r => !isPinned(pinRT, r.id)) : recs;
+    const hasArchived = rest.some(isArchived);
+    if (!pinned.length && !cfg.sortByDate && !hasArchived) return rest.map(itemHtml).join('');
+    const active = rest.filter(r => !isArchived(r));
+    const archived = rest.filter(isArchived);
     if (cfg.sortByDate) {
       active.sort((a, b) => dateActiveCompare(a, b, cfg.sortByDate) || (cfg.compare ? cfg.compare(a, b) : 0));
       archived.sort((a, b) => ((b[cfg.sortByDate] || '').localeCompare(a[cfg.sortByDate] || '')) || (cfg.compare ? cfg.compare(a, b) : 0));
     }
-    let html = active.map(itemHtml).join('');
+    let html = '';
+    if (pinned.length) html += pinnedDivider() + pinned.map(itemHtml).join('');
+    html += active.map(itemHtml).join('');
     if (archived.length) {
       // Default: Archived collapsed (set once per mount); user can toggle. Active
       // search force-expands so matches in archived records aren't hidden.
@@ -250,9 +267,15 @@ function listBodyHtml() {
   // then "__none" (Unassigned); otherwise by the config's groupCompare (most-recent
   // first) so the newest cohort leads. (Additive: only affects panels whose groupBy
   // emits "__archived" — Confirmation / First Communion never do, so unchanged.)
+  // Pinned records leave their normal group for a single '__pinned' group that leads
+  // the list (mirrors '__archived' sinking to the bottom) — so a card appears ONCE.
   const groups = new Map();
-  recs.forEach(r => { const k = cfg.groupBy(r) ?? '__none'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
+  recs.forEach(r => {
+    const k = (cfg.pinRecordType && isPinned(cfg.pinRecordType, r.id)) ? '__pinned' : (cfg.groupBy(r) ?? '__none');
+    if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r);
+  });
   const keys = [...groups.keys()].sort((a, b) => {
+    if (a === '__pinned') return -1; if (b === '__pinned') return 1;
     if (a === '__archived') return 1; if (b === '__archived') return -1;
     if (a === '__none') return 1; if (b === '__none') return -1;
     return cfg.groupCompare ? cfg.groupCompare(a, b) : 0;
@@ -263,7 +286,7 @@ function listBodyHtml() {
   if (!s.groupInit) { s.groupsCollapsed = new Set(keys.filter(k => k === '__archived')); s.groupInit = true; }
 
   const searching = !!s.search.trim();   // active search force-expands all groups
-  const label = (k) => k === '__none' ? (cfg.noneLabel || 'Unassigned') : (cfg.groupLabel ? cfg.groupLabel(k) : k);
+  const label = (k) => k === '__pinned' ? '📌 Pinned' : k === '__none' ? (cfg.noneLabel || 'Unassigned') : (cfg.groupLabel ? cfg.groupLabel(k) : k);
   // Archived-last within a list (stable — non-archived keep their order).
   const archivedLast = (arr) => [...arr.filter(r => !isArchived(r)), ...arr.filter(isArchived)];
   return keys.map(k => {
@@ -307,6 +330,16 @@ function itemHtml(r) {
   const sel = s.selectedId === r.id;
   const checked = s.selected.has(r.id);
   const cb = s.bulk ? `<input type="checkbox" ${checked ? 'checked' : ''} data-act="check" data-id="${r.id}" style="width:15px;height:15px;accent-color:var(--cardinal);margin-top:2px;" />` : '';
+  // Per-user pin thumbtack (only when the panel opts in via cfg.pinRecordType).
+  // Filled/cardinal when pinned; grey + rotated 45° when not. onShellClick catches
+  // this innermost [data-act] so it toggles instead of opening the card.
+  let pinBtn = '';
+  if (cfg.pinRecordType) {
+    const pinned = isPinned(cfg.pinRecordType, r.id);
+    pinBtn = `<button data-act="toggle-pin" data-id="${r.id}" title="${pinned ? 'Unpin' : 'Pin to top'}" aria-label="${pinned ? 'Unpin' : 'Pin to top'}" style="background:none;border:none;cursor:pointer;padding:2px 4px;flex-shrink:0;align-self:flex-start;line-height:1;">
+      <i class="fa-solid fa-thumbtack" style="font-size:12px;color:${pinned ? 'var(--cardinal)' : '#C9C2B6'};${pinned ? '' : 'transform:rotate(45deg);'}"></i>
+    </button>`;
+  }
   return `<div class="sac-item${sel ? ' selected' : ''}" data-act="open" data-id="${r.id}">
     <div class="sac-item-row">
       ${cb}
@@ -318,6 +351,7 @@ function itemHtml(r) {
           ${(it.flags || []).map(flagHtml).join('')}
         </div>
       </div>
+      ${pinBtn}
     </div>
   </div>`;
 }
@@ -394,6 +428,7 @@ async function onShellClick(e) {
 
   switch (act) {
     case 'filter':     s.filter = t.dataset.key; render(); break;
+    case 'toggle-pin': { e.stopPropagation(); await togglePin(cfg.pinRecordType, t.dataset.id); render(); break; }
     case 'parish':     s.parishTab = t.dataset.pid; _selectedByPanel[cfg.panelKey] = s.parishTab; render(); _onParishTabChange?.(cfg.panelKey, s.parishTab); break;
     case 'search':     break;  // handled by input listener below
     case 'toggle-group': { const k = t.dataset.key; s.groupsCollapsed.has(k) ? s.groupsCollapsed.delete(k) : s.groupsCollapsed.add(k); render(); break; }

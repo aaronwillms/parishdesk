@@ -408,6 +408,7 @@ if (typeof window !== 'undefined') window._anlLinkedRecordsEditor = (c) => linkS
 // ── Config object ────────────────────────────────────────────────────────────
 export const annulmentConfig = {
   panelKey: 'annulments',
+  pinRecordType: 'annulments',
   title: 'Annulment Cases',
   newLabel: '+ Add Case',
 

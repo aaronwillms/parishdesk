@@ -249,6 +249,7 @@ function linkedRecords(c) { return linkSectionHtml('marriage', c.id); }
 
 export const marriageConfig = {
   panelKey: 'marriage',
+  pinRecordType: 'marriage',
   sacramentKeys: ['marriage'],   // parish switcher: access keys that gate visible parishes
   title: 'Marriage Files',
   newLabel: '+ New File',

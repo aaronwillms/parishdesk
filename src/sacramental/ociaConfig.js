@@ -192,6 +192,7 @@ function linkedRecords(p) { return linkSectionHtml('ocia', p.id); }
 
 export const ociaConfig = {
   panelKey: 'ocia',
+  pinRecordType: 'ocia',
   sacramentKeys: ['ocia'],   // parish switcher: access keys that gate visible parishes
   title: 'Person Files',
   newLabel: '+ Add Person',

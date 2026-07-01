@@ -122,6 +122,7 @@ function emailFamily(p) {
 // ── Config object ───────────────────────────────────────────────────────────
 export const confirmationConfig = {
   panelKey: 'confirmation',
+  pinRecordType: 'confirmation',
   sacramentKeys: ['confirmation'],   // parish switcher: access keys that gate visible parishes
   title: 'Candidate Records',
   newLabel: '+ Add Candidate',

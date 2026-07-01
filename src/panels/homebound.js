@@ -1080,6 +1080,7 @@ async function hbRemoveRequestRecipient(id) {
 // ── Shell config — Tab 1 Recipients ──────────────────────────────────────────
 const homeboundConfig = {
   panelKey: 'homebound',
+  pinRecordType: 'homebound',
   title: 'Recipients',
   newLabel: '+ New',
   canManage: () => isHomeboundBroad(),

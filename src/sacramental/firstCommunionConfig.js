@@ -110,6 +110,7 @@ function emailFamily(p) {
 // ── Config object ───────────────────────────────────────────────────────────
 export const firstCommunionConfig = {
   panelKey: 'firstcommunion',
+  pinRecordType: 'firstcommunion',
   sacramentKeys: ['first_communion', 'firstcomm'],   // parish switcher: dual access keys
   title: 'Student Records',
   newLabel: '+ Add Student',
