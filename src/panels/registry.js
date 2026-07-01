@@ -13,7 +13,6 @@
 const loaders = {
   admin:                () => import('./admin.js'),
   hr:                   () => import('./hr.js'),
-  tasks:                () => import('./tasks.js'),
   projects:             () => import('./projects.js'),
   projectDashboard:     () => import('./projectDashboard.js'),
   teamDashboard:        () => import('./teamDashboard.js'),

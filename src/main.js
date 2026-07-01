@@ -153,7 +153,6 @@ async function startApp(user) {
     confirmation:  () => ensurePanel('confirmation').then(m => { m.loadConfirmation(); loadCoordData('confirmation'); }),
     ocia:          () => ensurePanel('ocia').then(m => { m.loadOcia(); loadCoordData('ocia'); }),
     teams:         () => { loadTeams(); setActiveTeamSubNavItem(null); },
-    tasks:         () => ensurePanel('tasks').then(m => m.loadTasks()),
     teamDashboard:         () => {},   // handled by showTeamDashboard
     projectDashboard:      () => {},   // handled by showProjectDashboard
     institutionDashboard:  () => {},   // handled by showInstitutionDashboard

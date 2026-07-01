@@ -209,8 +209,18 @@ function openNotification(id) {
   const n = (store.notifications || []).find(x => x.id === id);
   if (!n || !n.module || !n.record_id) return;
   closePanel();
-  try { window.switchPanel?.(n.module); } catch (e) { /* unknown module → just set hash */ }
-  location.hash = `#/${n.module}/${n.record_id}`;
+  try {
+    // Phase 2b-2: the standalone tasks/projects panels are retired. Re-point their deep-links:
+    // a project → that project's surface; a task → the dashboard (its tasks home).
+    if (n.module === 'projects') {
+      window.showProjectDashboard?.(n.record_id);
+    } else if (n.module === 'tasks') {
+      window.switchPanel?.('dashboard');
+    } else {
+      window.switchPanel?.(n.module);
+      location.hash = `#/${n.module}/${n.record_id}`;
+    }
+  } catch (e) { /* unknown module → no-op */ }
 }
 
 async function clearNotification(id) {

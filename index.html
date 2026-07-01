@@ -59,11 +59,8 @@
       <div class="nav-item" data-panel="homebound"><i class="fa-solid fa-house-medical"></i> Sick &amp; Homebound</div>
       <div class="nav-sec">Ministry</div>
       <div id="ministry-nav"></div>
-      <div class="nav-item" data-panel="youthministry"><i class="fa-solid fa-child-reaching"></i> Youth Ministry</div>
       <div class="nav-item" data-panel="teams"><i class="fa-solid fa-users"></i> Teams</div>
       <div id="teams-subnav" style="display:none;"></div>
-      <div class="nav-item" data-panel="projects"><i class="fa-solid fa-folder"></i> My Projects</div>
-      <div class="nav-item" data-panel="tasks"><i class="fa-solid fa-list-check"></i> My Tasks</div>
       <div class="nav-sec">Administration</div>
       <div class="nav-item" data-panel="personnel"><i class="fa-solid fa-address-book"></i> Directory</div>
       <div class="nav-item" data-panel="hr" style="display:none;"><i class="fa-solid fa-sitemap"></i> Human Resources</div>
@@ -125,7 +122,6 @@
           <div class="card dw-tasks" style="overflow:hidden;">
             <div class="card-header">
               <div class="card-title"><i class="ti ti-list-check"></i> My Tasks</div>
-              <button class="card-action" onclick="switchPanel('tasks')">View all →</button>
             </div>
             <div id="dash-tasks"><span class="pulse"></span></div>
           </div>
@@ -347,8 +343,6 @@
         <div style="margin-bottom:1rem;">
           <button id="btn-new-project" class="btn-primary" onclick="openNewProjectModal()">+ New project</button>
         </div>
-        <div id="proj-team-bar"></div>
-        <div id="proj-filter-bar"></div>
         <div id="projects-list"><span class="pulse"></span></div>
       </div>
 
@@ -364,17 +358,6 @@
       <!-- USER PROFILE -->
       <div id="panel-userProfile" class="panel">
         <div id="user-profile-root"></div>
-      </div>
-
-      <!-- TASKS -->
-      <div id="panel-tasks" class="panel">
-        <div class="stat-row">
-          <div class="stat-card"><div class="stat-num" id="tstat-open">—</div><div class="stat-label">Open</div></div>
-          <div class="stat-card"><div class="stat-num" id="tstat-today">—</div><div class="stat-label">Due Today</div></div>
-          <div class="stat-card"><div class="stat-num" id="tstat-overdue">—</div><div class="stat-label">Overdue</div></div>
-        </div>
-        <div id="task-filter-bar"></div>
-        <div id="tasks-list"><span class="pulse"></span></div>
       </div>
 
       <div id="panel-admin" class="panel">

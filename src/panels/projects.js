@@ -84,9 +84,10 @@ window.selectProjectIcon = function(icon) {
 let _newProjPicker    = null;
 let _newProjAssignees = [];
 let _newProjTeamId    = null;
-let _searchQuery      = '';
-let _statusFilter     = 'all';
-let _teamFilter       = null; // null = all teams
+// Slimmed "View all" list (Phase 2b-2): Active vs Archived. The archived column lands in 2b-3;
+// until then `p.archived` is undefined → everything is Active and the Archived view is empty.
+let _projView         = 'active';   // 'active' | 'archived'
+window._projSetView   = (v) => { _projView = v; renderProjects(); };
 
 // ── Data ───────────────────────────────────────────────────────────────────
 
@@ -120,50 +121,41 @@ export async function loadProjects() {
   renderDashProjects();
 }
 
-// ── Landing render ─────────────────────────────────────────────────────────
+// ── Slimmed "View all" list (Phase 2b-2) ─────────────────────────────────────
+// Reachable only from the dashboard projects "View all →" (sidebar link retired). A grouped-
+// by-status list of project cards with a simple Active / Archived toggle (archived wires in 2b-3).
+
+function _viewTab(key, label) {
+  const active = key === _projView;
+  return `<button onclick="window._projSetView('${key}')" style="
+    padding:.3rem 0;margin-right:16px;background:none;border:none;cursor:pointer;
+    font-family:'Inter',sans-serif;font-size:13px;font-weight:${active ? '700' : '500'};
+    color:${active ? '#1C2B3A' : '#9CA3AF'};border-bottom:2px solid ${active ? '#C9A84C' : 'transparent'};
+  ">${label}</button>`;
+}
 
 export function renderProjects() {
-  _renderTeamBar();
-  _initFilterBar();
-
   const el = document.getElementById('projects-list');
   if (!el) return;
 
   const notice = store._projectScopeReady === false ? scopeNotice() : '';
-  let items = store.allProjects || [];
+  const tabs = `<div style="display:flex;align-items:center;border-bottom:.5px solid var(--stone);margin-bottom:1rem;">
+    ${_viewTab('active', 'Active')}${_viewTab('archived', 'Archived')}
+  </div>`;
 
-  // Apply team filter
-  if (_teamFilter) {
-    items = items.filter(p => p.team_id === _teamFilter);
-  }
-
-  // Apply search
-  if (_searchQuery) {
-    const q = _searchQuery.toLowerCase();
-    items = items.filter(p =>
-      p.title?.toLowerCase().includes(q) ||
-      p.notes?.toLowerCase().includes(q)
-    );
-  }
-
-  // Apply status filter
-  if (_statusFilter !== 'all') {
-    items = items.filter(p => (p.status_code || 'not_started') === _statusFilter);
-  }
+  // Archived filter — the column arrives in 2b-3; until then p.archived is undefined (=Active).
+  const items = (store.allProjects || []).filter(p => _projView === 'archived' ? !!p.archived : !p.archived);
 
   if (!items.length) {
-    const msg = (_searchQuery || _statusFilter !== 'all' || _teamFilter)
-      ? 'No projects match your filters.'
-      : 'No projects yet. Use the button above to create one.';
-    el.innerHTML = notice + `<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">${msg}</div>`;
+    const msg = _projView === 'archived' ? 'No archived projects.' : 'No projects yet.';
+    el.innerHTML = notice + tabs + `<div style="font-size:13px;color:#6B7280;padding:.5rem 0;">${msg}</div>`;
     return;
   }
 
   const grouped = {};
   items.forEach(p => {
     const key = p.status_code || 'not_started';
-    if (!grouped[key]) grouped[key] = [];
-    grouped[key].push(p);
+    (grouped[key] ||= []).push(p);
   });
 
   let html = '';
@@ -180,123 +172,8 @@ export function renderProjects() {
         ${group.map(p => projectCard(p)).join('')}
       </div>`;
   });
-  el.innerHTML = notice + html;
+  el.innerHTML = notice + tabs + html;
 }
-
-// ── Filter bar ─────────────────────────────────────────────────────────────
-
-const _FILTER_OPTIONS = [
-  { key: 'all',         label: 'All' },
-  { key: 'in_progress', label: 'In Progress' },
-  { key: 'blocked',     label: 'Blocked' },
-  { key: 'planning',    label: 'Planning' },
-  { key: 'not_started', label: 'Not Started' },
-  { key: 'complete',    label: 'Complete' },
-];
-
-function _filterPillHtml(key, label) {
-  const active = key === _statusFilter;
-  return `<button class="proj-filter-btn" data-filter="${key}" style="
-    padding:.28rem .75rem;font-size:12px;font-family:'Inter',sans-serif;font-weight:500;
-    border-radius:20px;border:.5px solid ${active ? '#C9A84C' : '#D1C9BE'};
-    background:${active ? '#C9A84C' : '#fff'};color:${active ? '#fff' : '#1C2B3A'};
-    cursor:pointer;white-space:nowrap;
-  ">${label}</button>`;
-}
-
-function _updateFilterPills() {
-  const bar = document.getElementById('proj-filter-bar');
-  if (!bar) return;
-  bar.querySelectorAll('.proj-filter-btn').forEach(btn => {
-    const active = btn.dataset.filter === _statusFilter;
-    btn.style.background   = active ? '#C9A84C' : '#fff';
-    btn.style.color        = active ? '#fff'    : '#1C2B3A';
-    btn.style.borderColor  = active ? '#C9A84C' : '#D1C9BE';
-  });
-}
-
-function _initFilterBar() {
-  const bar = document.getElementById('proj-filter-bar');
-  if (!bar || bar.dataset.inited) return;
-  bar.dataset.inited = '1';
-
-  bar.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:1rem;">
-      <div style="position:relative;flex:0 0 auto;width:clamp(180px,300px,100%);">
-        <i class="fa-solid fa-magnifying-glass" style="
-          position:absolute;left:9px;top:50%;transform:translateY(-50%);
-          color:#9CA3AF;font-size:11px;pointer-events:none;
-        "></i>
-        <input id="proj-search" placeholder="Search projects…" autocomplete="off" style="
-          width:100%;box-sizing:border-box;padding:.38rem .75rem .38rem 2rem;
-          border:.5px solid #D1C9BE;border-radius:6px;font-size:13px;
-          font-family:'Inter',sans-serif;outline:none;background:#fff;
-        " />
-        <button id="proj-search-clear" style="
-          display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);
-          background:none;border:none;cursor:pointer;color:#9CA3AF;
-          font-size:13px;padding:0;line-height:1;
-        ">✕</button>
-      </div>
-      <div style="display:flex;gap:5px;flex-wrap:wrap;">
-        ${_FILTER_OPTIONS.map(f => _filterPillHtml(f.key, f.label)).join('')}
-      </div>
-    </div>
-  `;
-
-  const searchInput = bar.querySelector('#proj-search');
-  const clearBtn    = bar.querySelector('#proj-search-clear');
-
-  searchInput.addEventListener('input', () => {
-    _searchQuery = searchInput.value;
-    clearBtn.style.display = _searchQuery ? '' : 'none';
-    renderProjects();
-  });
-
-  clearBtn.addEventListener('click', () => {
-    _searchQuery = '';
-    searchInput.value = '';
-    clearBtn.style.display = 'none';
-    renderProjects();
-  });
-
-  bar.querySelectorAll('.proj-filter-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      _statusFilter = btn.dataset.filter;
-      _updateFilterPills();
-      renderProjects();
-    });
-  });
-}
-
-function _pill(label, active, onClick) {
-  return `<button style="
-    padding:.26rem .72rem;font-size:12px;font-family:'Inter',sans-serif;font-weight:500;
-    border-radius:20px;border:.5px solid ${active ? '#1C2B3A' : '#D1C9BE'};
-    background:${active ? '#1C2B3A' : '#fff'};color:${active ? '#fff' : '#6B7280'};
-    cursor:pointer;white-space:nowrap;" onclick="${onClick}">${label}</button>`;
-}
-
-function _renderTeamBar() {
-  const bar = document.getElementById('proj-team-bar');
-  if (!bar) return;
-
-  // Teams that have at least one project in store
-  const allProjs = store.allProjects || [];
-  const teamIds  = [...new Set(allProjs.map(p => p.team_id).filter(Boolean))];
-  const teams    = (store.teams || []).filter(t => teamIds.includes(t.id));
-
-  if (!teams.length) { bar.innerHTML = ''; return; }
-
-  const pills = [
-    _pill('All Teams', !_teamFilter, "window._projTeamFilter(null)"),
-    ...teams.map(t => _pill(t.name, _teamFilter === t.id, `window._projTeamFilter('${t.id}')`)),
-  ].join('');
-
-  bar.innerHTML = `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:.75rem;">${pills}</div>`;
-}
-
-window._projTeamFilter = (teamId) => { _teamFilter = teamId; renderProjects(); };
 
 function assigneeLabel(ids) {
   if (!ids?.length) return null;
