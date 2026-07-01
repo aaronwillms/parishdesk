@@ -1,13 +1,10 @@
-import { sb, deleteWithRetry } from '../supabase.js';
+import { sb } from '../supabase.js';
 import { store } from '../store.js';
-import { fmtDate, todayCST, logActivity, PANEL_TITLES, ACTIVITY_HR_ENTITY_TYPES } from '../utils.js';
+import { fmtDate, todayCST, logActivity, PANEL_TITLES } from '../utils.js';
 import { getUserScope, isVisible } from '../ui/userScope.js';
-import { isSuperAdmin, isAdmin, canWriteGlobalCalendar, canSeeWorkEvent,
-  canAccessSacrament, canAccessHomebound, canAccessDiscernment, canAccessHr, canAccessPanel } from '../roles.js';
+import { canWriteGlobalCalendar, canSeeWorkEvent } from '../roles.js';
 import { parseICS } from '../utils/icsParser.js';
-import { createAvatar } from '../ui/avatar.js';
 import { notifyUsers, getAllUserIds, getUserIdsForTeam } from '../notifications.js';
-import { sacConfigForContext } from '../ui/grants.js';
 
 let currentUserId     = null;
 let _dashPersonnelId  = null;
@@ -269,18 +266,9 @@ export function updateProjectStats() {
     if (counts[p.status_code] !== undefined) counts[p.status_code]++;
   });
 
-  // My Tasks = personal tasks I created + tasks directly assigned to me (not complete)
-  let taskCount = 0;
-  (store.allTasks || []).filter(t => !t.completed).forEach(t => {
-    const isPersonal = t.visibility === 'personal' && t.created_by === currentUserId;
-    const isAssigned = _dashPersonnelId && t.assigned_to === _dashPersonnelId;
-    if (isPersonal || isAssigned) taskCount++;
-  });
-
+  // The dashboard's own stat row was removed (Phase 1a); these feed the Projects panel's
+  // pstat-* row only. updateProjectStats stays exported because projects.js calls it.
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-  set('stat-inprogress',  counts.in_progress);
-  set('stat-blocked',     counts.blocked);
-  set('stat-tasks',       taskCount);
   set('pstat-inprogress', counts.in_progress);
   set('pstat-blocked',    counts.blocked);
   set('pstat-complete',   counts.complete);
@@ -298,27 +286,69 @@ const _PROJ_STATUS = {
 };
 const _TASK_BORDER = '#C9A84C';
 
+// Sort by due_date ascending, nulls last.
+function _byDueAscNullsLast(a, b) {
+  if (!a.dueDate && !b.dueDate) return 0;
+  if (!a.dueDate) return 1;
+  if (!b.dueDate) return -1;
+  return a.dueDate.localeCompare(b.dueDate);
+}
+
+// Renders the two work-surface cards: active projects → #dash-projects, my open tasks →
+// #dash-tasks. Phase 1a SPLIT the former single combined list into the new layout's two
+// panels; the tasks panel keeps its simple "my open tasks" list until Phase 1b adds the
+// My Tasks / Delegated tabs. Still exported (projects.js calls it to refresh both cards).
 export function renderDashProjects() {
+  const today = todayCST();
+  _renderDashProjectCards(today);
+  _renderDashTaskCards(today);
+}
+
+function _renderDashProjectCards(today) {
   const c = document.getElementById('dash-projects');
   if (!c) return;
-
-  const today = todayCST();
 
   // Projects: not complete, user has access (already scoped in store.allProjects)
   const projItems = (store.allProjects || [])
     .filter(p => p.status_code !== 'complete')
     .map(p => ({
-      type:          'project',
       id:            p.id,
       title:         p.title,
       icon:          p.icon || 'fa-clipboard',
       dueDate:       p.due_date || null,
       statusCode:    p.status_code || 'not_started',
-      assigneeCount: Array.isArray(p.assigned_to) ? p.assigned_to.length : (p.assigned_to ? 1 : 0),
-    }));
+    }))
+    .sort(_byDueAscNullsLast)
+    .slice(0, 10);
+
+  if (!projItems.length) {
+    c.innerHTML = `<div style="font-size:13px;color:#6B7280;font-style:italic;">No active projects.</div>`;
+    return;
+  }
+
+  c.innerHTML = projItems.map(item => {
+    const st = _PROJ_STATUS[item.statusCode] || _PROJ_STATUS.not_started;
+    const overdue = item.dueDate && item.dueDate < today;
+    return `
+      <div onclick="window.showProjectDashboard('${item.id}')" style="
+        display:flex;flex-direction:column;padding:.5rem .5rem;
+        border-bottom:.5px solid #F0EDE8;cursor:pointer;gap:2px;
+      " onmouseover="this.style.background='#FAFAF8'" onmouseout="this.style.background=''">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+          <i class="fa-solid ${item.icon}" style="font-size:12px;color:#8B1A2F;flex-shrink:0;"></i>
+          <span style="font-size:13px;font-weight:500;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
+          <span style="font-size:9.5px;font-weight:700;background:${st.bg};color:${st.color};border:1px solid ${st.border};border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">${st.label}</span>
+        </div>
+        ${item.dueDate ? `<div style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};padding-left:20px;">${fmtDate(item.dueDate)}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function _renderDashTaskCards(today) {
+  const c = document.getElementById('dash-tasks');
+  if (!c) return;
 
   // Tasks: personal (created by me) OR directly assigned to me, not complete
-  const personnel = store.personnel || [];
   const taskItems = (store.allTasks || [])
     .filter(t => !t.completed)
     .filter(t => {
@@ -326,63 +356,34 @@ export function renderDashProjects() {
       const isAssigned = _dashPersonnelId && t.assigned_to === _dashPersonnelId;
       return isPersonal || isAssigned;
     })
-    .map(t => {
-      const assignee = t.assigned_to ? personnel.find(p => p.id === t.assigned_to) : null;
-      return {
-        type:         'task',
-        id:           t.id,
-        title:        t.title,
-        dueDate:      t.due_date || null,
-        isPersonal:   t.visibility === 'personal',
-        assigneeName: assignee?.name || null,
-      };
-    });
+    .map(t => ({
+      id:      t.id,
+      title:   t.title,
+      dueDate: t.due_date || null,
+    }))
+    .sort(_byDueAscNullsLast)
+    .slice(0, 10);
 
-  // Combined: sort by due_date asc, nulls last
-  const combined = [...projItems, ...taskItems].sort((a, b) => {
-    if (!a.dueDate && !b.dueDate) return 0;
-    if (!a.dueDate) return 1;
-    if (!b.dueDate) return -1;
-    return a.dueDate.localeCompare(b.dueDate);
-  }).slice(0, 10);
-
-  if (!combined.length) {
-    c.innerHTML = `<div style="font-size:13px;color:#6B7280;font-style:italic;">No active projects or tasks.</div>`;
+  if (!taskItems.length) {
+    c.innerHTML = `<div style="font-size:13px;color:#6B7280;font-style:italic;">No open tasks.</div>`;
     return;
   }
 
-  c.innerHTML = combined.map(item => {
-    if (item.type === 'project') {
-      const st = _PROJ_STATUS[item.statusCode] || _PROJ_STATUS.not_started;
-      const overdue = item.dueDate && item.dueDate < today;
-      return `
-        <div onclick="window.showProjectDashboard('${item.id}')" style="
-          display:flex;flex-direction:column;padding:.5rem .5rem;
-          border-bottom:.5px solid #F0EDE8;cursor:pointer;gap:2px;
-        " onmouseover="this.style.background='#FAFAF8'" onmouseout="this.style.background=''">
-          <div style="display:flex;align-items:center;gap:8px;min-width:0;">
-            <i class="fa-solid ${item.icon}" style="font-size:12px;color:#8B1A2F;flex-shrink:0;"></i>
-            <span style="font-size:13px;font-weight:500;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
-            <span style="font-size:9.5px;font-weight:700;background:${st.bg};color:${st.color};border:1px solid ${st.border};border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">${st.label}</span>
-          </div>
-          ${item.dueDate ? `<div style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};padding-left:20px;">${fmtDate(item.dueDate)}</div>` : ''}
-        </div>`;
-    } else {
-      const overdue = item.dueDate && item.dueDate < today;
-      return `
-        <div style="
-          display:flex;flex-direction:column;padding:.5rem .5rem;
-          border-bottom:.5px solid #F0EDE8;gap:2px;
-        ">
-          <div style="display:flex;align-items:center;gap:8px;min-width:0;">
-            <input type="checkbox" class="dash-task-cb" data-task-id="${item.id}"
-              style="flex-shrink:0;width:14px;height:14px;accent-color:#1C2B3A;cursor:pointer;" />
-            <span style="font-size:13px;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
-            <span style="font-size:9.5px;font-weight:700;background:${_PROJ_STATUS.task.bg};color:${_PROJ_STATUS.task.color};border:1px solid ${_PROJ_STATUS.task.border};border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">${_PROJ_STATUS.task.label}</span>
-          </div>
-          ${item.dueDate ? `<div style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};padding-left:22px;">${fmtDate(item.dueDate)}</div>` : ''}
-        </div>`;
-    }
+  c.innerHTML = taskItems.map(item => {
+    const overdue = item.dueDate && item.dueDate < today;
+    return `
+      <div style="
+        display:flex;flex-direction:column;padding:.5rem .5rem;
+        border-bottom:.5px solid #F0EDE8;gap:2px;
+      ">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+          <input type="checkbox" class="dash-task-cb" data-task-id="${item.id}"
+            style="flex-shrink:0;width:14px;height:14px;accent-color:#1C2B3A;cursor:pointer;" />
+          <span style="font-size:13px;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
+          <span style="font-size:9.5px;font-weight:700;background:${_PROJ_STATUS.task.bg};color:${_PROJ_STATUS.task.color};border:1px solid ${_PROJ_STATUS.task.border};border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">${_PROJ_STATUS.task.label}</span>
+        </div>
+        ${item.dueDate ? `<div style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};padding-left:22px;">${fmtDate(item.dueDate)}</div>` : ''}
+      </div>`;
   }).join('');
 
   // Wire task checkboxes
@@ -667,235 +668,6 @@ function timeAgo(ts) {
   return fmtDate(ts.slice(0, 10));
 }
 
-const FEED_ICONS = {
-  project:      'fa-diagram-project',
-  task:         'fa-square-check',
-  team:         'fa-users',
-  baptism:      'fa-droplet',
-  firstcomm:    'fa-wine-glass',
-  confirmation: 'fa-fire',
-  ocia:         'fa-user-plus',
-  couple:       'fa-heart',
-  case:         'fa-scale-balanced',
-  announcement: 'fa-bullhorn',
-  personnel:    'fa-address-book',
-  messaging:    'fa-comments',
-  general:      'fa-gear',
-};
-
-function _contextIcon(contextType, contextId, projectIconMap) {
-  if (contextType === 'team') {
-    const team = (store.teams || []).find(t => t.id === contextId);
-    return team?.icon || FEED_ICONS.team;
-  }
-  if (contextType === 'project' && contextId && projectIconMap) {
-    return projectIconMap[contextId] || 'fa-clipboard';
-  }
-  return FEED_ICONS[contextType] || FEED_ICONS.general;
-}
-
-function _faIcon(iconClass) {
-  return `<i class="fa-solid ${iconClass}" style="font-size:14px;color:#8B1A2F;flex-shrink:0;width:16px;text-align:center;"></i>`;
-}
-
-async function loadActivityFeed() {
-  const limit = 5;
-  const superAdmin = isSuperAdmin();
-  const admin = isAdmin();
-
-  const accessibleProjectIds = new Set((store.allProjects || []).map(p => p.id));
-
-  const { data: actRaw, error: actErr } = await sb
-    .from('activity_log')
-    .select('id,action,entity_name,created_at,triggered_by,context_type,context_id,parish_id')
-    .order('created_at', { ascending: false })
-    .limit(20);
-  if (actErr) console.error('[activity_log] fetch error:', actErr);
-
-  // Build profile map for activity_log entries
-  const actData = actRaw || [];
-  const triggeredByIds = [...new Set(actData.map(r => r.triggered_by).filter(Boolean))];
-  const userMap = {};
-  if (triggeredByIds.length) {
-    const { data: profs, error: profErr } = await sb
-      .from('user_profiles')
-      .select('user_id, avatar_url, initials_color, personnel(name)')
-      .in('user_id', triggeredByIds);
-    if (profErr) console.error('[activity_log] user_profiles fetch error:', profErr);
-    (profs || []).forEach(p => {
-      userMap[p.user_id] = {
-        name:           p.personnel?.name || 'Unknown',
-        avatarUrl:      p.avatar_url      || null,
-        initialsColor:  p.initials_color  || null,
-      };
-    });
-  }
-
-  const items = [];
-
-  // Filter activity_log entries by user's access context
-  const userTeamIds   = new Set(store.currentUserRoles?.teamIds || []);
-  const accessibleTaskIds = new Set((store.allTasks || []).map(t => t.id));
-
-  // The activity feed MIRRORS panel access — each entry is gated through the SAME access
-  // functions the panels use. 2b-feed-(b): the parish dimension travels ON THE ROW
-  // (r.parish_id; NULL = group-shared, matches any parish). Sacramental entries pass that
-  // parish into the parish-aware accessor; HR entries (canAccessHr isn't parish-parameterized)
-  // add an explicit NULL-or-match; cura/universal/id-set entries are NULL → match freely.
-  const _parishOk = (p) => p == null || p === store.parishSettings?.id;
-  function _canSeeEntry(r) {
-    if (superAdmin) return true;
-    const ct = r.context_type || 'general';
-    const cid = r.context_id;
-    switch (ct) {
-      case 'project':            return !cid || accessibleProjectIds.has(cid);
-      case 'task':               return !cid || accessibleTaskIds.has(cid);
-      case 'team':               return !cid || admin || userTeamIds.has(cid);
-      case 'announcement':       return true;
-      // Sacramental — pass the ENTRY'S parish into the parish-aware accessor (NULL-or-match baked in).
-      case 'ocia':               return canAccessSacrament('ocia', r.parish_id);
-      case 'marriage':
-      case 'couple':             return canAccessSacrament('marriage', r.parish_id);
-      case 'baptism':            return canAccessSacrament('baptism', r.parish_id);
-      case 'confirmation':       return canAccessSacrament('confirmation', r.parish_id);
-      case 'firstcomm':
-      case 'firstcommunion':
-      case 'family':             return canAccessSacrament('firstcomm', r.parish_id);   // family = firstcomm-sourced
-      // Cura (group-shared, NULL parish) — predicate only, parish-unaware.
-      case 'annulments':         return canAccessPanel('annulments');   // advocate-inclusive (canAccessSacrament OR advocate)
-      case 'homebound':          return canAccessHomebound();
-      case 'discernment':        return canAccessDiscernment();
-      // HR — canAccessHr isn't parish-parameterized, so NULL-or-match the entry's parish explicitly.
-      case 'hr':                 return canAccessHr() && _parishOk(r.parish_id);
-      case 'general':            return ACTIVITY_HR_ENTITY_TYPES.has(r.entity_type)
-                                   ? (canAccessHr() && _parishOk(r.parish_id))
-                                   : admin;   // fail-CLOSED: non-HR 'general' (e.g. a mis-typed entry) → admin-only, not everyone
-      // Admin-only (decided) + fail-closed default.
-      case 'personnel':          return admin;
-      case 'link':               return admin;
-      default:                   return admin;
-    }
-  }
-
-  const visibleActData = actData.filter(_canSeeEntry);
-
-  // Build project icon map for activity entries referencing a project
-  const projectIconMap = {};
-  const projContextIds = [...new Set(
-    visibleActData
-      .filter(r => r.context_type === 'project' && r.context_id)
-      .map(r => r.context_id)
-  )];
-  if (projContextIds.length) {
-    // Check store first to avoid unnecessary fetches
-    const missing = projContextIds.filter(id => {
-      const cached = (store.allProjects || []).find(p => p.id === id);
-      if (cached) { projectIconMap[id] = cached.icon || 'fa-clipboard'; return false; }
-      return true;
-    });
-    if (missing.length) {
-      const { data: iconRows } = await sb.from('projects').select('id, icon').in('id', missing);
-      (iconRows || []).forEach(p => { projectIconMap[p.id] = p.icon || 'fa-clipboard'; });
-    }
-  }
-
-  // Resolve any entry whose entity_name is a bare record id (e.g. an OLD delete
-  // that logged the uuid) to a display name, reusing the SAC_GRANTABLE registry.
-  // Records that no longer exist (most deletes) stay unresolved → the entry renders
-  // as just its action (graceful degrade), never a raw uuid. New deletes already
-  // capture the name at deletion time, so they aren't uuids here.
-  const _UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const _nameById = {};
-  const _byTable = {};   // table -> { cfg, ids:Set }
-  visibleActData.forEach(r => {
-    if (!r.entity_name || !_UUID_RE.test(r.entity_name)) return;
-    const cfg = sacConfigForContext(r.context_type);
-    if (!cfg) return;
-    (_byTable[cfg.table] ||= { cfg, ids: new Set() }).ids.add(r.entity_name);
-  });
-  for (const { cfg, ids } of Object.values(_byTable)) {
-    const { data: rows } = await sb.from(cfg.table).select(['id', ...cfg.cols].join(',')).in('id', [...ids]);
-    (rows || []).forEach(row => { _nameById[row.id] = cfg.label(row); });
-  }
-  const _entityName = (r) => (r.entity_name && _UUID_RE.test(r.entity_name))
-    ? (_nameById[r.entity_name] || '')        // unresolved uuid → drop it (show action only)
-    : (r.entity_name || '');
-
-  // activity_log entries — attributed to triggering user
-  visibleActData.forEach(r => {
-    const user = r.triggered_by ? (userMap[r.triggered_by] || { name: 'Unknown User' }) : null;
-    items.push({
-      icon:        _contextIcon(r.context_type || 'general', r.context_id, projectIconMap),
-      label:       r.action || 'Action',
-      name:        _entityName(r),
-      ts:          r.created_at,
-      actorName:   user?.name || null,
-      actorUserId: r.triggered_by || null,
-      avatarUrl:   user?.avatarUrl || null,
-      isSystem:    !r.triggered_by,
-      isFa:        true,
-      logId:       r.id,
-    });
-  });
-
-  items.sort((a, b) => new Date(b.ts) - new Date(a.ts));
-
-  const c = document.getElementById('dash-activity');
-  if (!c) return;
-  const top10 = items.slice(0, 5);
-  if (!top10.length) {
-    c.innerHTML = '<div style="font-size:13px;color:#9CA3AF;font-style:italic;">No recent activity.</div>';
-    return;
-  }
-
-  c.innerHTML = top10.map((item, i) => {
-    const fullDate = item.ts ? new Date(item.ts).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
-
-    let actorBlock;
-    if (item.isSystem) {
-      actorBlock = `<span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#F0EDE8;flex-shrink:0;font-size:12px;color:#9CA3AF;" title="System">⚙</span><span style="font-weight:600;color:#6B7280;font-size:12.5px;"> System</span> `;
-    } else if (item.actorName) {
-      actorBlock = `<span class="feed-avatar-slot" data-idx="${i}" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#E2DDD6;flex-shrink:0;overflow:hidden;"></span><span style="font-weight:600;color:var(--navy);font-size:12.5px;"> ${item.actorName}</span> `;
-    } else {
-      actorBlock = '';
-    }
-
-    const deleteBtn = (superAdmin && item.logId)
-      ? `<button class="feed-delete-btn" data-log-id="${item.logId}" style="background:none;border:none;cursor:pointer;color:#999;font-size:12px;padding:0 2px;flex-shrink:0;line-height:1;" title="Remove entry" onmouseover="this.style.color='#8B1A2F'" onmouseout="this.style.color='#999'">✕</button>`
-      : '';
-
-    return `
-    <div style="display:flex;align-items:center;gap:10px;padding:.5rem 0;border-bottom:.5px solid var(--stone);">
-      ${_faIcon(item.icon)}
-      <div style="flex:1;min-width:0;">
-        <div style="font-size:12.5px;color:#6B7280;display:flex;align-items:center;flex-wrap:wrap;gap:3px;line-height:1.4;">
-          ${actorBlock}<span style="color:#6B7280;">${item.label}${item.name ? ` · <span style="font-weight:500;color:var(--navy);">${item.name}</span>` : ''}</span>
-        </div>
-      </div>
-      <span style="font-size:11px;color:#9CA3AF;flex-shrink:0;white-space:nowrap;cursor:default;" title="${fullDate}">${timeAgo(item.ts)}</span>
-      ${deleteBtn}
-    </div>`;
-  }).join('');
-
-  // Hydrate avatar slots for attributed entries
-  top10.forEach((item, i) => {
-    if (!item.actorName || item.isSystem) return;
-    const slot = c.querySelector(`.feed-avatar-slot[data-idx="${i}"]`);
-    if (slot) createAvatar({ container: slot, userId: item.actorUserId || '', name: item.actorName, size: 24, avatarUrl: item.avatarUrl || null });
-  });
-
-  // Wire super-admin delete buttons
-  if (superAdmin) {
-    c.querySelectorAll('.feed-delete-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const logId = btn.dataset.logId;
-        await deleteWithRetry(() => sb.from('activity_log').delete().eq('id', logId));
-        btn.closest('div[style*="border-bottom"]')?.remove();
-      });
-    });
-  }
-}
-
 // ── loadInit ───────────────────────────────────────────────────────────────
 
 export async function loadInit() {
@@ -959,9 +731,8 @@ export async function loadInit() {
 
     if (topbar) topbar.style.display = '';
 
-    // Load announcements and activity feed in parallel (non-blocking)
+    // Load announcements (non-blocking). The activity feed was removed in Phase 1a.
     loadAnnouncements();
-    loadActivityFeed();
   } catch (e) {
     console.error('loadInit failed:', e);
     if (topbar) topbar.textContent = '⚠ Database error — reload to retry';

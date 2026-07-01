@@ -70,6 +70,17 @@ html,body{height:100%;background:#EDEAE4;font-family:'Inter',sans-serif;color:va
 .card-action{font-size:12px;color:var(--cardinal);cursor:pointer;background:none;border:none;font-family:'Inter',sans-serif;padding:0;}
 .card-action:hover{text-decoration:underline;}
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;}
+/* Dashboard work surface: desktop = calendar (top-left) + projects (bottom-left) with
+   tasks spanning the full-height right column; mobile = single column stacked
+   tasks → calendar → projects. Placement is driven by grid-area, so DOM order is free. */
+.dash-work{display:grid;grid-template-columns:1fr 1fr;grid-template-areas:"cal tasks" "proj tasks";gap:1rem;margin-bottom:1rem;align-items:start;}
+.dash-work .dw-cal{grid-area:cal;}
+.dash-work .dw-proj{grid-area:proj;}
+.dash-work .dw-tasks{grid-area:tasks;}
+.dash-work .card{margin-bottom:0;}
+@media(max-width:768px){
+  .dash-work{grid-template-columns:1fr;grid-template-areas:"tasks" "cal" "proj";}
+}
 .sched-item{display:flex;align-items:flex-start;gap:10px;padding:.5rem 0;border-bottom:.5px solid var(--stone);}
 .sched-item:last-child{border-bottom:none;}
 .sched-time{font-size:12px;color:#6B7280;min-width:52px;padding-top:1px;font-variant-numeric:tabular-nums;}
