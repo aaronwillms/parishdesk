@@ -15,7 +15,7 @@ import { store } from '../store.js';
 import { isAdmin, isSuperAdmin, canAccessHr, hrHasAuthority, hrCanManageStructure, hrCanFinalizeSelfReport } from '../roles.js';
 import { closeModal } from '../ui/modal.js';
 import { logActivity, todayCST, compareByLastName, formatDateMDY } from '../utils.js';
-import { ensureIdentities, userName, fetchGrantRow } from '../ui/grants.js';
+import { ensureIdentities, userName, fetchGrantRow, loadMyGrants, myGrantedIdsForType } from '../ui/grants.js';
 import { principalParishLabel } from '../ui/directory.js';
 // Phase 2 — reuse the sacramental master-detail shell + the generic cross-file linker
 // for the per-(person, institution) personnel record panel (no fork).
@@ -214,7 +214,15 @@ export async function loadHr() {
   if (!root) return;
   // Layer 0: HR is open to anyone who is a node on an org tree (or super-admin),
   // not just admins. Authority WITHIN the panel is enforced per-node/per-file.
+  // %-grant entry (Stage 4): a user with NO org-tree access but an HR record-grant
+  // gets a read-only, grant-scoped flat list — NEVER the org tree. Normal HR access
+  // takes precedence (their grants surface through it), so this is grantee-ONLY.
   if (!canAccessHr()) {
+    await loadMyGrants().catch(() => {});
+    const granted = hrGrantedIds();
+    if (granted.review.length || granted.disciplinary.length || granted.incident.length) {
+      return renderHrGranteeView(root, granted);
+    }
     root.innerHTML = '<div style="padding:2rem;color:#6B7280;font-size:13px;">You do not have access to Human Resources.</div>';
     return;
   }
@@ -1670,6 +1678,124 @@ function personnelFileConfig(personId, institutionId) {
     deleteRecord: async (id) => ({ ok: await deletePersonnelRecord(cache.find(r => r.id === id)) }),
     openCreate: () => hrPfCreate(),
   };
+}
+
+// ── %-grant grantee view (Stage 4) ───────────────────────────────────────────
+// A super-admin grant to an HR record gives a non-org-tree user a READ-ONLY view of
+// ONLY that record. HR is client-gated (RLS OFF), so a direct .in('id') fetch of the
+// granted ids IS the scoping. This path NEVER touches the org tree, another person's
+// file, or the linked-records section (which fetches with no access filter — a leak).
+
+// The current user's granted HR record ids, per viewable type (from the % cache).
+function hrGrantedIds() {
+  return {
+    review:       myGrantedIdsForType('review'),
+    disciplinary: myGrantedIdsForType('disciplinary'),
+    incident:     myGrantedIdsForType('incident'),
+  };
+}
+
+// Flat, read-only list of ONLY the user's granted records. Does NOT reuse
+// openPersonnelFile / fetchPersonnelRecords (those are person-keyed and return every
+// record for a person unfiltered — a leak). _file.mode='grant' satisfies no manage/own
+// write gate, so save/delete/self-report/finalize/link all reject → strictly read-only.
+async function renderHrGranteeView(root, granted) {
+  root.style.cssText = '';
+  root.innerHTML = '<div style="padding:1rem;"><span class="pulse"></span></div>';
+  if (!_authUserId) { const { data: { user } } = await sb.auth.getUser(); _authUserId = user?.id || null; }
+  // Best-effort author identity (degrades to "Staff member" if RLS-scoped out cross-parish).
+  const [profRes, pplRes] = await Promise.all([
+    sb.from('user_profiles').select('user_id, personnel_id'),
+    sb.from('personnel').select('id,name,active'),
+  ]);
+  _profilesByUser = new Map((profRes.data || []).map(p => [p.user_id, p.personnel_id]));
+  _people = pplRes.data || [];
+  // Fetch ONLY the granted records, per type. RLS is OFF on these tables, so the direct
+  // id fetch is the entire access boundary (parish-agnostic → cross-parish grants work).
+  const fetches = [];
+  for (const [type, ids] of Object.entries(granted)) {
+    if (ids.length) fetches.push(
+      sb.from(RECORD_META[type].table).select('*').in('id', ids).is('archived_at', null)
+        .then(res => (res.data || []).map(row => ({ ...row, _type: type }))),
+    );
+  }
+  const records = (await Promise.all(fetches)).flat()
+    .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+
+  _file = { mode: 'grant' };   // read-only sentinel — matches NO manage/own gate
+  root.innerHTML = `
+    <div class="pf-head">
+      <div class="pf-id">
+        <div class="pf-avatar"><i class="fa-solid fa-key"></i></div>
+        <div>
+          <div class="pf-name">Shared with me</div>
+          <div class="pf-titles"><span style="color:#9CA3AF;">HR records shared with you — read-only</span></div>
+        </div>
+      </div>
+    </div>
+    <div id="pf-host" class="pf-host"></div>`;
+  renderSacramentalPanel(document.getElementById('pf-host'), hrGranteeConfig(records));
+}
+
+// Read-only shell config: canManage=false hides New/Edit/Delete/bulk; NO editForm/
+// saveRecord/deleteRecord/openCreate; NO linked-records section (closes the leak).
+function hrGranteeConfig(records) {
+  return {
+    panelKey: 'personnel',   // so the shell's '#/personnel/<id>' deep-link preselects
+    title: 'Shared with me',
+    canManage: () => false,
+    fetchRecords: async () => records,
+    fetchRecord: (id) => records.find(r => r.id === id) || null,
+    compare: (a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')),
+    searchText: (r) => `${RECORD_CHIP[chipKey(r)].label} ${createdMDY(r.created_at)} ${recordSnippet(r)}`,
+    listItem: (r) => ({
+      title: createdMDY(r.created_at),
+      secondary: recordSnippet(r),
+      chips: [{ label: RECORD_CHIP[chipKey(r)].label, tone: RECORD_CHIP[chipKey(r)].tone }],
+    }),
+    detailHeader: (r) => ({
+      name: RECORD_CHIP[chipKey(r)].label,
+      avatarIcon: RECORD_CHIP[chipKey(r)].icon,
+      chips: [{ label: `Created ${createdMDY(r.created_at)}`, tone: 'neutral' }],
+    }),
+    detailSections: [
+      { title: 'Shared access', render: (r) => hrGranteeBanner(r) },
+      { title: 'Details',       render: (r) => granteeRecordBody(r) },
+    ],
+  };
+}
+
+// Self-contained record body — the frozen def/answers live on the record itself, so
+// this needs NO org-tree state (unlike recordDetailHtml's entryHeaderHtml/personTitlesIn).
+// No controls (read-only) and no linked-records section (leak).
+function granteeRecordBody(r) {
+  const def = Array.isArray(r.frozen_definition) ? r.frozen_definition : [];
+  _cfBy = cfFlatten(def);
+  const rows = cfRenderAnswerTree(def, r.answers || {});
+  const meta = `<div style="font-size:11.5px;color:#6B7280;margin-bottom:.8rem;">By ${esc(authorName(r.author_id))}${r.record_date ? ' · dated ' + formatDateMDY(r.record_date) : ''}</div>`;
+  const period = (r._type === 'review' && (r.review_period_start || r.review_period_end))
+    ? `<div style="font-size:12px;color:#6B7280;margin-bottom:.5rem;">Period: ${r.review_period_start ? formatDateMDY(r.review_period_start) : '…'} – ${r.review_period_end ? formatDateMDY(r.review_period_end) : '…'}</div>` : '';
+  const banner = `<div style="font-size:10.5px;color:#B9A88F;font-style:italic;border-top:.5px solid var(--stone);margin-top:1rem;padding-top:.55rem;line-height:1.5;">${esc(bannerText())}</div>`;
+  return meta + period + (rows || `<div style="font-size:12.5px;color:#9CA3AF;">Empty.</div>`) + banner;
+}
+
+// Grantee banner (wires the previously-dead fetchGrantRow import) — mirrors
+// discernment's fillGranteeHeader: async-fills who granted + read-only note.
+function hrGranteeBanner(r) {
+  if (typeof window !== 'undefined') setTimeout(() => fillHrGranteeBanner(r), 0);
+  return `<div id="hr-grant-banner-${esc(r.id)}"><div style="font-size:12px;color:#9CA3AF;font-style:italic;">Loading…</div></div>`;
+}
+async function fillHrGranteeBanner(r) {
+  const host = document.getElementById(`hr-grant-banner-${r.id}`);
+  if (!host) return;
+  const grant = await fetchGrantRow(r._type, r.id, _authUserId);
+  await ensureIdentities().catch(() => {});
+  const granter = grant?.granted_by ? userName(grant.granted_by) : 'an administrator';
+  const note = grant?.note ? ` — ${esc(grant.note)}` : '';
+  host.innerHTML = `<div style="background:#EEF2F7;border:.5px solid #CBD8E6;border-radius:6px;padding:.5rem .7rem;font-size:12px;color:#1C2B3A;">
+    <i class="fa-solid fa-key" style="margin-right:5px;"></i><strong>Access granted by ${esc(granter)}</strong>${note}
+    <div style="font-size:10.5px;color:#5B6B7C;margin-top:2px;">This file is not yours — you are viewing it read-only under a specific grant.</div>
+  </div>`;
 }
 
 // ── Read viewer (detail) ─────────────────────────────────────────────────────

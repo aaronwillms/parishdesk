@@ -238,6 +238,14 @@ async function _openGrantedRecord(recordType, recordId) {
       if (typeof window.switchPanel === 'function') return window.switchPanel('homebound');
       throw new Error('panel switch unavailable');
     }
+    if (recordType === 'review' || recordType === 'disciplinary' || recordType === 'incident') {
+      // HR record grant → the read-only grantee view. The '#/personnel/<id>' hash lets
+      // the shell preselect this record; loadHr routes a grant-only viewer (no org-tree
+      // access) to renderHrGranteeView (a flat, read-only list of ONLY granted records).
+      location.hash = `#/personnel/${recordId}`;
+      if (typeof window.switchPanel === 'function') return window.switchPanel('hr');
+      throw new Error('panel switch unavailable');
+    }
     showToast(`Can't open this record type (${recordType}).`, { type: 'error' });
   } catch (e) {
     console.error('[grant] open failed:', e);

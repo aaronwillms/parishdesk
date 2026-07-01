@@ -10,15 +10,15 @@ import { sb, deleteWithRetry } from '../supabase.js';
 import { logActivity } from '../utils.js';
 
 // Grantable record-type registry. record_type values are the Stage 1
-// record_grants CHECK-bounded list. For THIS stage only the four HR types are
-// wired as grantable SOURCES (they have views/export). Sacramental + youth
-// types are CHECK-valid and surface in the audit ledger, but are not yet
-// searchable sources here — see the TODO in searchGrantableRecords().
+// record_grants CHECK-bounded list. Only HR types with a read-only GRANTEE VIEW
+// are wired here (review/disciplinary/incident — see hr.js renderHrGranteeView).
+// `memo` has NO viewer surface in HR, so it is intentionally NOT grantable.
+// Sacramental + youth types are CHECK-valid and surface in the audit ledger, but
+// are not yet searchable sources here — see the TODO in searchGrantableRecords().
 export const GRANTABLE = {
   review:        { label: 'Performance Review',  table: 'performance_reviews',  hr: true },
   disciplinary:  { label: 'Disciplinary Record', table: 'disciplinary_records', hr: true },
   incident:      { label: 'Incident Report',     table: 'incident_reports',     hr: true },
-  memo:          { label: 'Memo',                table: 'memos',                hr: true },
 };
 
 // Sacramental / marriage / annulment records are grantable sources too. They are
