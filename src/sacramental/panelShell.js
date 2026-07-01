@@ -158,7 +158,11 @@ function render() {
 // name. data-act="parish" is handled by onShellClick (unchanged wiring).
 function parishTabsHtml() {
   const s = _active, cfg = s.config;
-  const accParishes = accessibleParishesForSacrament(cfg.sacramentKeys || []);
+  // Parish UI requires the panel to DECLARE parish-scoping via sacramentKeys. Cura
+  // panels (annulments — no keys) render no tabs even for a superadmin, whose
+  // accessibleParishesForSacrament short-circuits to all parishes ignoring the keys.
+  if (!(cfg.sacramentKeys?.length > 0)) return '';
+  const accParishes = accessibleParishesForSacrament(cfg.sacramentKeys);
   if (accParishes.length <= 1) return '';
   const tab = (pid, label, active) =>
     `<button class="sac-parish-tab${active ? ' active' : ''}" data-act="parish" data-pid="${pid}">${esc(label)}</button>`;
@@ -393,7 +397,7 @@ function detailPaneHtml() {
   // Plain-text parish line — only when the user can see >1 parish (single-parish: redundant).
   // Resolved from the group parish list by the record's parish_id.
   let parishLine = '';
-  if (accessibleParishesForSacrament(cfg.sacramentKeys || []).length > 1 && r.parish_id) {
+  if ((cfg.sacramentKeys?.length > 0) && accessibleParishesForSacrament(cfg.sacramentKeys).length > 1 && r.parish_id) {
     const gp = (store.groupParishes || []).find(p => p.id === r.parish_id);
     const label = gp?.display_name || gp?.parish_name;
     if (label) parishLine = `<div style="font-size:12px;color:#6B7280;margin:.4rem 0 .2rem;">Parish: <span style="color:var(--navy);font-weight:500;">${esc(label)}</span></div>`;

@@ -17,6 +17,7 @@ import { isHomeboundBroad, canAccessHomebound, canAccessHomeboundRecipient, isSu
 import { notifyUsers } from '../notifications.js';
 import { setFieldLocked } from '../sacramental/churchLocation.js';
 import { stateSelect } from '../ui/stateSelect.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish } from '../sacramental/parishCreateField.js';
 import { closeModal } from '../ui/modal.js';
 import { flashSavedThen } from '../ui/saveButton.js';
 import { showToast } from '../ui/toast.js';
@@ -278,7 +279,19 @@ function facilityOptionsHtml(r) {
 }
 
 function recipientFormHtml(r = {}) {
+  const isEdit = !!r.id;
+  // Parish picker (first field). CREATE on the "All" tab with >1 parish: a selector +
+  // save-time orphan guard. EDIT with >1 parish: the record's parish preselected,
+  // reassignable. Distinct ids so create/edit read the right field. Facilities are
+  // group-wide (no picker there).
+  let parishField = '';
+  if (!isEdit && shouldShowParishField(['homebound'], 'homebound')) {
+    parishField = parishCreateFieldHtml(['homebound'], { selectId: 'hb-parish-select' });
+  } else if (isEdit && shouldShowParishFieldEdit(['homebound'])) {
+    parishField = parishEditFieldHtml(['homebound'], { selectId: 'hb-parish-edit', currentParishId: r.parish_id || null });
+  }
   return `<div data-hbform>
+    ${parishField}
     <div style="display:flex;gap:6px;">
       <div style="flex:1;">${_field('hb-first', 'First', r.first_name)}</div>
       <div style="flex:1;">${_field('hb-middle', 'Middle', r.middle_name)}</div>
@@ -438,6 +451,7 @@ async function homeboundSaveEdit(id) {
   const prior = _recipients.find(x => x.id === id);
   const archived = payload.status === 'resolved_discharged' || payload.status === 'deceased';
   payload.archived_at = archived ? (prior?.archived_at || nowIso()) : null;
+  const _ep = readEditParish('hb-parish-edit'); if (_ep) payload.parish_id = _ep;   // parish reassignment (edit field shown)
   const { error } = await withWriteRetry(() => sb.from('homebound_recipients').update(payload).eq('id', id), { kind: 'update' });
   if (error) { alert('Save failed: ' + error.message); return { ok: false }; }
   logActivity({ action: 'updated homebound recipient', entityType: 'homebound_recipient', entityName: payload.name || 'Recipient', contextType: 'homebound', contextId: id });
@@ -465,6 +479,10 @@ async function hbCreateSave() {
   const root = document.querySelector('#modal-overlay [data-hbform]');
   const payload = _hbReadForm(root);
   if (!payload) return;
+  // Parish stamp (create): the selected parish tab / picked parish / single parish.
+  // Orphan guard (alert-on-submit, matching S&H's idiom) — never insert without one.
+  payload.parish_id = resolveCreateParish(['homebound'], 'homebound', 'hb-parish-select');
+  if (!payload.parish_id) { alert('Please select a parish for this recipient.'); return; }
   payload.created_at = new Date().toISOString();
   payload.archived_at = (payload.status === 'resolved_discharged' || payload.status === 'deceased') ? nowIso() : null;
   const { data, error } = await withWriteRetry(() => sb.from('homebound_recipients').insert(payload).select('id').single(), { kind: 'create' });
@@ -1080,6 +1098,7 @@ async function hbRemoveRequestRecipient(id) {
 // ── Shell config — Tab 1 Recipients ──────────────────────────────────────────
 const homeboundConfig = {
   panelKey: 'homebound',
+  sacramentKeys: ['homebound'],   // parish-scoped: lights the parish tabs + viewer line (access key = panel_grants 'homebound')
   pinRecordType: 'homebound',
   title: 'Recipients',
   newLabel: '+ New',
