@@ -6,7 +6,8 @@ import { getUserScope, isVisible } from '../ui/userScope.js';
 import { renderDiscussionThread } from '../ui/discussionThread.js';
 import { renderProjectLog } from '../ui/projectLog.js';
 import { showToast } from '../ui/toast.js';
-import { containerRole, canManageRole, fetchMembers, addMember, removeMember } from '../ui/membership.js';
+import { containerRole, canManageRole, fetchMembers, addMember, removeMember, setMemberRole } from '../ui/membership.js';
+import { renderDashProjects, updateProjectStats } from './dashboard.js';
 
 // ── Status config ──────────────────────────────────────────────────────────
 
@@ -23,6 +24,7 @@ const TABS = [
   { key: 'log',         label: 'Project Log' },
   { key: 'tasks',       label: 'Tasks' },
   { key: 'discussions', label: 'Discussions' },
+  { key: 'members',     label: 'Members' },
   { key: 'project',     label: 'Details' },
 ];
 
@@ -165,7 +167,7 @@ function _render(container) {
 function _renderTab() {
   const el = document.getElementById('pd-content');
   if (!el) return;
-  if      (_activeTab === 'log')         renderProjectLog({ container: el, projectId: _projectId, projectTitle: _project?.title || '', currentUserId: _currentUserId });
+  if      (_activeTab === 'log')         renderProjectLog({ container: el, projectId: _projectId, projectTitle: _project?.title || '', currentUserId: _currentUserId, canManage: _canEditProject() });
   else if (_activeTab === 'tasks')       _renderTasks(el);
   else if (_activeTab === 'project')     _renderProjectDetails(el);
   else if (_activeTab === 'members')     _renderMembers(el);
@@ -203,7 +205,8 @@ function _renderTasks(el) {
 
   el.innerHTML = `<div id="pd-task-list">${html}</div>`;
   _bindTaskEvents();
-  _appendAddTaskArea(el);
+  // Task creation is an owner/admin capability; members can complete but not create.
+  if (_canEditProject()) _appendAddTaskArea(el);
 }
 
 function _taskRow(t) {
@@ -455,13 +458,14 @@ function _renderMembers(el) {
 
 function _renderMembersList(el) {
   const people = (store.personnel || []);
+  const canManage = _canEditProject();   // owner/admin only may add/remove/set-role
   const ROLE_BADGE = {
     owner:  { label: 'Owner',  color: '#8B1A2F', bg: '#FEF2F2' },
     admin:  { label: 'Admin',  color: '#1565C0', bg: '#EFF6FF' },
     member: { label: 'Member', color: '#6B7280', bg: '#F3F4F6' },
   };
 
-  // Phase 2a: members come from container_members (authoritative), sorted owner→admin→member.
+  // Members come from container_members (authoritative), sorted owner→admin→member.
   const ROLE_RANK = { owner: 0, admin: 1, member: 2 };
   const ordered = [..._members].sort((a, b) => (ROLE_RANK[a.role] ?? 9) - (ROLE_RANK[b.role] ?? 9));
 
@@ -475,24 +479,31 @@ function _renderMembersList(el) {
       const p = people.find(x => x.id === id);
       const rb = ROLE_BADGE[m.role] || ROLE_BADGE.member;
       const isOwner = m.role === 'owner';
+      // Owner/admin can set a NON-owner member's role (admin ↔ member) and remove them. The owner
+      // row is fixed (not demotable, not removable). Non-managers see badges only (read-only).
+      const controls = (canManage && !isOwner)
+        ? `<select data-role-id="${id}" style="font-size:11px;border:.5px solid #D1C9BE;border-radius:5px;padding:2px 5px;background:#fff;color:#1C2B3A;flex-shrink:0;cursor:pointer;">
+            <option value="admin"${m.role === 'admin' ? ' selected' : ''}>Admin</option>
+            <option value="member"${m.role === 'member' ? ' selected' : ''}>Member</option>
+          </select>
+          <button data-remove-id="${id}" style="
+            background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:14px;
+            padding:2px 4px;flex-shrink:0;line-height:1;
+          " onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#D1D5DB'"
+            title="Remove from project">✕</button>`
+        : `<span style="font-size:10px;font-weight:700;background:${rb.bg};color:${rb.color};border-radius:20px;padding:2px 8px;flex-shrink:0;">${rb.label}</span>`;
       return `
         <div style="display:flex;align-items:center;gap:10px;padding:.65rem 0;border-bottom:.5px solid #F0EDE8;">
           <div style="flex:1;min-width:0;">
             <div style="font-size:14px;font-weight:500;color:#1C2B3A;">${name}</div>
             ${p?.title ? `<div style="font-size:12px;color:#6B7280;">${p.title}</div>` : ''}
           </div>
-          <span style="font-size:10px;font-weight:700;background:${rb.bg};color:${rb.color};border-radius:20px;padding:2px 8px;flex-shrink:0;">${rb.label}</span>
-          ${isOwner ? '' : `<button data-remove-id="${id}" style="
-            background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:14px;
-            padding:2px 4px;flex-shrink:0;line-height:1;
-          " onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#D1D5DB'"
-            title="Remove from project">✕</button>`}
+          ${controls}
         </div>`;
     }).join('');
   }
 
-  el.innerHTML = `
-    <div id="pd-member-list">${listHtml}</div>
+  const addArea = canManage ? `
     <div id="pd-member-add-area" style="margin-top:1rem;">
       <button id="pd-add-member-btn" style="
         font-size:13px;color:#8B1A2F;background:none;border:none;
@@ -513,8 +524,25 @@ function _renderMembersList(el) {
           ">Cancel</button>
         </div>
       </div>
-    </div>
-  `;
+    </div>` : '';
+
+  el.innerHTML = `<div id="pd-member-list">${listHtml}</div>${addArea}`;
+
+  if (!canManage) return;   // read-only: no add/remove/set-role wiring
+
+  // Set-role dropdowns — admin ↔ member (owner rows have none).
+  el.querySelectorAll('[data-role-id]').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const id = sel.dataset.roleId;
+      const role = sel.value;
+      const { error } = await setMemberRole('project', _projectId, id, role);
+      if (error) { alert('Role change failed: ' + error.message); return; }
+      const m = _members.find(x => x.personnel_id === id);
+      if (m) m.role = role;
+      _syncStoreMembers();
+      _renderMembersList(el);
+    });
+  });
 
   // Remove buttons — delete the container_members row; patch the in-store row's _members.
   el.querySelectorAll('[data-remove-id]').forEach(btn => {
@@ -604,23 +632,25 @@ function _renderProjectDetails(el) {
           font-family:'Inter',sans-serif;background:#fff;outline:none;resize:vertical;
         ">${_project.notes || ''}</textarea>
       </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+      ${_canEditProject() ? `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <button id="det-save" style="
           padding:.45rem 1.1rem;background:#1C2B3A;color:#fff;border:none;
           border-radius:6px;font-size:13px;font-family:'Inter',sans-serif;
           cursor:pointer;font-weight:600;
         ">Save changes</button>
-        <button id="det-delete" style="
+        <button id="det-archive" style="
           padding:.45rem 1rem;background:none;color:#8B1A2F;
           border:.5px solid #8B1A2F;border-radius:6px;
           font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;
-        ">Delete project</button>
-      </div>
+        ">${_project.archived ? 'Restore project' : 'Archive project'}</button>
+      </div>` : `<div style="font-size:12.5px;color:#9CA3AF;font-style:italic;">View only — ask an owner or admin to edit.</div>`}
     </div>
   `;
 
-  document.getElementById('det-save').addEventListener('click', _saveProjectDetails);
-  document.getElementById('det-delete').addEventListener('click', _deleteProject);
+  if (_canEditProject()) {
+    document.getElementById('det-save').addEventListener('click', _saveProjectDetails);
+    document.getElementById('det-archive').addEventListener('click', () => _setArchived(!_project.archived));
+  }
 }
 
 async function _saveProjectDetails(e) {
@@ -663,10 +693,28 @@ async function _saveProjectDetails(e) {
   }
 }
 
-async function _deleteProject() {
-  if (!confirm(`Delete "${_project.title}"? This cannot be undone.`)) return;
-  const { error } = await deleteWithRetry(() => sb.from('projects').delete().eq('id', _projectId));
-  if (error) { alert('Delete failed: ' + error.message); return; }
-  logActivity({ action: 'deleted project', entityType: 'project', entityName: _project.title, contextType: 'project', contextId: _projectId });
-  window.switchPanel('projects');
+// Archive-only (Phase 2b-3) — replaces hard delete so the project + its container_members /
+// discussions / project_log all SURVIVE (context_id is polymorphic with no FK cascade, so a hard
+// delete would orphan those rows). Gated to owner/admin via the Details button's _canEditProject().
+async function _setArchived(archive) {
+  const verb = archive ? 'Archive' : 'Restore';
+  if (archive && !confirm(`Archive "${_project.title}"? It leaves active views but keeps all data and members — you can restore it from the Archived list.`)) return;
+  const { data, error } = await sb.from('projects')
+    .update({ archived: archive, updated_at: new Date().toISOString() })
+    .eq('id', _projectId).select();
+  if (error) { showToast(verb + ' failed: ' + error.message, { type: 'error' }); return; }
+  if (!data || !data.length) { showToast(verb + ' failed: no matching project (check permissions).', { type: 'error' }); return; }
+  _project.archived = archive;
+  const row = (store.allProjects || []).find(p => p.id === _projectId);
+  if (row) row.archived = archive;   // patch the in-store row → active-view renderers reflect it
+  logActivity({ action: (archive ? 'archived' : 'restored') + ' project', entityType: 'project', entityName: _project.title, contextType: 'project', contextId: _projectId });
+  showToast(archive ? 'Project archived' : 'Project restored', { type: 'success' });
+  updateProjectStats();
+  renderDashProjects();
+  if (archive) {
+    window.switchPanel('projects');   // leaves the archived project's surface → back to the list
+  } else {
+    const container = document.getElementById('project-dashboard-root');
+    if (container) _render(container);   // restored → stay, re-render the surface
+  }
 }

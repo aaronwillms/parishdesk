@@ -310,9 +310,9 @@ function _renderDashProjectCards(today) {
   const c = document.getElementById('dash-projects');
   if (!c) return;
 
-  // Projects: not complete, user has access (already scoped in store.allProjects)
+  // Projects: not complete, not archived (2b-3), user has access (already scoped in store.allProjects)
   const projItems = (store.allProjects || [])
-    .filter(p => p.status_code !== 'complete')
+    .filter(p => p.status_code !== 'complete' && !p.archived)
     .map(p => ({
       id:            p.id,
       title:         p.title,

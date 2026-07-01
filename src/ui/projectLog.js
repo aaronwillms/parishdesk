@@ -29,12 +29,14 @@ async function _fillProfiles(ids, profileMap) {
 
 // ── Public entry point ─────────────────────────────────────────────────────
 
-export async function renderProjectLog({ container, projectId, projectTitle, currentUserId }) {
+export async function renderProjectLog({ container, projectId, projectTitle, currentUserId, canManage = false }) {
   if (!container) return;
   container.innerHTML = `<div style="padding:2rem;text-align:center;color:#9CA3AF;">Loading…</div>`;
 
   const roles = store.currentUserRoles || {};
-  const isPrivileged = roles.isAdmin || roles.isSuperAdmin;
+  // Posting/editing log entries is an owner/admin (container-manage) capability. 2b-3 converges the
+  // log's privilege onto the caller's canManage (project owner/admin) in addition to app admins.
+  const isPrivileged = roles.isAdmin || roles.isSuperAdmin || !!canManage;
 
   const { data: entries } = await sb.from('project_log')
     .select('id, title, body, created_by, created_at, updated_at, deleted_at')
@@ -65,13 +67,13 @@ export async function renderProjectLog({ container, projectId, projectTitle, cur
     container.innerHTML = `
       <div style="display:flex;height:100%;min-height:480px;border:.5px solid #E2DDD6;border-radius:10px;overflow:hidden;background:#fff;">
         <div style="width:280px;min-width:220px;max-width:280px;border-right:.5px solid #E2DDD6;display:flex;flex-direction:column;background:#FAFAF8;">
-          <div style="padding:.75rem 1rem;border-bottom:.5px solid #E2DDD6;flex-shrink:0;">
+          ${isPrivileged ? `<div style="padding:.75rem 1rem;border-bottom:.5px solid #E2DDD6;flex-shrink:0;">
             <button id="pl-new-btn" style="
               width:100%;padding:.45rem .9rem;background:#C9A84C;color:#fff;border:none;
               border-radius:6px;font-size:13px;font-family:'Inter',sans-serif;
               cursor:pointer;font-weight:500;display:flex;align-items:center;justify-content:center;gap:6px;
             "><i class="fa-solid fa-pen" style="font-size:11px;"></i> New Log Entry</button>
-          </div>
+          </div>` : ''}
           <div id="pl-list" style="overflow-y:auto;flex:1;">${_listHtml()}</div>
         </div>
         <div id="pl-detail-pane" style="flex:1;display:flex;flex-direction:column;min-width:0;overflow-y:auto;">
@@ -85,13 +87,13 @@ export async function renderProjectLog({ container, projectId, projectTitle, cur
   function _renderMobileList() {
     container.innerHTML = `
       <div style="display:flex;flex-direction:column;min-height:400px;border:.5px solid #E2DDD6;border-radius:10px;overflow:hidden;background:#FAFAF8;">
-        <div style="padding:.75rem 1rem;border-bottom:.5px solid #E2DDD6;flex-shrink:0;">
+        ${isPrivileged ? `<div style="padding:.75rem 1rem;border-bottom:.5px solid #E2DDD6;flex-shrink:0;">
           <button id="pl-new-btn" style="
             width:100%;padding:.45rem .9rem;background:#C9A84C;color:#fff;border:none;
             border-radius:6px;font-size:13px;font-family:'Inter',sans-serif;
             cursor:pointer;font-weight:500;display:flex;align-items:center;justify-content:center;gap:6px;
           "><i class="fa-solid fa-pen" style="font-size:11px;"></i> New Log Entry</button>
-        </div>
+        </div>` : ''}
         <div id="pl-list" style="overflow-y:auto;flex:1;">${_listHtml()}</div>
       </div>`;
     _bindListEvents();

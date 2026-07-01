@@ -140,7 +140,10 @@
           <div class="card dw-proj" style="overflow:hidden;">
             <div class="card-header">
               <div class="card-title"><i class="ti ti-clipboard-list"></i> Projects</div>
-              <button class="card-action" onclick="switchPanel('projects')">View all →</button>
+              <div style="display:flex;gap:12px;align-items:center;">
+                <button class="card-action" onclick="openNewProjectModal()">+ Add</button>
+                <button class="card-action" onclick="switchPanel('projects')">View all →</button>
+              </div>
             </div>
             <div id="dash-projects"><span class="pulse"></span></div>
           </div>
