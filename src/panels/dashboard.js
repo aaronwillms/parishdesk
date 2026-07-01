@@ -10,6 +10,7 @@ let currentUserId     = null;
 let _dashPersonnelId  = null;
 let _nowInterval      = null;
 let _calendarEvents   = [];  // last-rendered event list for interval re-checks
+let _dashTaskTab      = 'mine';  // 'mine' | 'delegated' — active tab in the dw-tasks card
 
 function dotClass(colorId) {
   return (colorId && CAL_COLOR_MAP[colorId]) ? CAL_COLOR_MAP[colorId] : 'personal';
@@ -344,49 +345,118 @@ function _renderDashProjectCards(today) {
   }).join('');
 }
 
+// Two-tab tasks surface (Phase 1b). Renders a tab strip (My Tasks | Delegated), a bare-add
+// input (My Tasks only), and the active list into #dash-tasks. Uses the dashboard's OWN row
+// template — NOT tasks.js' taskRow — so the standalone/per-team/per-project surfaces are
+// untouched. Complete is binary here (writes `completed` only; never `status`).
 function _renderDashTaskCards(today) {
   const c = document.getElementById('dash-tasks');
   if (!c) return;
 
-  // Tasks: personal (created by me) OR directly assigned to me, not complete
-  const taskItems = (store.allTasks || [])
-    .filter(t => !t.completed)
-    .filter(t => {
-      const isPersonal = t.visibility === 'personal' && t.created_by === currentUserId;
-      const isAssigned = _dashPersonnelId && t.assigned_to === _dashPersonnelId;
-      return isPersonal || isAssigned;
-    })
+  const all = store.allTasks || [];
+  const nameOf = (pid) => pid ? ((store.personnel || []).find(p => p.id === pid)?.name || null) : null;
+
+  // My Tasks: open, created by me OR assigned to me (personal + assigned intermixed).
+  const isMine = (t) => !t.completed &&
+    (t.created_by === currentUserId || (_dashPersonnelId && t.assigned_to === _dashPersonnelId));
+  // Delegated: open, I created it, assigned OUT to someone who isn't me.
+  const isDelegated = (t) => !t.completed && t.created_by === currentUserId &&
+    !!t.assigned_to && t.assigned_to !== _dashPersonnelId;
+
+  // Asymmetric: the Delegated tab exists only if the user has delegated something out.
+  const hasDelegated = all.some(isDelegated);
+  if (_dashTaskTab === 'delegated' && !hasDelegated) _dashTaskTab = 'mine';
+
+  const items = (_dashTaskTab === 'delegated' ? all.filter(isDelegated) : all.filter(isMine))
     .map(t => ({
-      id:      t.id,
-      title:   t.title,
-      dueDate: t.due_date || null,
+      id:            t.id,
+      title:         t.title,
+      dueDate:       t.due_date || null,
+      // My Tasks: subtle marker for rows delegated TO me (assigned to me, someone else created).
+      delegatedToMe: _dashTaskTab === 'mine' && !!_dashPersonnelId &&
+                     t.assigned_to === _dashPersonnelId && t.created_by !== currentUserId,
+      // Delegated: who I handed it to.
+      assigneeName:  _dashTaskTab === 'delegated' ? nameOf(t.assigned_to) : null,
     }))
     .sort(_byDueAscNullsLast)
     .slice(0, 10);
 
-  if (!taskItems.length) {
-    c.innerHTML = `<div style="font-size:13px;color:#6B7280;font-style:italic;">No open tasks.</div>`;
-    return;
+  // Tab strip
+  const tab = (key, label) => `<button class="dash-task-tab" data-tab="${key}" style="
+    background:none;border:none;cursor:pointer;padding:2px 0;margin-right:16px;
+    font-family:'Inter',sans-serif;font-size:12.5px;font-weight:${_dashTaskTab === key ? '700' : '500'};
+    color:${_dashTaskTab === key ? '#1C2B3A' : '#9CA3AF'};
+    border-bottom:2px solid ${_dashTaskTab === key ? '#C9A84C' : 'transparent'};">${label}</button>`;
+  const tabs = `<div style="display:flex;align-items:center;margin-bottom:.5rem;">
+    ${tab('mine', 'My Tasks')}${hasDelegated ? tab('delegated', 'Delegated') : ''}
+  </div>`;
+
+  // Bare-add — My Tasks tab only. Type a line + Enter → personal task owned by me.
+  const addRow = _dashTaskTab === 'mine' ? `
+    <div style="display:flex;align-items:center;gap:8px;padding:.4rem .5rem;border-bottom:.5px solid #F0EDE8;">
+      <i class="fa-solid fa-plus" style="font-size:11px;color:#B0A090;flex-shrink:0;"></i>
+      <input id="dash-task-add" placeholder="Add a task…" autocomplete="off" style="
+        flex:1;border:none;background:transparent;outline:none;font-size:13px;
+        font-family:'Inter',sans-serif;color:#1C2B3A;padding:2px 0;" />
+    </div>` : '';
+
+  const rows = items.length
+    ? items.map(item => {
+        const overdue = item.dueDate && item.dueDate < today;
+        const marker = item.delegatedToMe
+          ? `<i class="fa-solid fa-arrow-right-to-bracket" title="Assigned to you" style="font-size:10px;color:#8FA8BF;flex-shrink:0;"></i>`
+          : '';
+        const assignee = item.assigneeName
+          ? `<span title="Assigned to ${item.assigneeName}" style="font-size:10.5px;color:#6B7280;display:inline-flex;align-items:center;gap:3px;flex-shrink:0;"><i class="fa-solid fa-arrow-right" style="font-size:9px;"></i>${item.assigneeName}</span>`
+          : '';
+        return `
+          <div style="display:flex;flex-direction:column;padding:.5rem .5rem;border-bottom:.5px solid #F0EDE8;gap:2px;">
+            <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+              <input type="checkbox" class="dash-task-cb" data-task-id="${item.id}"
+                style="flex-shrink:0;width:14px;height:14px;accent-color:#1C2B3A;cursor:pointer;" />
+              ${marker}
+              <span style="font-size:13px;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">${item.title}</span>
+              ${assignee}
+            </div>
+            ${item.dueDate ? `<div style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};padding-left:22px;">${fmtDate(item.dueDate)}</div>` : ''}
+          </div>`;
+      }).join('')
+    : `<div style="font-size:13px;color:#6B7280;font-style:italic;padding:.4rem .5rem;">${_dashTaskTab === 'delegated' ? 'Nothing delegated out.' : 'No open tasks.'}</div>`;
+
+  c.innerHTML = tabs + addRow + rows;
+
+  // Wire tab switching (re-render just the tasks card)
+  c.querySelectorAll('.dash-task-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _dashTaskTab = btn.dataset.tab;
+      _renderDashTaskCards(todayCST());
+    });
+  });
+
+  // Wire bare-add (My Tasks tab). Owner defaults to self via created_by; visibility MUST be
+  // set 'personal' explicitly (DB default is 'team').
+  const addInput = c.querySelector('#dash-task-add');
+  if (addInput) {
+    addInput.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const title = addInput.value.trim();
+      if (!title) return;
+      addInput.disabled = true;
+      const { data: newTask, error } = await sb.from('tasks')
+        .insert({ title, created_by: currentUserId, visibility: 'personal' })
+        .select().single();
+      if (error) { addInput.disabled = false; console.error('[dash] bare-add failed:', error); return; }
+      if (!store.allTasks) store.allTasks = [];
+      store.allTasks.push(newTask);
+      logActivity({ action: 'created task', entityType: 'task', entityName: newTask.title, contextType: 'task', contextId: newTask.id });
+      renderDashProjects();
+      updateProjectStats();
+      document.getElementById('dash-task-add')?.focus();  // rapid entry
+    });
   }
 
-  c.innerHTML = taskItems.map(item => {
-    const overdue = item.dueDate && item.dueDate < today;
-    return `
-      <div style="
-        display:flex;flex-direction:column;padding:.5rem .5rem;
-        border-bottom:.5px solid #F0EDE8;gap:2px;
-      ">
-        <div style="display:flex;align-items:center;gap:8px;min-width:0;">
-          <input type="checkbox" class="dash-task-cb" data-task-id="${item.id}"
-            style="flex-shrink:0;width:14px;height:14px;accent-color:#1C2B3A;cursor:pointer;" />
-          <span style="font-size:13px;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.title}</span>
-          <span style="font-size:9.5px;font-weight:700;background:${_PROJ_STATUS.task.bg};color:${_PROJ_STATUS.task.color};border:1px solid ${_PROJ_STATUS.task.border};border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">${_PROJ_STATUS.task.label}</span>
-        </div>
-        ${item.dueDate ? `<div style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};padding-left:22px;">${fmtDate(item.dueDate)}</div>` : ''}
-      </div>`;
-  }).join('');
-
-  // Wire task checkboxes
+  // Wire checkbox complete — binary (writes `completed` only, never `status`).
   c.querySelectorAll('.dash-task-cb').forEach(cb => {
     cb.addEventListener('change', async () => {
       const id = cb.dataset.taskId;
@@ -398,6 +468,13 @@ function _renderDashTaskCards(today) {
       if (error) { cb.checked = !checked; console.error('[dash] task toggle:', error); return; }
       const t = (store.allTasks || []).find(x => x.id === id);
       if (t) { t.completed = checked; t.completed_at = checked ? new Date().toISOString() : null; }
+      // Delegator-notify: when the assignee (not the delegator) completes a delegated task,
+      // notify the delegator (created_by, an auth uid). notifyUsers excludes the actor, so a
+      // self-completed personal task fires nothing.
+      if (checked && t?.assigned_to && t.created_by && t.created_by !== currentUserId) {
+        const who = store.currentUserProfile?.personnel?.name || 'Someone';
+        notifyUsers([t.created_by], currentUserId, `${who} completed: ${t.title}`, 'success', 'tasks', id);
+      }
       renderDashProjects();
       updateProjectStats();
     });
@@ -687,7 +764,7 @@ export async function loadInit() {
       sb.from('annulment_cases').select('id,status_code,archived,petitioner,respondent,judgement_finalized'),
       sb.from('couples').select('id,status_code,archived'),
       sb.from('alerts').select('*').eq('active', true),
-      sb.from('tasks').select('id,title,due_date,completed,status,assigned_to,team_id,visibility').order('due_date', { nullsFirst: false }),
+      sb.from('tasks').select('id,title,due_date,completed,status,assigned_to,team_id,visibility,created_by').order('due_date', { nullsFirst: false }),
     ]);
 
     if (projRes.error)   console.error('projects error:',   projRes.error.message);

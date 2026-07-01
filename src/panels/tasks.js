@@ -513,10 +513,15 @@ async function toggleTask(id, checked) {
   if (t) Object.assign(t, payload);
   if (checked) {
     logActivity({ action: 'completed task', entityType: 'task', entityName: t?.title || 'Unknown', contextType: 'task', contextId: id });
-    if (t?.assigned_to) {
+    // Delegator-notify (Phase 1b): when the assignee completes a delegated task, notify the
+    // delegator (created_by, an auth uid) — not the assignee. notifyUsers excludes the actor,
+    // so a self-completed personal task fires nothing.
+    if (t?.assigned_to && t.created_by) {
       const { data: { user: _me } } = await sb.auth.getUser();
-      const uid = await getUserIdForPersonnel(t.assigned_to);
-      if (uid) notifyUsers([uid], _me?.id, `Task marked complete: ${t.title}`, 'success', 'tasks', id);
+      if (t.created_by !== _me?.id) {
+        const who = store.currentUserProfile?.personnel?.name || 'Someone';
+        notifyUsers([t.created_by], _me?.id, `${who} completed: ${t.title}`, 'success', 'tasks', id);
+      }
     }
   }
   renderTasks();
