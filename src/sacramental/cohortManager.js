@@ -17,15 +17,16 @@ import { store } from '../store.js';
 import { cohortChurchLocation } from './churchLocation.js';
 import { buildPreparerField, readPreparerValue } from './preparerField.js';
 import { flashSavedThen } from '../ui/saveButton.js';
+import { stateSelect } from '../ui/stateSelect.js';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
 
 const _v = (id) => { const e = document.getElementById(id); return e ? e.value.trim() : ''; };
 const _row = (...cells) => `<div style="display:flex;gap:8px;flex-wrap:wrap;">${cells.map(c => `<div style="flex:1;min-width:120px;">${c}</div>`).join('')}</div>`;
 const _input = (id, label, val = '', type = 'text') => `<label>${label}</label><input type="${type}" id="${id}" value="${esc(val)}" />`;
-const _stateSelect = (id, label, val = '') => `<label>${label}</label><select id="${id}"><option value="">—</option>${US_STATES.map(s => `<option${s === val ? ' selected' : ''}>${s}</option>`).join('')}</select>`;
+// Local (id, label, val) signature preserved; options come from the shared module.
+const _stateSelect = (id, label, val = '') => stateSelect(id, val, { label });
 const _sectionHead = (t) => `<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cardinal);margin:1.4rem 0 .5rem;border-bottom:.5px solid var(--stone);padding-bottom:4px;">${t}</div>`;
 
 function cohortLabel(dateStr) { if (!dateStr) return 'No date'; const d = new Date(dateStr + 'T00:00:00'); return isNaN(d) ? 'No date' : d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); }

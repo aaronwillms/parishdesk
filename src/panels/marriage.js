@@ -39,7 +39,7 @@ const MARRIAGE_AUTO_DOCS = [
   'Death Certificate (if a prior marriage ended in death)',
 ];
 const HOW_ENDED = ['Death', 'Annulment', 'Civil Divorce Only'];
-const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+import { stateSelect } from '../ui/stateSelect.js';
 
 const FALLBACK_TEMPLATES = {
   nuptial_mass:  { documents:[], steps:[{step:'Initial Meeting'},{step:'Ceremony Planned'}], fees_enabled:true, fees:[{name:'Standard Fee',amount:100}] },
@@ -370,7 +370,6 @@ function marCloseModal() { document.getElementById('mar-overlay')?.classList.rem
 // ── Small modal helpers ──────────────────────────────────────────────────────
 function _row(...cells) { return `<div style="display:flex;gap:8px;flex-wrap:wrap;">${cells.map(c => `<div style="flex:1;min-width:120px;">${c}</div>`).join('')}</div>`; }
 function _input(id, label, val = '', type = 'text') { return `<label>${label}</label><input type="${type}" id="${id}" value="${_esc(val)}" />`; }
-function _stateSelect(id, val) { return `<label>State</label><select id="${id}"><option value="">—</option>${US_STATES.map(s => `<option${s === val ? ' selected' : ''}>${s}</option>`).join('')}</select>`; }
 function _toggle(id, label, on, onchange = '') { return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:.75rem;"><input type="checkbox" id="${id}" ${on ? 'checked' : ''} ${onchange ? `onchange="${onchange}"` : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />${label}</label>`; }
 function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cardinal);margin:1.4rem 0 .5rem;border-bottom:.5px solid var(--stone);padding-bottom:4px;">${t}</div>`; }
 
@@ -504,7 +503,7 @@ function buildCoupleModalHtml(c, opts = {}) {
     <div id="mf-inst-addr" style="display:${_M.instMode === 'inst' ? 'block' : 'none'};">${_instAddrBlock(c?.wedding_institution_id)}</div>
     <div id="mf-other-wrap" style="display:${_M.instMode === 'other' ? 'block' : 'none'};">
       ${_input('mf-church-override', 'Location name', c?.wedding_church_override || '')}
-      ${_row(_input('mf-wcity', 'City', c?.wedding_city || ''), _stateSelect('mf-wstate', c?.wedding_state || ''))}
+      ${_row(_input('mf-wcity', 'City', c?.wedding_city || ''), stateSelect('mf-wstate', c?.wedding_state || ''))}
     </div>`;
   // Officiant — shared clergy dropdown (institution clergy + Other). Seeded from
   // the new column or the legacy officiant_id/_override so saved values persist.

@@ -16,6 +16,7 @@ import { renderSacramentalPanel, refreshActivePanel } from '../sacramental/panel
 import { isHomeboundBroad, canAccessHomebound, canAccessHomeboundRecipient, isSuperAdmin } from '../roles.js';
 import { notifyUsers } from '../notifications.js';
 import { setFieldLocked } from '../sacramental/churchLocation.js';
+import { stateSelect } from '../ui/stateSelect.js';
 import { closeModal } from '../ui/modal.js';
 import { flashSavedThen } from '../ui/saveButton.js';
 import { showToast } from '../ui/toast.js';
@@ -263,6 +264,8 @@ const _select = (id, label, options, val, onchange = '') => {
   const opts = options.map(([v, l]) => `<option value="${v}"${val === v ? ' selected' : ''}>${esc(l)}</option>`).join('');
   return `<label style="${LS}">${esc(label)}</label><select id="${id}" ${onchange} style="${IS}">${opts}</select>`;
 };
+// State dropdown (50 + DC, codes) — shared source, styled to match this panel's fields.
+const _stateSelect = (id, val) => stateSelect(id, val, { labelStyle: LS, selectStyle: IS });
 
 // Facility dropdown options (shared by facility + hospital care-types). Preselects
 // the linked facility, or "Other…" when an inline fallback name is stored.
@@ -296,7 +299,7 @@ function recipientFormHtml(r = {}) {
       ${_field('hb-home-street', 'Street', r.home_street)}
       <div style="display:flex;gap:6px;">
         <div style="flex:2;">${_field('hb-home-city', 'City', r.home_city)}</div>
-        <div style="flex:1;">${_field('hb-home-state', 'State', r.home_state)}</div>
+        <div style="flex:1;">${_stateSelect('hb-home-state', r.home_state)}</div>
         <div style="flex:1;">${_field('hb-home-zip', 'ZIP', r.home_zip)}</div>
       </div>
     </div>
@@ -310,7 +313,7 @@ function recipientFormHtml(r = {}) {
         ${_field('hb-fac-street', 'Street', '')}
         <div style="display:flex;gap:6px;">
           <div style="flex:2;">${_field('hb-fac-city', 'City', '')}</div>
-          <div style="flex:1;">${_field('hb-fac-state', 'State', '')}</div>
+          <div style="flex:1;">${_stateSelect('hb-fac-state', '')}</div>
           <div style="flex:1;">${_field('hb-fac-zip', 'ZIP', '')}</div>
         </div>
       </div>
@@ -324,7 +327,7 @@ function recipientFormHtml(r = {}) {
       ${_field('hb-mail-street', 'Street', r.mailing_street)}
       <div style="display:flex;gap:6px;">
         <div style="flex:2;">${_field('hb-mail-city', 'City', r.mailing_city)}</div>
-        <div style="flex:1;">${_field('hb-mail-state', 'State', r.mailing_state)}</div>
+        <div style="flex:1;">${_stateSelect('hb-mail-state', r.mailing_state)}</div>
         <div style="flex:1;">${_field('hb-mail-zip', 'ZIP', r.mailing_zip)}</div>
       </div>
     </div>
@@ -532,7 +535,7 @@ function _renderFacilitiesManager() {
       ${_field('hbf-street', 'Street', '')}
       <div style="display:flex;gap:6px;">
         <div style="flex:2;">${_field('hbf-city', 'City', '')}</div>
-        <div style="flex:1;">${_field('hbf-state', 'State', '')}</div>
+        <div style="flex:1;">${_stateSelect('hbf-state', '')}</div>
         <div style="flex:1;">${_field('hbf-zip', 'ZIP', '')}</div>
       </div>
       <button class="btn-secondary" style="margin-top:.5rem;padding:.35rem .9rem;font-size:12px;" onclick="window.hbFacilityAdd()">+ Add facility</button>
@@ -563,7 +566,7 @@ function hbFacilityEdit(id) {
       ${_field('hbf-street', 'Street', f.street)}
       <div style="display:flex;gap:6px;">
         <div style="flex:2;">${_field('hbf-city', 'City', f.city)}</div>
-        <div style="flex:1;">${_field('hbf-state', 'State', f.state)}</div>
+        <div style="flex:1;">${_stateSelect('hbf-state', f.state)}</div>
         <div style="flex:1;">${_field('hbf-zip', 'ZIP', f.zip)}</div>
       </div>
     </div>

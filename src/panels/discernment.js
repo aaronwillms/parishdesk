@@ -37,14 +37,10 @@ import {
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-// 50-state dropdown — same list + 2-letter-code value format the sacramental
-// panels use (baptism/firstcomm/confirmation/ocia/annulment _stateSelect), so the
-// stored value stays consistent across the app. Returns the <select> only (the
-// caller supplies its own <label>).
-const US_STATES = ['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'DC'];
-function _stateSelect(id, val) {
-  return `<select id="${id}"><option value="">—</option>${US_STATES.map(s => `<option${s === val ? ' selected' : ''}>${s}</option>`).join('')}</select>`;
-}
+import { stateSelect } from '../ui/stateSelect.js';
+// Discernment supplies its own external <label> (incl. "School state"), so render the
+// <select> alone via the shared module's label:null mode. Value stays 2-letter codes.
+const _stateSelect = (id, val) => stateSelect(id, val, { label: null });
 
 // ── Module state ─────────────────────────────────────────────────────────────
 let _discerners = [];

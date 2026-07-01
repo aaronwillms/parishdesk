@@ -14,7 +14,7 @@ export const BAP_STATUS = {
   complete:  { label:'Complete',  color:'#2D6A4F', bg:'#D8F3DC', dot:'#2D6A4F' },
   inactive:  { label:'Inactive',  color:'#616A6B', bg:'#F2F3F4', dot:'#AAB7B8' },
 };
-const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+import { US_STATES, stateSelect } from '../ui/stateSelect.js';
 
 let allBap = [], bapFilter = 'all', bapExpanded = null;
 let _tplRow = null, _M = null, _bapCoordinatorNames = [];
@@ -143,7 +143,6 @@ function bapCloseModal() { document.getElementById('bap-overlay')?.classList.rem
 
 function _row(...cells) { return `<div style="display:flex;gap:8px;flex-wrap:wrap;">${cells.map(c => `<div style="flex:1;min-width:120px;">${c}</div>`).join('')}</div>`; }
 function _input(id, label, val = '', type = 'text', extra = '') { return `<label>${label}</label><input type="${type}" id="${id}" value="${_esc(val)}" ${extra} />`; }
-function _stateSelect(id, val) { return `<label>State</label><select id="${id}"><option value="">—</option>${US_STATES.map(s => `<option${s === val ? ' selected' : ''}>${s}</option>`).join('')}</select>`; }
 function _toggle(id, label, on, onchange = '') { return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:.75rem;"><input type="checkbox" id="${id}" ${on ? 'checked' : ''} ${onchange ? `onchange="${onchange}"` : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />${label}</label>`; }
 function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cardinal);margin:1.4rem 0 .5rem;border-bottom:.5px solid var(--stone);padding-bottom:4px;">${t}</div>`; }
 
@@ -202,7 +201,7 @@ function buildModalHtml(p, opts = {}) {
   // age-gated body
   h += `<div id="bf-body">`;
   h += _input('bf-street', 'Mailing Street Address', p?.child_street || '');
-  h += _row(_input('bf-city', 'City', p?.child_city || ''), _stateSelect('bf-state', p?.child_state || ''), _input('bf-zip', 'ZIP', p?.child_zip || ''));
+  h += _row(_input('bf-city', 'City', p?.child_city || ''), stateSelect('bf-state', p?.child_state || ''), _input('bf-zip', 'ZIP', p?.child_zip || ''));
 
   // 3 — Parents (moved ABOVE Baptism Details)
   h += _sectionHead('Parent / Guardian 1');
@@ -226,7 +225,7 @@ function buildModalHtml(p, opts = {}) {
   h += _input('bf-bdate', 'Baptism Date', bapDate(p) || '', 'date');
   h += `<label>Church of Baptism</label><select id="bf-inst" onchange="bapInstChange(this.value)"><option value="">— Select —</option>${instOpts}<option value="__other"${_M.instMode === 'other' ? ' selected' : ''}>Other…</option></select>
     <div id="bf-inst-other-wrap" style="display:${_M.instMode === 'other' ? 'block' : 'none'};">${_input('bf-church-override', 'Church name', p?.baptism_church_override || '')}</div>
-    ${_row(_input('bf-bcity', 'City', p?.baptism_city || ''), _stateSelect('bf-bstate', p?.baptism_state || ''))}`;
+    ${_row(_input('bf-bcity', 'City', p?.baptism_city || ''), stateSelect('bf-bstate', p?.baptism_state || ''))}`;
 
   // adoption
   h += _sectionHead('Adoption');

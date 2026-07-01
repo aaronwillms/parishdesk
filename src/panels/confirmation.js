@@ -21,7 +21,7 @@ const CONF_STATUS = {
   inactive:    { label:'Inactive',       color:'#616A6B', bg:'#F2F3F4', dot:'#AAB7B8' },  // grey
 };
 const COUNTRIES = ['United States of America', 'Mexico', 'Philippines', 'Vietnam', 'Nigeria', 'India', 'Other'];
-const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+import { stateSelect } from '../ui/stateSelect.js';
 const FALLBACK_TEMPLATES = {
   youth: { documents: [{ name: 'Baptismal Certificate', deletable: false }, { name: 'Petition to Bishop', deletable: true }], service_hours_enabled: false, service_hours_required: 20 },
   adult: { documents: [{ name: 'Baptismal Certificate', deletable: false }, { name: 'Petition to Bishop', deletable: true }], service_hours_enabled: false, service_hours_required: 20 },
@@ -178,7 +178,8 @@ function confCloseModal() { document.getElementById('conf-overlay')?.classList.r
 
 function _row(...cells) { return `<div style="display:flex;gap:8px;flex-wrap:wrap;">${cells.map(c => `<div style="flex:1;min-width:120px;">${c}</div>`).join('')}</div>`; }
 function _input(id, label, val = '', type = 'text', extra = '') { return `<label>${label}</label><input type="${type}" id="${id}" value="${_esc(val)}" ${extra} />`; }
-function _stateSelect(id, val) { return `<label>State/Province</label><select id="${id}"><option value="">—</option>${US_STATES.map(s => `<option${s === val ? ' selected' : ''}>${s}</option>`).join('')}</select>`; }
+// Confirmation labels this "State/Province"; the shared select supplies the options.
+const _stateSelect = (id, val) => stateSelect(id, val, { label: 'State/Province' });
 function _toggle(id, label, on, onchange = '') { return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:.75rem;"><input type="checkbox" id="${id}" ${on ? 'checked' : ''} ${onchange ? `onchange="${onchange}"` : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />${label}</label>`; }
 function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cardinal);margin:1.4rem 0 .5rem;border-bottom:.5px solid var(--stone);padding-bottom:4px;">${t}</div>`; }
 // Grade dropdown 2–12, default 2 (out-of-range legacy values preserved as a leading option).

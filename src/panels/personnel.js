@@ -5,10 +5,9 @@ import { logActivity, personTitle, reportWriteError } from '../utils.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { getInstitutionAddress, isPrincipalInstitution, principalParishLabel } from '../ui/directory.js';
 import { createInstitutionWithRoot } from '../ui/institutions.js';
-
-// Shared 50-state list (same set the sacramental panels + Discernment address use)
-// for the institution-address State dropdown — stores the two-letter code.
-const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+// Shared 50-state list — the institution-address State dropdown (inline select below,
+// which carries its own disabled/background attrs) maps over these codes.
+import { US_STATES } from '../ui/stateSelect.js';
 
 // Institution membership and employment are DERIVED from HR (person_positions →
 // positions.institution_id, plus person_positions.employment_type). HR is the

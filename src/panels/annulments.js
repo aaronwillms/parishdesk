@@ -89,7 +89,7 @@ const TYPE_SECTIONS = {
   ratum:        { baptism: true },
 };
 function typeSections(type) { return TYPE_SECTIONS[type] || TYPE_SECTIONS.formal; }
-const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+import { stateSelect } from '../ui/stateSelect.js';
 
 // ── Baptismal status (Petitioner + Respondent share this identical set) ───────
 // Six booleans per party. `n` is the 1-6 index used by the symmetric exclusion sets;
@@ -597,7 +597,6 @@ function advocatePersonnel() {
 
 function _row(...cells) { return `<div style="display:flex;gap:8px;flex-wrap:wrap;">${cells.map(c => `<div style="flex:1;min-width:120px;">${c}</div>`).join('')}</div>`; }
 function _input(id, label, val = '', type = 'text') { return `<label>${label}</label><input type="${type}" id="${id}" value="${_esc(val)}" />`; }
-function _stateSelect(id, val) { return `<label>State</label><select id="${id}"><option value="">—</option>${US_STATES.map(s => `<option${s === val ? ' selected' : ''}>${s}</option>`).join('')}</select>`; }
 function _toggle(id, label, on, onchange = '') { return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:.75rem;"><input type="checkbox" id="${id}" ${on ? 'checked' : ''} ${onchange ? `onchange="${onchange}"` : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />${label}</label>`; }
 function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cardinal);margin:1.4rem 0 .5rem;border-bottom:.5px solid var(--stone);padding-bottom:4px;">${t}</div>`; }
 function _subLabel(t) { return `<div style="font-size:11px;font-weight:600;color:#6B7280;margin-top:.75rem;">${t}</div>`; }
@@ -617,7 +616,7 @@ function _bapLocationFields(prefix, c) {
   return `<div style="display:flex;gap:8px;flex-wrap:wrap;">
       <div style="flex:2;min-width:140px;">${_input(`am-${prefix}-bchurch`, 'Church of Baptism', c?.[m.church] || '')}</div>
       <div style="flex:1;min-width:110px;">${_input(`am-${prefix}-bcity`, 'Baptism City', c?.[m.city] || '')}</div>
-      <div id="am-${prefix}-bstate-wrap" style="flex:1;min-width:110px;display:${usa ? 'block' : 'none'};">${_stateSelect(`am-${prefix}-bstate`, c?.[m.state] || '')}</div>
+      <div id="am-${prefix}-bstate-wrap" style="flex:1;min-width:110px;display:${usa ? 'block' : 'none'};">${stateSelect(`am-${prefix}-bstate`, c?.[m.state] || '')}</div>
       <div style="flex:1;min-width:120px;"><label>Country</label><select id="am-${prefix}-bcountry" onchange="anlOnBapCountryChange('${prefix}')">${COUNTRIES.map(co => `<option${country === co ? ' selected' : ''}>${co}</option>`).join('')}</select></div>
     </div>
     ${_toggle(`am-${prefix}-baffidavit`, 'Baptism by Affidavit', !!c?.[m.affidavit])}`;
@@ -654,7 +653,7 @@ function buildCaseModalHtml(c, opts = {}) {
   h += _sectionHead('Petitioner');
   h += _row(_input('am-pet-first', 'First Name', c?.petitioner_first || ''), _input('am-pet-middle', 'Middle', c?.petitioner_middle || ''), _input('am-pet-last', 'Last Name', c?.petitioner_last || ''), _input('am-pet-maiden', 'Maiden', c?.petitioner_maiden || ''));
   h += _input('am-pet-street', 'Street Address', c?.petitioner_street || '');
-  h += _row(_input('am-pet-city', 'City', c?.petitioner_city || ''), _stateSelect('am-pet-state', c?.petitioner_state || ''), _input('am-pet-zip', 'ZIP', c?.petitioner_zip || ''));
+  h += _row(_input('am-pet-city', 'City', c?.petitioner_city || ''), stateSelect('am-pet-state', c?.petitioner_state || ''), _input('am-pet-zip', 'ZIP', c?.petitioner_zip || ''));
   h += _row(_input('am-pet-cell', 'Cell Phone', c?.petitioner_cell || c?.contact_phone || '', 'tel'), _input('am-pet-email', 'Email', c?.petitioner_email || c?.contact_email || ''));
   h += _input('am-pet-dob', 'Date of Birth', c?.petitioner_dob && /^\d{4}-\d{2}-\d{2}/.test(c.petitioner_dob) ? c.petitioner_dob.slice(0, 10) : '', 'date');
   // Petitioner baptismal status — six booleans with symmetric mutual-exclusion. When
@@ -692,7 +691,7 @@ function buildCaseModalHtml(c, opts = {}) {
   const marCountry = c?.marriage_country || 'United States of America';
   const marIsUSA = marCountry === 'United States of America';
   h += `<div style="display:flex;gap:8px;flex-wrap:wrap;">
-    <div id="am-mar-state-wrap" style="flex:1;min-width:120px;display:${marIsUSA ? 'block' : 'none'};"><label>State</label><select id="am-mar-state"><option value="">—</option>${US_STATES.map(s => `<option${c?.marriage_state === s ? ' selected' : ''}>${s}</option>`).join('')}</select></div>
+    <div id="am-mar-state-wrap" style="flex:1;min-width:120px;display:${marIsUSA ? 'block' : 'none'};">${stateSelect('am-mar-state', c?.marriage_state || '')}</div>
     <div style="flex:1;min-width:120px;"><label>Country</label><select id="am-mar-country" onchange="anlOnMarCountryChange()">${COUNTRIES.map(co => `<option${marCountry === co ? ' selected' : ''}>${co}</option>`).join('')}</select></div>
   </div>`;
 

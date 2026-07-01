@@ -21,7 +21,7 @@ const FC_STATUS = {
   inactive:    { label:'Inactive',         color:'#616A6B', bg:'#F2F3F4', dot:'#AAB7B8' },  // grey
 };
 const COUNTRIES = ['United States of America', 'Mexico', 'Philippines', 'Vietnam', 'Nigeria', 'India', 'Other'];
-const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+import { stateSelect } from '../ui/stateSelect.js';
 const FALLBACK_DOCS = [{ name: 'Baptismal Certificate', deletable: false }];
 
 let allFc = [], fcFilter = 'all', fcExpanded = null, _cohortFilter = 'all';
@@ -163,7 +163,6 @@ function fcCloseModal() { document.getElementById('fc-overlay')?.classList.remov
 
 function _row(...cells) { return `<div style="display:flex;gap:8px;flex-wrap:wrap;">${cells.map(c => `<div style="flex:1;min-width:120px;">${c}</div>`).join('')}</div>`; }
 function _input(id, label, val = '', type = 'text') { return `<label>${label}</label><input type="${type}" id="${id}" value="${_esc(val)}" />`; }
-function _stateSelect(id, val) { return `<label>State</label><select id="${id}"><option value="">—</option>${US_STATES.map(s => `<option${s === val ? ' selected' : ''}>${s}</option>`).join('')}</select>`; }
 function _toggle(id, label, on, onchange = '') { return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:.75rem;"><input type="checkbox" id="${id}" ${on ? 'checked' : ''} ${onchange ? `onchange="${onchange}"` : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />${label}</label>`; }
 function _sectionHead(t) { return `<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cardinal);margin:1.4rem 0 .5rem;border-bottom:.5px solid var(--stone);padding-bottom:4px;">${t}</div>`; }
 // Grade dropdown 2–12, default 2. An out-of-range stored grade (legacy K/1/Other)
@@ -258,9 +257,9 @@ function buildModalHtml(p, opts = {}) {
   h += _row(`<label>School</label>${_instSelect('ff-school-sel', schoolName, 'fcSchoolChange')}`, _gradeSelect('ff-grade', p?.grade_level || p?.grade));
   h += `<div id="ff-school-other-wrap" style="display:${schoolOther ? 'block' : 'none'};margin-top:6px;">${_input('ff-school-name', 'School name', schoolOther ? schoolName : '')}</div>`;
   h += _input('ff-school-street', 'School Street Address', p?.school_street || '');
-  h += _row(_input('ff-school-city', 'School City', p?.school_city || ''), _stateSelect('ff-school-state', p?.school_state || ''));
+  h += _row(_input('ff-school-city', 'School City', p?.school_city || ''), stateSelect('ff-school-state', p?.school_state || ''));
   h += _input('ff-street', 'Mailing Street Address', p?.child_street || '');
-  h += _row(_input('ff-city', 'City', p?.child_city || ''), _stateSelect('ff-state', p?.child_state || ''), _input('ff-zip', 'ZIP', p?.child_zip || ''));
+  h += _row(_input('ff-city', 'City', p?.child_city || ''), stateSelect('ff-state', p?.child_state || ''), _input('ff-zip', 'ZIP', p?.child_zip || ''));
 
   // 4 — Parents
   h += _sectionHead('Parent/Guardian Contact');
@@ -275,7 +274,7 @@ function buildModalHtml(p, opts = {}) {
   const bchOther = institutionOptionsHtml(bchName).isOther;
   h += `<label>Church of Baptism</label>${_instSelect('ff-bchurch-sel', bchName, 'fcBaptismChange')}`;
   h += `<div id="ff-bchurch-other-wrap" style="display:${bchOther ? 'block' : 'none'};margin-top:6px;">${_input('ff-bchurch-name', 'Church name', bchOther ? bchName : '')}</div>`;
-  h += _row(_input('ff-bcity', 'City', p?.baptism_city || ''), _stateSelect('ff-bstate', p?.baptism_state || ''));
+  h += _row(_input('ff-bcity', 'City', p?.baptism_city || ''), stateSelect('ff-bstate', p?.baptism_state || ''));
   h += `<label>Country</label><select id="ff-bcountry">${COUNTRIES.map(co => `<option${(p?.baptism_country || 'United States of America') === co ? ' selected' : ''}>${co}</option>`).join('')}</select>`;
 
   // 6 — First communion details
@@ -284,7 +283,7 @@ function buildModalHtml(p, opts = {}) {
   h += `<label>Church</label><select id="ff-church" onchange="fcChurchChange(this.value)"><option value="">— Select —</option>${instOpts}<option value="__other"${(p?.communion_church_override && !p?.communion_institution_id) ? ' selected' : ''}>Other…</option></select>
     <div id="ff-church-other-wrap" style="display:${(p?.communion_church_override && !p?.communion_institution_id) ? 'block' : 'none'};">
       ${_input('ff-church-override', 'Church name', p?.communion_church_override || '')}
-      ${_row(_input('ff-ccity', 'City', p?.communion_city || ''), _stateSelect('ff-cstate', p?.communion_state || ''))}
+      ${_row(_input('ff-ccity', 'City', p?.communion_city || ''), stateSelect('ff-cstate', p?.communion_state || ''))}
     </div>`;
 
   // 7 — Documents
