@@ -546,8 +546,11 @@ function _userDetail(u) {
     // members (program_coordinators program='homebound'; carried in coordinatorSacraments).
     const grantChecks = Object.entries(PANEL_LABELS).map(([p, label]) => {
       const onHbRoster = p === 'homebound' && (u.coordinatorSacraments || []).includes('homebound');
+      // Cura panels (school/discernment/homebound) are SUPERADMIN-ISSUED ONLY — the
+      // admin role does NOT confer them, so isAdmin is false here (no auto-lock). The
+      // homebound roster basis (hasRoster) still locks for Ministers-to-the-Sick.
       const state = computePermissionBasis({
-        kind: 'panel', isAdmin: isAdminRole, hasManual: u.grants.includes(p),
+        kind: 'panel', isAdmin: false, hasManual: u.grants.includes(p),
         hasRoster: onHbRoster, rosterLabel: 'Minister to the Sick',
       });
       return permRow('au-grant-cb', `data-panel="${p}"`, label, state, 'Minister to the Sick');

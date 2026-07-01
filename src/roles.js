@@ -265,7 +265,7 @@ export function isHomeboundBroad() {
   if (isSuperAdmin()) return true;
   const r = store.currentUserRoles;
   if (!r) return false;
-  return isAdmin() || !!r.panelGrants?.has('homebound') || !!r.onHomeboundRosterLinked;   // cura: parish-unaware
+  return !!r.panelGrants?.has('homebound') || !!r.onHomeboundRosterLinked;   // cura: superadmin-issued grant OR roster; NOT the admin role
 }
 // Panel access: broad OR assigned to ≥1 recipient (mirrors the advocate rule).
 export function canAccessHomebound() {
@@ -308,7 +308,7 @@ export function canAccessPanel(panel) {
   if (panel === 'admin') return false;
 
   // School: admin+
-  if (panel === 'school') return isAdmin();
+  if (panel === 'school') return isSuperAdmin() || !!r.panelGrants?.has('school');   // cura: superadmin-issued grant, NOT the admin role
 
   // HR (Layer 0): visible IFF the user is a node on ANY institution's org tree
   // (super-admin always). NOT gated by admin role.

@@ -197,7 +197,7 @@ export function applyNavVisibility() {
   PASTORAL_PANELS.forEach(p => show(p, canAccessPanel(p)));
   showSec('Pastoral Care', PASTORAL_PANELS.some(p => canAccessPanel(p)));
 
-  show('school', isAdmin());
+  show('school', canAccessPanel('school'));   // cura: superadmin-issued grant, not the admin role
   show('hr', canAccessPanel('hr'));   // Layer 0: HR visible IFF a node on any org tree (or super-admin)
   show('teams', canAccessPanel('teams'));
   const teamsSubNav = document.getElementById('teams-subnav');
