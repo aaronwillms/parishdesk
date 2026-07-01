@@ -219,11 +219,10 @@ export function applyNavVisibility() {
   const addInstBtn = document.getElementById('btn-add-institution');
   if (addInstBtn) addInstBtn.style.display = isSuperAdmin() ? '' : 'none';
 
-  // New Team / New Project buttons: admin+ only
+  // New Team button: admin+ only. (New Project is open to any user as of Phase 2a — the
+  // creator becomes the project owner via container_members; button stays visible for all.)
   const newTeamBtn = document.getElementById('btn-new-team');
   if (newTeamBtn) newTeamBtn.style.display = isAdmin() ? '' : 'none';
-  const newProjectBtn = document.getElementById('btn-new-project');
-  if (newProjectBtn) newProjectBtn.style.display = isAdmin() ? '' : 'none';
 }
 
 // Sets the GROUP/parish label in the sidebar (.app-sub) and login screen (.auth-sub).

@@ -5,7 +5,7 @@ import { notifyUsers, getUserIdsForTeam, getUserIdForPersonnel } from '../notifi
 import { updateProjectStats, renderDashProjects } from './dashboard.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { getUserScope, isVisible, scopeNotice } from '../ui/userScope.js';
-import { isAdmin } from '../roles.js';
+import { addMember } from '../ui/membership.js';
 
 // ── Status config ──────────────────────────────────────────────────────────
 
@@ -342,7 +342,9 @@ export function projectCard(p) {
 // ── New project modal ──────────────────────────────────────────────────────
 
 export function openNewProjectModal({ teamId = null } = {}) {
-  if (!isAdmin()) return;  // basic users cannot create projects
+  // Phase 2a: any authenticated user may create a project (they become its owner via
+  // container_members in saveNewProject). The former isAdmin() gate is removed here and on
+  // the #btn-new-project button (navigation.js).
   _newProjAssignees = [];
   _newProjTeamId = teamId;
   document.getElementById('modal-content').innerHTML = `
@@ -428,6 +430,23 @@ async function saveNewProject() {
   };
   const { data: newProj, error } = await sb.from('projects').insert(payload).select().single();
   if (error) { alert('Save failed: ' + error.message); return; }
+
+  // Phase 2a: seed container_members (authoritative membership). The creator becomes the
+  // OWNER (resolve auth uid → personnel id); invited people become members. assigned_to above
+  // is retained as a compat mirror for legacy readers (userScope.isVisible etc.).
+  const ownerPersonnelId = store.currentUserRoles?.personnelId || null;
+  if (ownerPersonnelId) {
+    const { error: ownErr } = await addMember('project', newProj.id, ownerPersonnelId, 'owner');
+    if (ownErr) console.error('[projects] owner membership insert failed:', ownErr);
+  } else {
+    console.warn('[projects] creator has no linked personnel_id — no owner membership row written for', newProj.id);
+  }
+  for (const person of _newProjAssignees) {
+    if (person.id === ownerPersonnelId) continue;  // creator already seeded as owner
+    const { error: memErr } = await addMember('project', newProj.id, person.id, 'member');
+    if (memErr) console.error('[projects] member membership insert failed:', memErr);
+  }
+
   _newProjPicker    = null;
   _newProjAssignees = [];
   window.flashSavedThen(() => closeModal());

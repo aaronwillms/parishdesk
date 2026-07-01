@@ -6,6 +6,7 @@ import { getUserScope, isVisible } from '../ui/userScope.js';
 import { renderDiscussionThread } from '../ui/discussionThread.js';
 import { renderProjectLog } from '../ui/projectLog.js';
 import { showToast } from '../ui/toast.js';
+import { containerRole, canManageRole, fetchMembers, addMember, removeMember } from '../ui/membership.js';
 
 // ── Status config ──────────────────────────────────────────────────────────
 
@@ -34,8 +35,16 @@ let _activeTab      = 'log';
 let _taskPicker     = null;
 let _memberPicker   = null;
 let _currentUserId  = null;
-// Multi-person assignees — normalized to array on load
+// Multi-person assignees — normalized to array on load. assigned_to is retained as a
+// COMPATIBILITY MIRROR of container_members (Phase 2a): container_members is authoritative,
+// but assigned_to is still read by userScope.isVisible (project scoping), discussionThread's
+// canPin, roles.js:521 notif gate and mentionPicker — so member add/remove dual-writes it.
 let _assigneeIds    = [];
+// Phase 2a: the current user's resolved container role ('owner'|'admin'|'member'|null),
+// cached at load so the synchronous _taskRow render can gate edit affordances.
+let _myContainerRole = null;
+// Container members (from container_members), loaded for the Members tab: [{personnel_id, role}].
+let _members         = [];
 
 // ── Public entry point ─────────────────────────────────────────────────────
 
@@ -63,7 +72,7 @@ async function _load() {
   if (tasksRes.error) console.error('[projectDashboard] tasks:',   tasksRes.error);
   _project = projRes.data || null;
   _tasks   = (tasksRes.data || []).filter(t => isVisible(t, scope));
-  // Normalize assigned_to to always be an array of UUIDs
+  // Normalize assigned_to (compat mirror) to always be an array of UUIDs
   if (_project) {
     const raw = _project.assigned_to;
     if (Array.isArray(raw))       _assigneeIds = raw.filter(Boolean);
@@ -72,6 +81,13 @@ async function _load() {
   } else {
     _assigneeIds = [];
   }
+
+  // Phase 2a: resolve MY container role (personnel-keyed) once, cached for sync render.
+  const myPersonnelId = store.currentUserRoles?.personnelId || null;
+  _myContainerRole = _project && myPersonnelId
+    ? await containerRole('project', _projectId, myPersonnelId)
+    : null;
+  _members = _project ? await fetchMembers('project', _projectId) : [];
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -89,9 +105,10 @@ function _personnelName(id) {
 function _canEditProject() {
   const roles = store.currentUserRoles || {};
   if (roles.isAdmin || roles.isSuperAdmin) return true;
+  // Creator failsafe (owner is created_by; also covers a backfill miss / race).
   if (_project?.created_by && _project.created_by === _currentUserId) return true;
-  const pid = roles.personnelId;
-  return !!(pid && _assigneeIds.includes(pid));
+  // Phase 2a: owner/admin of the container may manage it (role resolved + cached in _load).
+  return canManageRole(_myContainerRole);
 }
 
 // ── Render shell ───────────────────────────────────────────────────────────
@@ -451,25 +468,38 @@ function _renderMembers(el) {
 
 function _renderMembersList(el) {
   const people = (store.personnel || []);
+  const ROLE_BADGE = {
+    owner:  { label: 'Owner',  color: '#8B1A2F', bg: '#FEF2F2' },
+    admin:  { label: 'Admin',  color: '#1565C0', bg: '#EFF6FF' },
+    member: { label: 'Member', color: '#6B7280', bg: '#F3F4F6' },
+  };
+
+  // Phase 2a: members come from container_members (authoritative), sorted owner→admin→member.
+  const ROLE_RANK = { owner: 0, admin: 1, member: 2 };
+  const ordered = [..._members].sort((a, b) => (ROLE_RANK[a.role] ?? 9) - (ROLE_RANK[b.role] ?? 9));
 
   let listHtml = '';
-  if (!_assigneeIds.length) {
-    listHtml = `<div style="font-size:13px;color:#9CA3AF;font-style:italic;margin-bottom:1rem;">No members assigned yet.</div>`;
+  if (!ordered.length) {
+    listHtml = `<div style="font-size:13px;color:#9CA3AF;font-style:italic;margin-bottom:1rem;">No members yet.</div>`;
   } else {
-    listHtml = _assigneeIds.map(id => {
+    listHtml = ordered.map(m => {
+      const id = m.personnel_id;
       const name = _personnelName(id) || id;
       const p = people.find(x => x.id === id);
+      const rb = ROLE_BADGE[m.role] || ROLE_BADGE.member;
+      const isOwner = m.role === 'owner';
       return `
         <div style="display:flex;align-items:center;gap:10px;padding:.65rem 0;border-bottom:.5px solid #F0EDE8;">
           <div style="flex:1;min-width:0;">
             <div style="font-size:14px;font-weight:500;color:#1C2B3A;">${name}</div>
             ${p?.title ? `<div style="font-size:12px;color:#6B7280;">${p.title}</div>` : ''}
           </div>
-          <button data-remove-id="${id}" style="
+          <span style="font-size:10px;font-weight:700;background:${rb.bg};color:${rb.color};border-radius:20px;padding:2px 8px;flex-shrink:0;">${rb.label}</span>
+          ${isOwner ? '' : `<button data-remove-id="${id}" style="
             background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:14px;
             padding:2px 4px;flex-shrink:0;line-height:1;
           " onmouseover="this.style.color='#E74C3C'" onmouseout="this.style.color='#D1D5DB'"
-            title="Remove from project">✕</button>
+            title="Remove from project">✕</button>`}
         </div>`;
     }).join('');
   }
@@ -499,12 +529,15 @@ function _renderMembersList(el) {
     </div>
   `;
 
-  // Remove buttons
+  // Remove buttons — delete the container_members row; mirror assigned_to for legacy readers.
   el.querySelectorAll('[data-remove-id]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.removeId;
+      const { error } = await removeMember('project', _projectId, id);
+      if (error) { alert('Remove failed: ' + error.message); return; }
+      _members = _members.filter(m => m.personnel_id !== id);
       _assigneeIds = _assigneeIds.filter(x => x !== id);
-      await _saveAssignees();
+      await _saveAssignees();   // compat mirror
       _renderMembersList(el);
     });
   });
@@ -528,10 +561,13 @@ function _renderMembersList(el) {
   document.getElementById('pd-member-confirm').addEventListener('click', async () => {
     const person = _memberPicker?.getValue();
     if (!person) { alert('Please select a person.'); return; }
-    if (_assigneeIds.includes(person.id)) { alert(`${person.name || 'This person'} is already assigned.`); return; }
-    _assigneeIds.push(person.id);
+    if (_members.some(m => m.personnel_id === person.id)) { alert(`${person.name || 'This person'} is already a member.`); return; }
+    const { error } = await addMember('project', _projectId, person.id, 'member');
+    if (error) { alert('Add failed: ' + error.message); return; }
+    _members.push({ personnel_id: person.id, role: 'member' });
+    if (!_assigneeIds.includes(person.id)) _assigneeIds.push(person.id);
     _memberPicker = null;
-    await _saveAssignees();
+    await _saveAssignees();   // compat mirror
     _renderMembersList(el);
   });
 }
