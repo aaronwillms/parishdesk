@@ -12,7 +12,7 @@ import { promptNoteEdit } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { registerCohortManager } from '../sacramental/cohortManager.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
-import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish } from '../sacramental/parishCreateField.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish, initialCreateParish } from '../sacramental/parishCreateField.js';
 
 const OCIA_STATUS = {
   inquirer:    { label:'Inquirer',             color:'#4A1D96', bg:'#EDE9FE', dot:'#7C3AED' },
@@ -456,9 +456,9 @@ function buildModalHtml(p, opts = {}) {
   // Parish picker. CREATE (All tab, >1 parish): placeholder + Save-lockout. EDIT (>1
   // parish): the record's parish preselected, reassignable, NO lockout. Distinct ids.
   if ((!isEdit && !inline) && shouldShowParishField(['ocia'], 'ocia')) {
-    h += parishCreateFieldHtml(['ocia'], { selectId: 'ocia-parish-select', onChange: 'ociaValidateParish()' });
+    h += parishCreateFieldHtml(['ocia'], { selectId: 'ocia-parish-select', onChange: "ociaValidateParish();window._preparerRepopulateCoords('of-preparer','ocia',this.value)" });
   } else if (isEdit && shouldShowParishFieldEdit(['ocia'])) {
-    h += parishEditFieldHtml(['ocia'], { selectId: 'ocia-parish-edit', currentParishId: p?.parish_id || null });
+    h += parishEditFieldHtml(['ocia'], { selectId: 'ocia-parish-edit', currentParishId: p?.parish_id || null, onChange: "window._preparerRepopulateCoords('of-preparer','ocia',this.value)" });
   }
 
   // Section 1 — Cohort FIRST (SELECT an existing cohort; creation lives in Manage
@@ -476,7 +476,7 @@ function buildModalHtml(p, opts = {}) {
   // Person Responsible for Formation — shared Clergy + Coordinator + Other helper
   // (labeled "OCIA Prep" in the viewer). Stored in `preparer`.
   h += _sectionHead('Person Responsible for Formation');
-  h += buildPreparerField('of-preparer', p?.preparer || '', { coordinatorNames: _ociaCoordinatorNames, label: 'Person Responsible for Formation' });
+  h += buildPreparerField('of-preparer', p?.preparer || '', { coordinatorNames: _ociaCoordinatorNames, label: 'Person Responsible for Formation', prog: 'ocia', initialParishId: isEdit ? (p?.parish_id || null) : initialCreateParish(['ocia'], 'ocia') });
 
   // Status (shown in BOTH create + edit; defaults to Inquirer). The reception
   // sub-section + sacraments + archive remain edit-only below.

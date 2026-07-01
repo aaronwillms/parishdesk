@@ -5,7 +5,7 @@ import { isAdmin, canAccessSacrament, isSacramentCoordinator, accessibleParishes
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
-import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish } from '../sacramental/parishCreateField.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish, initialCreateParish } from '../sacramental/parishCreateField.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
@@ -238,9 +238,9 @@ function buildModalHtml(p, opts = {}) {
   // Parish picker. CREATE (All tab, >1 parish): placeholder + Save-lockout. EDIT (>1
   // parish): the record's parish preselected, reassignable, NO lockout. Distinct ids.
   if ((!isEdit && !inline) && shouldShowParishField(['confirmation'], 'confirmation')) {
-    h += parishCreateFieldHtml(['confirmation'], { selectId: 'conf-parish-select', onChange: 'confValidateParish()' });
+    h += parishCreateFieldHtml(['confirmation'], { selectId: 'conf-parish-select', onChange: "confValidateParish();window._preparerRepopulateCoords('cf-preparer','confirmation',this.value)" });
   } else if (isEdit && shouldShowParishFieldEdit(['confirmation'])) {
-    h += parishEditFieldHtml(['confirmation'], { selectId: 'conf-parish-edit', currentParishId: p?.parish_id || null });
+    h += parishEditFieldHtml(['confirmation'], { selectId: 'conf-parish-edit', currentParishId: p?.parish_id || null, onChange: "window._preparerRepopulateCoords('cf-preparer','confirmation',this.value)" });
   }
 
   // 1 — Cohort FIRST (SELECT only; created in the panel via Manage Cohorts). Picking it
@@ -260,7 +260,7 @@ function buildModalHtml(p, opts = {}) {
 
   // 3 — Person responsible for formation (clergy + Confirmation coordinator + Other)
   h += _sectionHead('Person Responsible for Formation');
-  h += buildPreparerField('cf-preparer', p?.preparer || '', { coordinatorNames: _confCoordinatorNames, label: 'Person Responsible for Formation' });
+  h += buildPreparerField('cf-preparer', p?.preparer || '', { coordinatorNames: _confCoordinatorNames, label: 'Person Responsible for Formation', prog: 'confirmation', initialParishId: isEdit ? (p?.parish_id || null) : initialCreateParish(['confirmation'], 'confirmation') });
 
   // 4 — Candidate info
   h += _sectionHead('Candidate Information');

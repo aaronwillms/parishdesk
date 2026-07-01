@@ -7,7 +7,7 @@ import { isAdmin, canAccessSacrament, accessibleParishesForSacrament } from '../
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
-import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish } from '../sacramental/parishCreateField.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish, initialCreateParish } from '../sacramental/parishCreateField.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { buildPreparerField, readPreparerValue, clergyNames } from '../sacramental/preparerField.js';
@@ -460,9 +460,9 @@ function buildCoupleModalHtml(c, opts = {}) {
   // Parish picker. CREATE (All tab, >1 parish): placeholder + Save-lockout. EDIT (>1
   // parish): the record's parish preselected, reassignable, NO lockout. Distinct ids.
   if ((!isEdit && !inline) && shouldShowParishField(['marriage'], 'marriage')) {
-    h += parishCreateFieldHtml(['marriage'], { selectId: 'mar-parish-select', onChange: 'marValidateParish()' });
+    h += parishCreateFieldHtml(['marriage'], { selectId: 'mar-parish-select', onChange: "marValidateParish();window._preparerRepopulateCoords('mf-preparer','marriage',this.value)" });
   } else if (isEdit && shouldShowParishFieldEdit(['marriage'])) {
-    h += parishEditFieldHtml(['marriage'], { selectId: 'mar-parish-edit', currentParishId: c?.parish_id || null });
+    h += parishEditFieldHtml(['marriage'], { selectId: 'mar-parish-edit', currentParishId: c?.parish_id || null, onChange: "window._preparerRepopulateCoords('mf-preparer','marriage',this.value)" });
   }
 
   // Section 1 — Person responsible for formation (clergy + marriage coordinator + Other) + External
@@ -470,7 +470,7 @@ function buildCoupleModalHtml(c, opts = {}) {
   // column): add/edit dialogs say "…for Marriage Preparation"; the viewer (see
   // marriageConfig fileDetails) uses the short "Marriage Prep" for alignment.
   h += _sectionHead('Person Responsible for Marriage Preparation');
-  h += buildPreparerField('mf-preparer', c?.preparer || '', { coordinatorNames: _marCoordinatorNames, label: 'Person Responsible for Marriage Preparation' });
+  h += buildPreparerField('mf-preparer', c?.preparer || '', { coordinatorNames: _marCoordinatorNames, label: 'Person Responsible for Marriage Preparation', prog: 'marriage', initialParishId: isEdit ? (c?.parish_id || null) : initialCreateParish(['marriage'], 'marriage') });
 
   h += _toggle('mf-external', 'External (preparation handled elsewhere)', _M.external, 'marOnExternalToggle()');
 

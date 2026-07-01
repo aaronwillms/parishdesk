@@ -5,7 +5,7 @@ import { isAdmin, canAccessSacrament, isSacramentCoordinator, accessibleParishes
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { formatPhone, normalizePhone } from '../utils/phone.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
-import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish } from '../sacramental/parishCreateField.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish, initialCreateParish } from '../sacramental/parishCreateField.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { sealGuardConfirm } from '../ui/sealGuard.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
@@ -225,9 +225,9 @@ function buildModalHtml(p, opts = {}) {
   // Parish picker. CREATE (All tab, >1 parish): placeholder + Save-lockout. EDIT (>1
   // parish): the record's parish preselected, reassignable, NO lockout. Distinct ids.
   if ((!isEdit && !inline) && shouldShowParishField(['first_communion', 'firstcomm'], 'firstcommunion')) {
-    h += parishCreateFieldHtml(['first_communion', 'firstcomm'], { selectId: 'fc-parish-select', onChange: 'fcValidateParish()' });
+    h += parishCreateFieldHtml(['first_communion', 'firstcomm'], { selectId: 'fc-parish-select', onChange: "fcValidateParish();window._preparerRepopulateCoords('ff-preparer','firstcomm',this.value)" });
   } else if (isEdit && shouldShowParishFieldEdit(['first_communion', 'firstcomm'])) {
-    h += parishEditFieldHtml(['first_communion', 'firstcomm'], { selectId: 'fc-parish-edit', currentParishId: p?.parish_id || null });
+    h += parishEditFieldHtml(['first_communion', 'firstcomm'], { selectId: 'fc-parish-edit', currentParishId: p?.parish_id || null, onChange: "window._preparerRepopulateCoords('ff-preparer','firstcomm',this.value)" });
   }
 
   // 1 — Cohort FIRST (SELECT an existing cohort only; cohorts are created in the panel
@@ -243,7 +243,7 @@ function buildModalHtml(p, opts = {}) {
 
   // 2 — Person responsible for formation (clergy + FC coordinator + Other)
   h += _sectionHead('Person Responsible for Formation');
-  h += buildPreparerField('ff-preparer', p?.preparer || '', { coordinatorNames: _fcCoordinatorNames, label: 'Person Responsible for Formation' });
+  h += buildPreparerField('ff-preparer', p?.preparer || '', { coordinatorNames: _fcCoordinatorNames, label: 'Person Responsible for Formation', prog: 'firstcomm', initialParishId: isEdit ? (p?.parish_id || null) : initialCreateParish(['first_communion', 'firstcomm'], 'firstcommunion') });
 
   // 3 — Child info
   h += _sectionHead('Child Information');

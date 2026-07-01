@@ -71,6 +71,18 @@ function coordinatorsFromRow(d) {
   return [];
 }
 
+// Coordinator display NAMES for a specific parish, from the already-loaded per-parish
+// data (coordData[prog] = { [parishId]: row }; loaded on panel open via initNavigation).
+// Synchronous, no new fetch. Used by the preparer field to scope its Coordinators group
+// to the selected parish. Returns [] for an unknown/absent parish.
+export function coordinatorNamesForParish(prog, parishId) {
+  const row = coordData[prog]?.[parishId];
+  if (!row?.coordinator_ids) return [];
+  return row.coordinator_ids
+    .map(pid => (store.personnel || []).find(p => p.id === pid)?.name)
+    .filter(Boolean);
+}
+
 // One coordinator person (name + phone/email links). `sep` adds the divider for 2nd+.
 function coordPersonHtml(c, sep) {
   const contacts = [

@@ -29,6 +29,16 @@ export function parishCreateFieldHtml(keys, { selectId, onChange }) {
     </select>`;
 }
 
+// Build-time (no DOM) resolved parish for a CREATE modal — used to seed the preparer
+// field's Coordinators group before the parish <select> exists in the DOM:
+//   • picker shown (create-on-All) → null (the user must choose; coords empty until then)
+//   • else → the specific active tab, or the single accessible parish.
+export function initialCreateParish(keys, panelKey) {
+  if (shouldShowParishField(keys, panelKey)) return null;
+  const tab = getActiveParishTab(panelKey);
+  return (tab && tab !== 'all') ? tab : (accessibleParishesForSacrament(keys)[0]?.id ?? null);
+}
+
 // Single source of truth for the create stamp. Keyed off the field's DOM presence:
 //   field present (shown) → the chosen value (null only if unchosen — lockout prevents save)
 //   specific parish tab   → that parish id

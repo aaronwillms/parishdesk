@@ -4,7 +4,7 @@ import { fmtDate, formatDateDisplay, todayCST, logActivity, reportWriteError } f
 import { isAdmin, canAccessSacrament, isSacramentCoordinator, accessibleParishesForSacrament } from '../roles.js';
 import { notifyUsers, getUserIdsForSacrament, notifySacramentEvent } from '../notifications.js';
 import { renderSacramentalPanel, refreshActivePanel, openSacramentalRecord, getSelectedParish } from '../sacramental/panelShell.js';
-import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish } from '../sacramental/parishCreateField.js';
+import { shouldShowParishField, parishCreateFieldHtml, resolveCreateParish, parishFieldValid, shouldShowParishFieldEdit, parishEditFieldHtml, readEditParish, initialCreateParish } from '../sacramental/parishCreateField.js';
 import { editNoteLog } from '../sacramental/noteEdit.js';
 import { buildPreparerField, readPreparerValue } from '../sacramental/preparerField.js';
 import { normalizePhone } from '../utils/phone.js';
@@ -185,14 +185,14 @@ function buildModalHtml(p, opts = {}) {
   // 0 — Parish picker. CREATE (All tab, >1 parish): placeholder + Save-lockout. EDIT
   // (>1 parish): the record's parish preselected, reassignable, NO lockout. Distinct ids.
   if ((!isEdit && !inline) && shouldShowParishField(['baptism'], 'baptism')) {
-    h += parishCreateFieldHtml(['baptism'], { selectId: 'bf-parish-select', onChange: 'bapValidate()' });
+    h += parishCreateFieldHtml(['baptism'], { selectId: 'bf-parish-select', onChange: "bapValidate();window._preparerRepopulateCoords('bf-preparer','baptism',this.value)" });
   } else if (isEdit && shouldShowParishFieldEdit(['baptism'])) {
-    h += parishEditFieldHtml(['baptism'], { selectId: 'bf-parish-edit', currentParishId: p?.parish_id || null });
+    h += parishEditFieldHtml(['baptism'], { selectId: 'bf-parish-edit', currentParishId: p?.parish_id || null, onChange: "window._preparerRepopulateCoords('bf-preparer','baptism',this.value)" });
   }
 
   // 1 — Person responsible for formation (clergy + Baptism coordinator + Other)
   h += _sectionHead('Person Responsible for Formation');
-  h += buildPreparerField('bf-preparer', p?.preparer || '', { coordinatorNames: _bapCoordinatorNames, label: 'Person Responsible for Formation' });
+  h += buildPreparerField('bf-preparer', p?.preparer || '', { coordinatorNames: _bapCoordinatorNames, label: 'Person Responsible for Formation', prog: 'baptism', initialParishId: isEdit ? (p?.parish_id || null) : initialCreateParish(['baptism'], 'baptism') });
 
   // 2 — Child information
   h += _sectionHead('Child Information');
