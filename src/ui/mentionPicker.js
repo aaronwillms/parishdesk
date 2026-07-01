@@ -21,7 +21,7 @@ const TYPES = {
   confirmation: { table: 'sacramental_confirmation', sacrament: 'confirmation',    typeLabel: 'Confirmation',     icon: 'fa-fire',
                   cols: ['name'],                    label: r => r.name || '?' },
   project:      { table: 'projects',                 project: true,                typeLabel: 'Project',          icon: 'fa-folder',
-                  cols: ['title'],                   label: r => r.title || '?',  selectCols: 'id,title,created_by,team_id,assigned_to' },
+                  cols: ['title'],                   label: r => r.title || '?',  selectCols: 'id,title,created_by,team_id' },
   // Sick & Homebound recipient (person file). Not sacrament-gated — access is the
   // homebound model (broad/roster/assignment OR a % grant), via `access` below.
   homebound_recipient: { table: 'homebound_recipients', typeLabel: 'Sick & Homebound', icon: 'fa-house-medical',

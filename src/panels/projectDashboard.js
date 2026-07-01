@@ -35,15 +35,11 @@ let _activeTab      = 'log';
 let _taskPicker     = null;
 let _memberPicker   = null;
 let _currentUserId  = null;
-// Multi-person assignees — normalized to array on load. assigned_to is retained as a
-// COMPATIBILITY MIRROR of container_members (Phase 2a): container_members is authoritative,
-// but assigned_to is still read by userScope.isVisible (project scoping), discussionThread's
-// canPin, roles.js:521 notif gate and mentionPicker — so member add/remove dual-writes it.
-let _assigneeIds    = [];
 // Phase 2a: the current user's resolved container role ('owner'|'admin'|'member'|null),
 // cached at load so the synchronous _taskRow render can gate edit affordances.
 let _myContainerRole = null;
-// Container members (from container_members), loaded for the Members tab: [{personnel_id, role}].
+// Container members (from container_members) — the authoritative membership: [{personnel_id, role}].
+// 2b-1 dropped the assigned_to mirror; this is the sole membership source in the surface.
 let _members         = [];
 
 // ── Public entry point ─────────────────────────────────────────────────────
@@ -72,15 +68,6 @@ async function _load() {
   if (tasksRes.error) console.error('[projectDashboard] tasks:',   tasksRes.error);
   _project = projRes.data || null;
   _tasks   = (tasksRes.data || []).filter(t => isVisible(t, scope));
-  // Normalize assigned_to (compat mirror) to always be an array of UUIDs
-  if (_project) {
-    const raw = _project.assigned_to;
-    if (Array.isArray(raw))       _assigneeIds = raw.filter(Boolean);
-    else if (raw)                 _assigneeIds = [raw];
-    else                          _assigneeIds = [];
-  } else {
-    _assigneeIds = [];
-  }
 
   // Phase 2a: resolve MY container role (personnel-keyed) once, cached for sync render.
   const myPersonnelId = store.currentUserRoles?.personnelId || null;
@@ -529,15 +516,14 @@ function _renderMembersList(el) {
     </div>
   `;
 
-  // Remove buttons — delete the container_members row; mirror assigned_to for legacy readers.
+  // Remove buttons — delete the container_members row; patch the in-store row's _members.
   el.querySelectorAll('[data-remove-id]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.removeId;
       const { error } = await removeMember('project', _projectId, id);
       if (error) { alert('Remove failed: ' + error.message); return; }
       _members = _members.filter(m => m.personnel_id !== id);
-      _assigneeIds = _assigneeIds.filter(x => x !== id);
-      await _saveAssignees();   // compat mirror
+      _syncStoreMembers();
       _renderMembersList(el);
     });
   });
@@ -565,18 +551,17 @@ function _renderMembersList(el) {
     const { error } = await addMember('project', _projectId, person.id, 'member');
     if (error) { alert('Add failed: ' + error.message); return; }
     _members.push({ personnel_id: person.id, role: 'member' });
-    if (!_assigneeIds.includes(person.id)) _assigneeIds.push(person.id);
     _memberPicker = null;
-    await _saveAssignees();   // compat mirror
+    _syncStoreMembers();
     _renderMembersList(el);
   });
 }
 
-async function _saveAssignees() {
-  const { error } = await sb.from('projects')
-    .update({ assigned_to: _assigneeIds, updated_at: new Date().toISOString() })
-    .eq('id', _projectId);
-  if (error) console.error('[projectDashboard] assignee save:', error);
+// Invalidation: patch the in-store project row's _members so the sync readers (isVisible,
+// projectCard→assigneeLabel) reflect a membership change without a full refetch.
+function _syncStoreMembers() {
+  const row = (store.allProjects || []).find(p => p.id === _projectId);
+  if (row) row._members = _members.map(m => m.personnel_id);
 }
 
 // ── Project (details) tab ─────────────────────────────────────────────────

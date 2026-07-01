@@ -35,7 +35,8 @@ export function clearUserScope() {
 }
 
 // Returns true if a project/task row is visible to the current user.
-// assigned_to may be a uuid[] array or a single uuid string.
+// PROJECT rows carry a preloaded `_members` (personnel_id[], from container_members via
+// attachProjectMembers); TASK rows do not — they keep the scalar/array `assigned_to` path.
 export function isVisible(row, { personnelId, userId, teamIds }) {
   // created_by stores auth.uid() — check against userId, not personnelId
   if (userId && row.created_by === userId) return true;
@@ -46,11 +47,16 @@ export function isVisible(row, { personnelId, userId, teamIds }) {
   // Belongs to a team the user is in
   if (row.team_id && teamIds.includes(row.team_id)) return true;
 
-  // Assigned to this user (uuid[] or legacy single uuid)
-  const assignees = Array.isArray(row.assigned_to)
-    ? row.assigned_to
-    : row.assigned_to ? [row.assigned_to] : [];
-  if (assignees.includes(personnelId)) return true;
+  // Membership. Projects: container_members-sourced _members (guard present). Tasks: the
+  // scalar/array assigned_to (no _members) — unchanged.
+  if (Array.isArray(row._members)) {
+    if (row._members.includes(personnelId)) return true;
+  } else {
+    const assignees = Array.isArray(row.assigned_to)
+      ? row.assigned_to
+      : row.assigned_to ? [row.assigned_to] : [];
+    if (assignees.includes(personnelId)) return true;
+  }
 
   return false;
 }

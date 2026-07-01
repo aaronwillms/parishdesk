@@ -1,11 +1,11 @@
-import { sb, deleteWithRetry } from '../supabase.js';
+import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { fmtDate, logActivity } from '../utils.js';
 import { notifyUsers, getUserIdsForTeam, getUserIdForPersonnel } from '../notifications.js';
 import { updateProjectStats, renderDashProjects } from './dashboard.js';
 import { createContactPicker } from '../ui/contactPicker.js';
 import { getUserScope, isVisible, scopeNotice } from '../ui/userScope.js';
-import { addMember } from '../ui/membership.js';
+import { addMember, attachProjectMembers } from '../ui/membership.js';
 
 // ── Status config ──────────────────────────────────────────────────────────
 
@@ -111,6 +111,8 @@ export async function loadProjects() {
     .order('created_at');
   if (error) { console.error('[projects]', error); return; }
 
+  // Attach container_members-sourced _members to rows BEFORE isVisible filters them.
+  await attachProjectMembers(data || []);
   store.allProjects = (data || []).filter(p => isVisible(p, scope));
   store._projectScopeReady = scope.ready;
   renderProjects();
@@ -311,7 +313,7 @@ function statusBadge(code) {
 }
 
 export function projectCard(p) {
-  const assignees = assigneeLabel(p.assigned_to);
+  const assignees = assigneeLabel(p._members);   // container_members-sourced (preloaded)
   const icon = p.icon || 'fa-clipboard';
   return `
     <div onclick="window.showProjectDashboard('${p.id}')" style="
@@ -421,7 +423,6 @@ async function saveNewProject() {
     title,
     status_code: document.getElementById('pf-status').value,
     icon:        document.getElementById('pf-icon')?.value || 'fa-clipboard',
-    assigned_to: _newProjAssignees.length ? _newProjAssignees.map(p => p.id) : null,
     due_date:    document.getElementById('pf-due').value || null,
     notes:       document.getElementById('pf-notes').value.trim() || null,
     created_by:  user?.id || null,
@@ -431,9 +432,8 @@ async function saveNewProject() {
   const { data: newProj, error } = await sb.from('projects').insert(payload).select().single();
   if (error) { alert('Save failed: ' + error.message); return; }
 
-  // Phase 2a: seed container_members (authoritative membership). The creator becomes the
-  // OWNER (resolve auth uid → personnel id); invited people become members. assigned_to above
-  // is retained as a compat mirror for legacy readers (userScope.isVisible etc.).
+  // Seed container_members (authoritative membership). Creator → OWNER (resolve auth uid →
+  // personnel id); invited people → members. No assigned_to mirror (2b-1 repointed all readers).
   const ownerPersonnelId = store.currentUserRoles?.personnelId || null;
   if (ownerPersonnelId) {
     const { error: ownErr } = await addMember('project', newProj.id, ownerPersonnelId, 'owner');
@@ -441,11 +441,16 @@ async function saveNewProject() {
   } else {
     console.warn('[projects] creator has no linked personnel_id — no owner membership row written for', newProj.id);
   }
+  const notifyMemberIds = [];
   for (const person of _newProjAssignees) {
     if (person.id === ownerPersonnelId) continue;  // creator already seeded as owner
     const { error: memErr } = await addMember('project', newProj.id, person.id, 'member');
     if (memErr) console.error('[projects] member membership insert failed:', memErr);
+    else notifyMemberIds.push(person.id);
   }
+
+  // Attach _members to the new row (invalidation: keeps sync readers consistent without refetch).
+  newProj._members = [ownerPersonnelId, ...notifyMemberIds].filter(Boolean);
 
   _newProjPicker    = null;
   _newProjAssignees = [];
@@ -464,130 +469,13 @@ async function saveNewProject() {
       notifyUsers(_uids, user?.id, `New Parish Staff project: ${newProj.title}`, 'info', 'projects', newProj.id);
     }
   }
-  // Notify assigned personnel
-  if (newProj.assigned_to?.length) {
-    for (const personnelId of newProj.assigned_to) {
-      const assigneeUserId = await getUserIdForPersonnel(personnelId);
-      if (assigneeUserId) notifyUsers([assigneeUserId], user?.id, `You've been assigned to project: ${newProj.title}`, 'info', 'projects', newProj.id);
-    }
+  // Notify invited members (from the just-written container_members rows, not assigned_to).
+  for (const personnelId of notifyMemberIds) {
+    const assigneeUserId = await getUserIdForPersonnel(personnelId);
+    if (assigneeUserId) notifyUsers([assigneeUserId], user?.id, `You've been assigned to project: ${newProj.title}`, 'info', 'projects', newProj.id);
   }
-}
-
-// ── Legacy modal support (used by openModal('project') in main.js) ─────────
-
-export function projectForm(defaultStatus, data) {
-  const sc = data?.status_code || defaultStatus || 'not_started';
-  const teams = store.teams || [];
-  const people = [...(store.personnel || [])].sort((a, b) =>
-    (a.name || '').split(' ').pop().localeCompare((b.name || '').split(' ').pop())
-  );
-  const teamOpts = `<option value="">— None —</option>` +
-    teams.map(t => `<option value="${t.id}"${t.id === data?.team_id ? ' selected' : ''}>${t.name}</option>`).join('');
-  const peopleOpts = `<option value="">— None —</option>` +
-    people.map(p => `<option value="${p.id}"${p.id === data?.assigned_to ? ' selected' : ''}>${p.name}</option>`).join('');
-  return `<div class="modal-title">${data ? 'Edit project' : 'Add project'}</div>
-  <label>Title</label><input id="f-title" value="${data?.title || ''}" placeholder="Project name" />
-  <label>Status</label>
-  <select id="f-sc">
-    ${Object.entries(STATUS).map(([k, v]) => `<option value="${k}"${k === sc ? ' selected' : ''}>${v.label}</option>`).join('')}
-  </select>
-  <label>Team (optional)</label>
-  <select id="f-team">${teamOpts}</select>
-  <label>Assigned to (optional)</label>
-  <select id="f-assigned">${peopleOpts}</select>
-  <label>Due date</label><input type="date" id="f-due" value="${data?.due_date || ''}" />
-  <label>Visibility</label>
-  <select id="f-vis">
-    <option value="team"${(data?.visibility || 'team') === 'team' ? ' selected' : ''}>Team</option>
-    <option value="personal"${data?.visibility === 'personal' ? ' selected' : ''}>Personal</option>
-  </select>
-  <label>Notes</label><textarea id="f-notes" rows="3">${data?.notes || ''}</textarea>
-  <div class="modal-actions" style="justify-content:space-between;">
-    ${data ? `<button class="btn-delete" onclick="deleteProject('${data.id}')">Delete</button>` : '<span></span>'}
-    <div style="display:flex;gap:8px;">
-      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn-primary" onclick="saveProject(${data ? `'${data.id}'` : null})">Save</button>
-    </div>
-  </div>`;
-}
-
-async function saveProject(id) {
-  const title = document.getElementById('f-title').value.trim();
-  if (!title) { alert('Title is required.'); return; }
-  const payload = {
-    title,
-    status_code: document.getElementById('f-sc').value,
-    team_id:     document.getElementById('f-team').value     || null,
-    assigned_to: document.getElementById('f-assigned').value || null,
-    due_date:    document.getElementById('f-due').value      || null,
-    visibility:  document.getElementById('f-vis').value,
-    notes:       document.getElementById('f-notes').value.trim() || null,
-    updated_at:  new Date().toISOString(),
-  };
-  let err;
-  if (id) {
-    const r = await sb.from('projects').update(payload).eq('id', id); err = r.error;
-  } else {
-    const r = await sb.from('projects').insert(payload); err = r.error;
-  }
-  if (err) { alert('Save failed: ' + err.message); return; }
-  const { data: { user: _me } } = await sb.auth.getUser();
-  logActivity({ action: id ? 'updated project' : 'created project', entityType: 'project', entityName: payload.title, contextType: 'project', contextId: id || null });
-  if (!id) {
-    // New project via legacy modal
-    if (payload.team_id) {
-      const team = (store.teams || []).find(t => t.id === payload.team_id);
-      if (team?.name?.toLowerCase().includes('parish staff')) {
-        const _uids = await getUserIdsForTeam(payload.team_id);
-        notifyUsers(_uids, _me?.id, `New Parish Staff project: ${payload.title}`, 'info', 'projects');
-      }
-    }
-    if (payload.assigned_to) {
-      const assigneeUserId = await getUserIdForPersonnel(payload.assigned_to);
-      if (assigneeUserId) notifyUsers([assigneeUserId], _me?.id, `You've been assigned to project: ${payload.title}`, 'info', 'projects');
-    }
-  } else {
-    // Edit — notify if newly marked complete
-    const prior = store.allProjects?.find(p => p.id === id);
-    if (payload.status_code === 'complete' && prior?.status_code !== 'complete') {
-      const assignees = Array.isArray(prior?.assigned_to) ? prior.assigned_to : (prior?.assigned_to ? [prior.assigned_to] : []);
-      for (const personnelId of assignees) {
-        const uid = await getUserIdForPersonnel(personnelId);
-        if (uid) notifyUsers([uid], _me?.id, `Project marked complete: ${payload.title}`, 'success', 'projects', id);
-      }
-    }
-  }
-  window.flashSavedThen(async () => { closeModal(); await invalidateProjects(); loadProjects(); });
-}
-
-async function deleteProject(id) {
-  const p = store.allProjects.find(x => x.id === id);
-  if (!confirm(`Delete "${p?.title}"? This cannot be undone.`)) return;
-  const { error } = await deleteWithRetry(() => sb.from('projects').delete().eq('id', id));
-  if (error) { alert('Delete failed: ' + error.message); return; }
-  logActivity({ action: 'deleted project', entityType: 'project', entityName: p?.title || 'Unknown', contextType: 'project', contextId: id });
-  // Remove from local store + DOM immediately (no refresh needed)
-  store.allProjects = (store.allProjects || []).filter(x => x.id !== id);
-  closeModal();
-  // If this project is open in the dashboard, return to the projects landing
-  if (document.getElementById('panel-projectDashboard')?.classList.contains('active')) {
-    window.switchPanel('projects');
-  }
-  renderProjects();
-}
-
-function openProjectDetail(id) {
-  const proj = store.allProjects.find(p => p.id === id);
-  if (!proj) return;
-  document.getElementById('modal-content').innerHTML = projectForm(proj.status_code, proj);
-  document.getElementById('modal-overlay').classList.add('open');
-}
-
-function setProjectFilter(f) {
-  renderProjects();
 }
 
 Object.assign(window, {
-  saveProject, deleteProject, openProjectDetail, setProjectFilter,
   renderProjects, saveNewProject, openNewProjectModal,
 });

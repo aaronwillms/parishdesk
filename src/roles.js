@@ -517,14 +517,13 @@ export async function canUserSeeNotification(sb, userId, contextType, contextId)
   }
 
   if (contextType === 'project') {
-    // contextId = project id; project is visible if user is assigned or is admin
-    const { data: proj } = await sb.from('projects').select('assigned_to,team_id').eq('id', contextId).maybeSingle();
-    if (!proj) return false;
+    // contextId = project id; visible to admins or to a container member (container_members).
     if (isAdm) return true;
-    const { data: profile } = await sb.from('user_profiles').select('personnel_id').eq('user_id', userId).maybeSingle();
     const { data: uProf } = await sb.from('user_profiles').select('personnel_id').eq('user_id', userId).maybeSingle();
-    if (proj.assigned_to && uProf?.personnel_id && (proj.assigned_to === uProf.personnel_id || (Array.isArray(proj.assigned_to) && proj.assigned_to.includes(uProf.personnel_id)))) return true;
-    return false;
+    if (!uProf?.personnel_id) return false;
+    const { data: mem } = await sb.from('container_members').select('id')
+      .eq('context_type', 'project').eq('context_id', contextId).eq('personnel_id', uProf.personnel_id).maybeSingle();
+    return !!mem;
   }
 
   if (contextType === 'task') {

@@ -2,6 +2,7 @@ import { sb } from '../supabase.js';
 import { store } from '../store.js';
 import { createAvatar } from './avatar.js';
 import { createMentionPicker, renderLinkChips } from './mentionPicker.js';
+import { containerRole, canManageRole } from './membership.js';
 
 const _discMentionPickers = {};  // discId → picker
 
@@ -47,16 +48,9 @@ export async function renderDiscussionThread({ container, contextType, contextId
     canPin = (roles.teamIds || []).includes(contextId);
   }
   if (!canPin && contextType === 'project') {
-    // Check if user is project creator or assignee
-    const { data: proj } = await sb.from('projects')
-      .select('created_by, assigned_to')
-      .eq('id', contextId)
-      .single();
-    if (proj) {
-      const pid = store.currentUserRoles?.personnelId || null;
-      canPin = proj.created_by === currentUserId ||
-               (Array.isArray(proj.assigned_to) && (proj.assigned_to.includes(currentUserId) || (pid && proj.assigned_to.includes(pid))));
-    }
+    // 2b-1: pin is an owner/admin capability, resolved via container_members.
+    const pid = store.currentUserRoles?.personnelId || null;
+    if (pid) canPin = canManageRole(await containerRole('project', contextId, pid));
   }
 
   const { data: discussions } = await sb.from('discussions')

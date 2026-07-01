@@ -5,6 +5,7 @@ import { getUserScope, isVisible } from '../ui/userScope.js';
 import { canWriteGlobalCalendar, canSeeWorkEvent } from '../roles.js';
 import { parseICS } from '../utils/icsParser.js';
 import { notifyUsers, getAllUserIds, getUserIdsForTeam } from '../notifications.js';
+import { attachProjectMembers } from '../ui/membership.js';
 
 let currentUserId     = null;
 let _dashPersonnelId  = null;
@@ -774,6 +775,8 @@ export async function loadInit() {
     if (tasksRes.error)  console.error('tasks error:',      tasksRes.error.message);
 
     if (projRes.data) {
+      // Attach container_members-sourced _members to rows BEFORE isVisible filters them.
+      await attachProjectMembers(projRes.data);
       store.allProjects = projRes.data.filter(p => isVisible(p, scope));
       store._projectScopeReady = scope.ready;
     }

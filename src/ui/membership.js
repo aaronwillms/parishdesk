@@ -1,4 +1,5 @@
 import { sb } from '../supabase.js';
+import { store } from '../store.js';
 
 // Phase 2a: polymorphic container membership + roles. ONE table (container_members) backs
 // BOTH projects (now) and teams (Phase 3). Role hierarchy: 'owner' > 'admin' > 'member'.
@@ -57,6 +58,27 @@ export async function containerRole(contextType, contextId, personnelId) {
 
   // team (Phase 3) — direct membership on container_members(context_type='team')
   return fetchMemberRole(contextType, contextId, personnelId);
+}
+
+// ── Preload (sync-reader seam) ───────────────────────────────────────────────
+// Fetch ALL project memberships and attach `_members` (a personnel_id[]) to each project
+// row, so SYNCHRONOUS readers (userScope.isVisible, projectCard→assigneeLabel) can consult
+// membership from the in-memory row without a query — the container_members-sourced
+// replacement for the old `assigned_to` array. Also caches store.projectMembers (the Map).
+// ⚠️ Call this BEFORE isVisible filters the rows at each load site.
+export async function attachProjectMembers(projects) {
+  const rows = projects || [];
+  const { data } = await sb.from('container_members')
+    .select('context_id, personnel_id')
+    .eq('context_type', 'project');
+  const map = new Map();
+  (data || []).forEach(r => {
+    if (!map.has(r.context_id)) map.set(r.context_id, []);
+    map.get(r.context_id).push(r.personnel_id);
+  });
+  rows.forEach(p => { p._members = map.get(p.id) || []; });
+  store.projectMembers = map;
+  return map;
 }
 
 // ── Predicates (off a resolved role) ─────────────────────────────────────────
