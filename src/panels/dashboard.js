@@ -392,15 +392,6 @@ function _renderDashTaskCards(today) {
     ${tab('mine', 'My Tasks')}${hasDelegated ? tab('delegated', 'Delegated') : ''}
   </div>`;
 
-  // Bare-add — My Tasks tab only. Type a line + Enter → personal task owned by me.
-  const addRow = _dashTaskTab === 'mine' ? `
-    <div style="display:flex;align-items:center;gap:8px;padding:.4rem .5rem;border-bottom:.5px solid #F0EDE8;">
-      <i class="fa-solid fa-plus" style="font-size:11px;color:#B0A090;flex-shrink:0;"></i>
-      <input id="dash-task-add" placeholder="Add a task…" autocomplete="off" style="
-        flex:1;border:none;background:transparent;outline:none;font-size:13px;
-        font-family:'Inter',sans-serif;color:#1C2B3A;padding:2px 0;" />
-    </div>` : '';
-
   const rows = items.length
     ? items.map(item => {
         const overdue = item.dueDate && item.dueDate < today;
@@ -418,13 +409,16 @@ function _renderDashTaskCards(today) {
               ${marker}
               <span style="font-size:13px;color:#1C2B3A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">${item.title}</span>
               ${assignee}
+              <button class="dash-task-edit" data-task-id="${item.id}" title="Edit task"
+                style="background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:12px;padding:0 2px;flex-shrink:0;line-height:1;"
+                onmouseover="this.style.color='#1C2B3A'" onmouseout="this.style.color='#D1D5DB'"><i class="fa-solid fa-pencil"></i></button>
             </div>
             ${item.dueDate ? `<div style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};padding-left:22px;">${fmtDate(item.dueDate)}</div>` : ''}
           </div>`;
       }).join('')
     : `<div style="font-size:13px;color:#6B7280;font-style:italic;padding:.4rem .5rem;">${_dashTaskTab === 'delegated' ? 'Nothing delegated out.' : 'No open tasks.'}</div>`;
 
-  c.innerHTML = tabs + addRow + rows;
+  c.innerHTML = tabs + rows;
 
   // Wire tab switching (re-render just the tasks card)
   c.querySelectorAll('.dash-task-tab').forEach(btn => {
@@ -434,28 +428,14 @@ function _renderDashTaskCards(today) {
     });
   });
 
-  // Wire bare-add (My Tasks tab). Owner defaults to self via created_by; visibility MUST be
-  // set 'personal' explicitly (DB default is 'team').
-  const addInput = c.querySelector('#dash-task-add');
-  if (addInput) {
-    addInput.addEventListener('keydown', async (e) => {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      const title = addInput.value.trim();
-      if (!title) return;
-      addInput.disabled = true;
-      const { data: newTask, error } = await sb.from('tasks')
-        .insert({ title, created_by: currentUserId, visibility: 'personal' })
-        .select().single();
-      if (error) { addInput.disabled = false; console.error('[dash] bare-add failed:', error); return; }
-      if (!store.allTasks) store.allTasks = [];
-      store.allTasks.push(newTask);
-      logActivity({ action: 'created task', entityType: 'task', entityName: newTask.title, contextType: 'task', contextId: newTask.id });
-      renderDashProjects();
-      updateProjectStats();
-      document.getElementById('dash-task-add')?.focus();  // rapid entry
+  // Wire edit pencils → reopen the dashboard task dialog pre-filled with the full task.
+  c.querySelectorAll('.dash-task-edit').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const t = (store.allTasks || []).find(x => x.id === btn.dataset.taskId);
+      if (t) openAddTaskDialog(t);
     });
-  }
+  });
 
   // Wire checkbox complete — binary (writes `completed` only, never `status`).
   c.querySelectorAll('.dash-task-cb').forEach(cb => {
@@ -480,6 +460,217 @@ function _renderDashTaskCards(today) {
       updateProjectStats();
     });
   });
+}
+
+// ── Add / Edit Task dialog (dashboard-owned; does NOT touch tasks.js taskForm) ───────────────
+// Build 1a: create + edit share this modal. Recurrence is CAPTURED as JSON in recurrence_pattern
+// ({freq, interval, anchor, deadlineOffsetDays}), NOT spawned (spawn engine = Build 2).
+
+const _WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const _NTH = [['1', 'first'], ['2', 'second'], ['3', 'third'], ['4', 'fourth'], ['-1', 'last']];
+
+function _escAttr(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+function _escHtml(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+// Defensive parse of recurrence_pattern → structured obj (or null). Dashboard tasks store JSON;
+// a legacy plain string ('daily'/'weekly'/'monthly') maps best-effort to {freq, interval:1}.
+function _parseRecurrence(t) {
+  if (!t?.recurring || !t.recurrence_pattern) return null;
+  try { const o = JSON.parse(t.recurrence_pattern); if (o && typeof o === 'object') return o; } catch (_) {}
+  if (['daily', 'weekly', 'monthly'].includes(t.recurrence_pattern)) return { freq: t.recurrence_pattern, interval: 1 };
+  return null;
+}
+
+function openAddTaskDialog(existingTask = null) {
+  const editing = !!existingTask;
+  const rec = editing ? _parseRecurrence(existingTask) : null;
+  const repeat0    = !!rec;
+  const freq0      = rec?.freq || 'weekly';
+  const interval0  = rec?.interval || 1;
+  const weekday0   = rec?.weekday ?? 1;
+  const monthMode0 = (rec && rec.nth != null) ? 'weekdaypat' : 'monthday';
+  const monthday0  = rec?.monthday || 1;
+  const nth0       = rec?.nth != null ? String(rec.nth) : '1';
+  const nthWd0     = rec?.weekday ?? 1;
+  // Deadline: recurring → offset in the JSON; one-off → absolute due_date.
+  const deadline0  = (repeat0 && rec.deadlineOffsetDays != null) || (!repeat0 && !!existingTask?.due_date);
+  const offset0    = rec?.deadlineOffsetDays ?? 1;
+  const absDue0    = (!repeat0 && existingTask?.due_date) || '';
+  const assign0    = !!existingTask?.assigned_to;
+  const assignee0  = existingTask?.assigned_to || '';
+
+  const people = [...(store.personnel || [])].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-title">${editing ? 'Edit task' : 'Add task'}</div>
+    <label>Task</label>
+    <input id="atd-title" value="${_escAttr(existingTask?.title || '')}" placeholder="What needs doing?" />
+
+    <div style="display:flex;align-items:center;gap:8px;margin:.75rem 0 .25rem;">
+      <input type="checkbox" id="atd-repeat" ${repeat0 ? 'checked' : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />
+      <label for="atd-repeat" style="margin:0;cursor:pointer;">Repeatable</label>
+    </div>
+    <div id="atd-recur-wrap" style="display:${repeat0 ? 'block' : 'none'};padding-left:1.4rem;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:120px;">
+          <label>Frequency</label>
+          <select id="atd-freq">
+            <option value="daily"${freq0 === 'daily' ? ' selected' : ''}>Daily</option>
+            <option value="weekly"${freq0 === 'weekly' ? ' selected' : ''}>Weekly</option>
+            <option value="monthly"${freq0 === 'monthly' ? ' selected' : ''}>Monthly</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:100px;">
+          <label>Every (N)</label>
+          <input type="number" id="atd-interval" min="1" value="${interval0}" />
+        </div>
+      </div>
+      <div id="atd-weekly-wrap" style="display:none;">
+        <label>On</label>
+        <select id="atd-weekday">${_WEEKDAYS.map((d, i) => `<option value="${i}"${i === weekday0 ? ' selected' : ''}>${d}</option>`).join('')}</select>
+      </div>
+      <div id="atd-monthly-wrap" style="display:none;">
+        <label>On</label>
+        <select id="atd-monthly-mode">
+          <option value="monthday"${monthMode0 === 'monthday' ? ' selected' : ''}>Day of month</option>
+          <option value="weekdaypat"${monthMode0 === 'weekdaypat' ? ' selected' : ''}>Weekday pattern</option>
+        </select>
+        <div id="atd-monthday-wrap" style="margin-top:.4rem;">
+          <label>Day</label>
+          <input type="number" id="atd-monthday" min="1" max="31" value="${monthday0}" />
+        </div>
+        <div id="atd-weekdaypat-wrap" style="margin-top:.4rem;display:flex;gap:10px;">
+          <div style="flex:1;"><label>The</label>
+            <select id="atd-nth">${_NTH.map(([v, l]) => `<option value="${v}"${v === nth0 ? ' selected' : ''}>${l}</option>`).join('')}</select>
+          </div>
+          <div style="flex:1;"><label>Weekday</label>
+            <select id="atd-nth-weekday">${_WEEKDAYS.map((d, i) => `<option value="${i}"${i === nthWd0 ? ' selected' : ''}>${d}</option>`).join('')}</select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:8px;margin:.75rem 0 .25rem;">
+      <input type="checkbox" id="atd-deadline" ${deadline0 ? 'checked' : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />
+      <label for="atd-deadline" style="margin:0;cursor:pointer;">Deadline</label>
+    </div>
+    <div id="atd-deadline-wrap" style="display:${deadline0 ? 'block' : 'none'};padding-left:1.4rem;">
+      <div id="atd-due-abs-wrap">
+        <label>Due date</label>
+        <input type="date" id="atd-due-date" value="${absDue0}" />
+      </div>
+      <div id="atd-due-off-wrap">
+        <label>Due (days after each occurrence)</label>
+        <input type="number" id="atd-due-offset" min="0" value="${offset0}" />
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:8px;margin:.75rem 0 .25rem;">
+      <input type="checkbox" id="atd-assign" ${assign0 ? 'checked' : ''} style="width:15px;height:15px;accent-color:var(--cardinal);" />
+      <label for="atd-assign" style="margin:0;cursor:pointer;">Assign Task</label>
+    </div>
+    <div id="atd-assign-wrap" style="display:${assign0 ? 'block' : 'none'};padding-left:1.4rem;">
+      <label>Assignee</label>
+      <select id="atd-assignee">
+        <option value="">— Select —</option>
+        ${people.map(p => `<option value="${p.id}"${p.id === assignee0 ? ' selected' : ''}>${_escHtml(p.name || '')}</option>`).join('')}
+      </select>
+    </div>
+
+    <div id="atd-error" style="color:var(--cardinal);font-size:12px;min-height:16px;margin-top:.5rem;"></div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" id="atd-save">Save</button>
+    </div>`;
+
+  document.getElementById('modal-overlay').classList.add('open');
+  const $ = (id) => document.getElementById(id);
+
+  // Show/hide recurrence anchors + the deadline representation based on current state.
+  function _sync() {
+    const repeat = $('atd-repeat').checked;
+    $('atd-recur-wrap').style.display = repeat ? 'block' : 'none';
+    const freq = $('atd-freq').value;
+    $('atd-weekly-wrap').style.display  = (repeat && freq === 'weekly')  ? 'block' : 'none';
+    $('atd-monthly-wrap').style.display = (repeat && freq === 'monthly') ? 'block' : 'none';
+    const mmode = $('atd-monthly-mode').value;
+    $('atd-monthday-wrap').style.display   = mmode === 'monthday'   ? 'block' : 'none';
+    $('atd-weekdaypat-wrap').style.display = mmode === 'weekdaypat' ? 'flex'  : 'none';
+
+    const deadline = $('atd-deadline').checked;
+    $('atd-deadline-wrap').style.display = deadline ? 'block' : 'none';
+    // Repeatable → relative offset; one-off → absolute date.
+    $('atd-due-abs-wrap').style.display = !repeat ? 'block' : 'none';
+    $('atd-due-off-wrap').style.display = repeat  ? 'block' : 'none';
+
+    $('atd-assign-wrap').style.display = $('atd-assign').checked ? 'block' : 'none';
+  }
+  ['atd-repeat', 'atd-freq', 'atd-monthly-mode', 'atd-deadline', 'atd-assign'].forEach(id => $(id).addEventListener('change', _sync));
+  _sync();
+  $('atd-title').focus();
+
+  $('atd-save').addEventListener('click', () => _saveDashTask(editing ? existingTask : null));
+}
+
+function _saveDashTask(existingTask) {
+  const $ = (id) => document.getElementById(id);
+  const errEl = $('atd-error');
+  const title = $('atd-title').value.trim();
+  if (!title) { errEl.textContent = 'Task is required.'; $('atd-title').focus(); return; }
+
+  const repeat = $('atd-repeat').checked;
+  const deadline = $('atd-deadline').checked;
+  const assign = $('atd-assign').checked;
+
+  const payload = {
+    title,
+    visibility: 'personal',
+    assigned_to: assign ? ($('atd-assignee').value || null) : null,
+    recurring: repeat,
+    recurrence_pattern: null,
+    due_date: null,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (repeat) {
+    const r = { freq: $('atd-freq').value, interval: Math.max(1, parseInt($('atd-interval').value, 10) || 1) };
+    if (r.freq === 'weekly') {
+      r.weekday = parseInt($('atd-weekday').value, 10);
+    } else if (r.freq === 'monthly') {
+      if ($('atd-monthly-mode').value === 'monthday') {
+        r.monthday = Math.min(31, Math.max(1, parseInt($('atd-monthday').value, 10) || 1));
+      } else {
+        r.nth = parseInt($('atd-nth').value, 10);
+        r.weekday = parseInt($('atd-nth-weekday').value, 10);
+      }
+    }
+    if (deadline) {
+      const off = parseInt($('atd-due-offset').value, 10);
+      if (!isNaN(off)) r.deadlineOffsetDays = off;
+    }
+    payload.recurrence_pattern = JSON.stringify(r);   // due_date stays null (offset lives in JSON)
+  } else if (deadline) {
+    payload.due_date = $('atd-due-date').value || null;
+  }
+
+  _persistDashTask(existingTask, payload);
+}
+
+async function _persistDashTask(existingTask, payload) {
+  if (existingTask) {
+    const { error } = await sb.from('tasks').update(payload).eq('id', existingTask.id);
+    if (error) { document.getElementById('atd-error').textContent = 'Save failed: ' + error.message; return; }
+    Object.assign(existingTask, payload);   // patch the in-store row
+    logActivity({ action: 'updated task', entityType: 'task', entityName: payload.title, contextType: 'task', contextId: existingTask.id });
+  } else {
+    payload.created_by = currentUserId;
+    const { data: newTask, error } = await sb.from('tasks').insert(payload).select().single();
+    if (error) { document.getElementById('atd-error').textContent = 'Save failed: ' + error.message; return; }
+    if (!store.allTasks) store.allTasks = [];
+    store.allTasks.push(newTask);
+    logActivity({ action: 'created task', entityType: 'task', entityName: newTask.title, contextType: 'task', contextId: newTask.id });
+  }
+  window.flashSavedThen(() => { closeModal(); renderDashProjects(); updateProjectStats(); });
 }
 
 // ── Announcements ──────────────────────────────────────────────────────────
@@ -768,6 +959,13 @@ export async function loadInit() {
       _addProjBtn.addEventListener('click', () => window.openModal('project'));
     }
 
+    // "+ Add Task" — openAddTaskDialog is in this module, so a direct call is fine (no ensurePanel).
+    const _addTaskBtn = document.getElementById('dash-add-task-btn');
+    if (_addTaskBtn && !_addTaskBtn.dataset.wired) {
+      _addTaskBtn.dataset.wired = '1';
+      _addTaskBtn.addEventListener('click', () => openAddTaskDialog());
+    }
+
     // Always re-fetch projects and tasks so dashboard status chips reflect current data
     // (status changes made on the Projects/Tasks panels must show here without a stale cache).
     const [projRes, caseRes, coupleRes, alertRes, tasksRes] = await Promise.all([
@@ -775,7 +973,7 @@ export async function loadInit() {
       sb.from('annulment_cases').select('id,status_code,archived,petitioner,respondent,judgement_finalized'),
       sb.from('couples').select('id,status_code,archived'),
       sb.from('alerts').select('*').eq('active', true),
-      sb.from('tasks').select('id,title,due_date,completed,status,assigned_to,team_id,visibility,created_by').order('due_date', { nullsFirst: false }),
+      sb.from('tasks').select('id,title,due_date,completed,status,assigned_to,team_id,visibility,created_by,recurring,recurrence_pattern').order('due_date', { nullsFirst: false }),
     ]);
 
     if (projRes.error)   console.error('projects error:',   projRes.error.message);
