@@ -913,7 +913,7 @@ async function _marWriteEdit(id) {
   if (priorStatus !== 'complete' && st === 'complete') {
     const { data: { user } } = await sb.auth.getUser();
     notifySacramentEvent({
-      keys: ['marriage'], parishId: prior?.parish_id ?? null, originType: 'marriage', originId: id, actorUserId: user?.id,
+      keys: ['marriage'], parishId: payload.parish_id ?? prior?.parish_id ?? null, originType: 'marriage', originId: id, actorUserId: user?.id,   // route to the record's CURRENT parish (handles reassignment)
       message: `${s1Name(prior)} & ${s2Name(prior)} Marriage — marked complete`, type: 'success', module: 'marriage', record_id: id,
     });
   }

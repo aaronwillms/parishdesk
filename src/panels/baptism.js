@@ -382,7 +382,7 @@ async function bapSave() {
     if (error) { reportWriteError('baptism insert', error); return; }
     logActivity({ action: 'added Baptism child', entityType: 'baptism', entityName: name, contextType: 'baptism' });
     const { data: { user } } = await sb.auth.getUser();
-    const uids = await getUserIdsForSacrament('baptism');
+    const uids = await getUserIdsForSacrament('baptism', payload.parish_id ?? null);   // route to the NEW record's parish, not the admin's home
     notifyUsers(uids, user?.id, `New baptism file added: ${name}`, 'info', 'baptism');
     window.flashSavedThen(async () => { bapCloseModal(); await loadBaptism(); });
   }
@@ -408,7 +408,7 @@ async function _bapWriteEdit(id, payload, name) {
   if (priorStatus !== newStatus && (newStatus === 'scheduled' || newStatus === 'complete')) {
     const { data: { user } } = await sb.auth.getUser();
     notifySacramentEvent({
-      keys: ['baptism'], parishId: prior?.parish_id ?? null, actorUserId: user?.id,
+      keys: ['baptism'], parishId: payload.parish_id ?? prior?.parish_id ?? null, actorUserId: user?.id,   // route to the record's CURRENT parish (handles reassignment)
       message: newStatus === 'complete' ? `${name} Baptism — marked complete` : `${name} Baptism — scheduled`,
       type: newStatus === 'complete' ? 'success' : 'info', module: 'baptism', record_id: id,
     });

@@ -842,7 +842,7 @@ async function ociaSave() {
   if (linkTargetToUpdate) await sb.from('sacramental_ocia').update({ family_group_id: familyGroupId }).eq('id', linkTargetToUpdate);
   logActivity({ action: 'added OCIA candidate', entityType: 'ocia', entityName: payload.name, contextType: 'ocia' });
   const { data: { user } } = await sb.auth.getUser();
-  const uids = await getUserIdsForSacrament('ocia');
+  const uids = await getUserIdsForSacrament('ocia', payload.parish_id ?? null);   // route to the NEW record's parish, not the admin's home
   notifyUsers(uids, user?.id, `New OCIA candidate added: ${payload.name}`, 'info', 'ocia');
   window.flashSavedThen(async () => { ociaCloseModal(); await loadOciaData(); refreshActivePanel(); });
 }
@@ -872,7 +872,7 @@ export async function ociaSaveEdit(id) {
   if (priorStatus !== payload.status_code && (payload.status_code === 'complete' || payload.status_code === 'received')) {
     const { data: { user } } = await sb.auth.getUser();
     notifySacramentEvent({
-      keys: ['ocia'], parishId: prior?.parish_id ?? null, originType: 'ocia', originId: id, actorUserId: user?.id,
+      keys: ['ocia'], parishId: payload.parish_id ?? prior?.parish_id ?? null, originType: 'ocia', originId: id, actorUserId: user?.id,   // route to the record's CURRENT parish (handles reassignment)
       message: payload.status_code === 'received' ? `${payload.name} OCIA — received` : `${payload.name} OCIA — preparation complete`,
       type: 'success', module: 'ocia', record_id: id,
     });

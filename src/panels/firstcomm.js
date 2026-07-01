@@ -406,7 +406,7 @@ async function fcSave() {
   if (pend && ins?.id) { await familyLink('firstcomm', ins.id, pend.id); clearPendingAdd('firstcomm'); }
   logActivity({ action: 'added First Communion student', entityType: 'firstcomm', entityName: name, contextType: 'firstcomm' });
   const { data: { user } } = await sb.auth.getUser();
-  const uids = await getUserIdsForSacrament('first_communion');
+  const uids = await getUserIdsForSacrament('first_communion', payload.parish_id ?? null);   // route to the NEW record's parish, not the admin's home
   notifyUsers(uids, user?.id, `New First Communion student added: ${name}`, 'info', 'firstcomm');
   window.flashSavedThen(async () => { fcCloseModal(); await loadFcData(); refreshActivePanel(); });
 }
@@ -431,7 +431,7 @@ async function _fcWriteEdit(id, r) {
   if (priorStatus !== 'complete' && newStatus === 'complete') {
     const { data: { user } } = await sb.auth.getUser();
     notifySacramentEvent({
-      keys: ['first_communion', 'firstcomm'], parishId: prior?.parish_id ?? null, actorUserId: user?.id,
+      keys: ['first_communion', 'firstcomm'], parishId: payload.parish_id ?? prior?.parish_id ?? null, actorUserId: user?.id,   // route to the record's CURRENT parish (handles reassignment)
       message: `${name} First Communion — marked complete`, type: 'success', module: 'firstcomm', record_id: id,
     });
   }

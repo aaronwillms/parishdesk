@@ -477,7 +477,7 @@ async function _confWriteEdit(id, r) {
   if (priorStatus !== 'complete' && newStatus === 'complete') {
     const { data: { user } } = await sb.auth.getUser();
     notifySacramentEvent({
-      keys: ['confirmation'], parishId: prior?.parish_id ?? null, actorUserId: user?.id,
+      keys: ['confirmation'], parishId: payload.parish_id ?? prior?.parish_id ?? null, actorUserId: user?.id,   // route to the record's CURRENT parish (handles reassignment)
       message: `${name} Confirmation — marked complete`, type: 'success', module: 'confirmation', record_id: id,
     });
   }
@@ -504,7 +504,7 @@ async function confSave() {
   if (pend && ins?.id) { await familyLink('confirmation', ins.id, pend.id); clearPendingAdd('confirmation'); }
   logActivity({ action: 'added Confirmation candidate', entityType: 'confirmation', entityName: name, contextType: 'confirmation' });
   const { data: { user } } = await sb.auth.getUser();
-  const uids = await getUserIdsForSacrament('confirmation');
+  const uids = await getUserIdsForSacrament('confirmation', payload.parish_id ?? null);   // route to the NEW record's parish, not the admin's home
   notifyUsers(uids, user?.id, `New Confirmation candidate added: ${name}`, 'info', 'confirmation');
   window.flashSavedThen(async () => { confCloseModal(); await loadConfData(); refreshActivePanel(); });
 }
