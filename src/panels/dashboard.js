@@ -12,6 +12,11 @@ let _dashPersonnelId  = null;
 let _nowInterval      = null;
 let _calendarEvents   = [];  // last-rendered event list for interval re-checks
 let _dashTaskTab      = 'mine';  // 'mine' | 'delegated' — active tab in the dw-tasks card
+// Client-only soft-delete window (Build 1b): taskId → setTimeout id. A pending row shows greyed
+// with an Undo control; the timer fires the real DB delete at ~30s. No persistence — a reload
+// discards this Map, so a not-yet-deleted task is still in the DB and reappears.
+const pendingTaskDeletes = new Map();
+const _DELETE_GRACE_MS = 30000;
 
 function dotClass(colorId) {
   return (colorId && CAL_COLOR_MAP[colorId]) ? CAL_COLOR_MAP[colorId] : 'personal';
@@ -401,6 +406,22 @@ function _renderDashTaskCards(today) {
         const assignee = item.assigneeName
           ? `<span title="Assigned to ${item.assigneeName}" style="font-size:10.5px;color:#6B7280;display:inline-flex;align-items:center;gap:3px;flex-shrink:0;"><i class="fa-solid fa-arrow-right" style="font-size:9px;"></i>${item.assigneeName}</span>`
           : '';
+        // Soft-delete window: greyed row + Undo instead of the pencil/X (checkbox inert).
+        const pending = pendingTaskDeletes.has(item.id);
+        if (pending) {
+          return `
+            <div style="display:flex;flex-direction:column;padding:.5rem .5rem;border-bottom:.5px solid #F0EDE8;gap:2px;opacity:.65;">
+              <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                <input type="checkbox" class="dash-task-cb" data-task-id="${item.id}" disabled
+                  style="flex-shrink:0;width:14px;height:14px;accent-color:#1C2B3A;cursor:default;" />
+                <span style="font-size:13px;color:#9CA3AF;text-decoration:line-through;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">${item.title}</span>
+                <span style="font-size:10.5px;color:#9CA3AF;font-style:italic;flex-shrink:0;">Deleting…</span>
+                <button class="dash-task-undo" data-task-id="${item.id}" title="Undo delete" aria-label="Undo delete"
+                  style="background:none;border:none;cursor:pointer;color:#8FA8BF;font-size:13px;padding:0 2px;flex-shrink:0;line-height:1;"
+                  onmouseover="this.style.color='#1C2B3A'" onmouseout="this.style.color='#8FA8BF'"><i class="fa-solid fa-arrow-rotate-left"></i></button>
+              </div>
+            </div>`;
+        }
         return `
           <div style="display:flex;flex-direction:column;padding:.5rem .5rem;border-bottom:.5px solid #F0EDE8;gap:2px;">
             <div style="display:flex;align-items:center;gap:8px;min-width:0;">
@@ -412,6 +433,9 @@ function _renderDashTaskCards(today) {
               <button class="dash-task-edit" data-task-id="${item.id}" title="Edit task"
                 style="background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:12px;padding:0 2px;flex-shrink:0;line-height:1;"
                 onmouseover="this.style.color='#1C2B3A'" onmouseout="this.style.color='#D1D5DB'"><i class="fa-solid fa-pencil"></i></button>
+              <button class="dash-task-del" data-task-id="${item.id}" title="Delete task" aria-label="Delete task"
+                style="background:none;border:none;cursor:pointer;color:#D1D5DB;font-size:13px;padding:0 2px;flex-shrink:0;line-height:1;"
+                onmouseover="this.style.color='#8B1A2F'" onmouseout="this.style.color='#D1D5DB'"><i class="fa-solid fa-xmark"></i></button>
             </div>
             ${item.dueDate ? `<div style="font-size:11px;color:${overdue ? '#8B1A2F' : '#9CA3AF'};padding-left:22px;">${fmtDate(item.dueDate)}</div>` : ''}
           </div>`;
@@ -434,6 +458,29 @@ function _renderDashTaskCards(today) {
       e.stopPropagation();
       const t = (store.allTasks || []).find(x => x.id === btn.dataset.taskId);
       if (t) openAddTaskDialog(t);
+    });
+  });
+
+  // Wire soft-delete X → grey the row + start the 30s timer (client-only, no DB write yet).
+  c.querySelectorAll('.dash-task-del').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.taskId;
+      if (pendingTaskDeletes.has(id)) return;
+      pendingTaskDeletes.set(id, setTimeout(() => _finalizeTaskDelete(id), _DELETE_GRACE_MS));
+      _renderDashTaskCards(todayCST());
+    });
+  });
+
+  // Wire Undo → cancel the timer, drop the pending mark, restore the row. Nothing was deleted server-side.
+  c.querySelectorAll('.dash-task-undo').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.taskId;
+      const timer = pendingTaskDeletes.get(id);
+      if (timer) clearTimeout(timer);
+      pendingTaskDeletes.delete(id);
+      _renderDashTaskCards(todayCST());
     });
   });
 
@@ -460,6 +507,24 @@ function _renderDashTaskCards(today) {
       updateProjectStats();
     });
   });
+}
+
+// Soft-delete expiry — the dashboard's OWN delete (not window.deleteTask, whose confirm() + no-op
+// renderTasks are wrong here). On error, keep the task and un-grey the row.
+async function _finalizeTaskDelete(id) {
+  if (!pendingTaskDeletes.has(id)) return;   // already undone
+  const t = (store.allTasks || []).find(x => x.id === id);
+  const { error } = await sb.from('tasks').delete().eq('id', id);
+  pendingTaskDeletes.delete(id);
+  if (error) {
+    console.error('[dash] task delete failed:', error);
+    _renderDashTaskCards(todayCST());   // restore the row (still in DB + store)
+    return;
+  }
+  store.allTasks = (store.allTasks || []).filter(x => x.id !== id);
+  logActivity({ action: 'deleted task', entityType: 'task', entityName: t?.title || 'Unknown', contextType: 'task', contextId: id });
+  renderDashProjects();
+  updateProjectStats();
 }
 
 // ── Add / Edit Task dialog (dashboard-owned; does NOT touch tasks.js taskForm) ───────────────
